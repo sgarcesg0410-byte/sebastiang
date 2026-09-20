@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getGalleryByToken, submitGallerySelection } from '../services/api';
-import SecurityOverlay from './SecurityOverlay';
 
 export default function ClientGallery({ token = "demo-cliente-2026", onBackToHome }) {
   const [galleryData, setGalleryData] = useState(null);
@@ -184,7 +183,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const watermarkSubtext = galleryData.watermarkSettings?.watermarkSubtext || "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA";
 
   return (
-    <SecurityOverlay enabled={true}>
+    <>
       <div className="min-h-screen pb-36 pt-6 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         
         {/* BARRA DE AVISO DE SEGURIDAD Y EXPIRACIÓN */}
@@ -539,6 +538,6 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           </div>
         )}
       </div>
-    </SecurityOverlay>
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera } from 'lucide-react';
+import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X } from 'lucide-react';
 
 export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin, packages = [] }) {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
@@ -133,14 +133,33 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 onClick={() => setPreviewPhoto(photo)}
                 className="group relative rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-lg hover:border-amber-500/50 transition-all duration-300 cursor-pointer"
               >
-              {/* Contenedor de Imagen */}
-              <div className="aspect-[4/5] w-full overflow-hidden bg-stone-950">
+              {/* Contenedor de Imagen con Protección Anti-Captura */}
+              <div className="relative aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
                 <img
                   src={photo.url}
                   alt={photo.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  className="w-full h-full object-cover pointer-events-none select-none group-hover:scale-105 transition-transform duration-500"
                   loading="lazy"
+                  draggable={false}
                 />
+
+                {/* Capa transparente anti-toque y anti-descarga */}
+                <div className="absolute inset-0 z-10 bg-transparent select-none" />
+
+                {/* Malla de marca de agua diagonal de seguridad */}
+                <div className="catalog-watermark-ribbon">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <span key={i} className="text-[9px] font-black tracking-widest text-white/40 uppercase whitespace-nowrap drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
+                      SEBASTIAN G • PROHIBIDA SU CAPTURA
+                    </span>
+                  ))}
+                </div>
+
+                {/* Sello de marca en la esquina inferior */}
+                <div className="absolute top-4 right-14 z-20 pointer-events-none flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-950/70 border border-white/10 backdrop-blur-sm">
+                  <img src="/app-icon.png" alt="SG" className="w-3.5 h-3.5 rounded object-cover" />
+                  <span className="text-[9px] font-bold text-amber-300 tracking-wider">SEBASTIAN G</span>
+                </div>
               </div>
 
               {/* Degradado oscuro inferior */}
@@ -200,37 +219,79 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         </div>
       </section>
 
-      {/* MODAL DE VISTA PREVIA DE FOTO DEL CATÁLOGO */}
+      {/* MODAL DE VISTA PREVIA DE FOTO DEL CATÁLOGO (PROTEGIDO) */}
       {previewPhoto && (
         <div 
           onClick={() => setPreviewPhoto(null)}
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer"
+          className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 cursor-pointer select-none"
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="bg-stone-900 border border-stone-700 rounded-2xl max-w-xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[90vh]"
+            className="bg-stone-900 border border-stone-700 rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[92vh]"
           >
-            <div className="relative w-full bg-black/90 flex items-center justify-center p-2 min-h-[300px] max-h-[70vh] overflow-hidden">
+            {/* Cabecera de Seguridad */}
+            <div className="px-4 py-2.5 bg-stone-950 border-b border-stone-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300">
+                  Vista Protegida contra Capturas • Sebastian G
+                </span>
+              </div>
+              <button
+                onClick={() => setPreviewPhoto(null)}
+                className="p-1 text-stone-400 hover:text-white rounded-lg transition-colors"
+                title="Cerrar vista previa"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Contenedor de Imagen Protegida con Marcas de Agua */}
+            <div className="relative w-full bg-black flex items-center justify-center min-h-[300px] max-h-[66vh] overflow-hidden select-none">
               <img
                 src={previewPhoto.url}
                 alt={previewPhoto.title}
-                className="max-h-[68vh] w-auto max-w-full object-contain rounded-lg"
+                className="max-h-[64vh] w-auto max-w-full object-contain pointer-events-none select-none"
+                draggable={false}
               />
+
+              {/* Capa transparente anti-guardado */}
+              <div className="absolute inset-0 z-10 bg-transparent select-none" />
+
+              {/* Malla de marca de agua diagonal */}
+              <div className="catalog-watermark-ribbon">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <span key={i} className="text-[10px] sm:text-xs font-black tracking-widest text-white/40 uppercase whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
+                    SEBASTIAN G • MUESTRA EXCLUSIVA • PROHIBIDA SU CAPTURA
+                  </span>
+                ))}
+              </div>
+
+              {/* Sello central de agua */}
+              <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
+                <div className="px-4 py-2 rounded-2xl bg-black/60 border border-amber-500/40 backdrop-blur-sm flex items-center gap-2 -rotate-12 shadow-2xl">
+                  <img src="/app-icon.png" alt="SG" className="w-6 h-6 rounded-lg object-cover" />
+                  <span className="text-xs font-black text-amber-300 tracking-widest uppercase">
+                    SEBASTIAN G • MUESTRA PROTEGIDA
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+
+            <div className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-stone-900 border-t border-stone-800">
               <div>
-                <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider block">
+                <span className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider block">
                   {previewPhoto.category}
                 </span>
-                <h4 className="text-xl font-serif font-bold text-white">{previewPhoto.title}</h4>
-                <p className="text-xs text-stone-400 flex items-center gap-1 mt-1">
+                <h4 className="text-lg font-serif font-bold text-white">{previewPhoto.title}</h4>
+                <p className="text-xs text-stone-400 flex items-center gap-1 mt-0.5">
                   <MapPin className="w-3.5 h-3.5 text-amber-400" />
                   {previewPhoto.location}
                 </p>
               </div>
               <button
                 onClick={() => { setPreviewPhoto(null); onOpenBooking(); }}
-                className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs px-5 py-2.5 rounded-xl shadow-md"
+                className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs px-5 py-2.5 rounded-xl shadow-md active:scale-95 transition-transform"
               >
                 Reservar sesión similar
               </button>

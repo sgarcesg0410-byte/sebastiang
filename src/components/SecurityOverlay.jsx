@@ -1,125 +1,139 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { ShieldAlert, Lock, AlertTriangle } from 'lucide-react';
+import { ShieldAlert, Lock } from 'lucide-react';
 
 export default function SecurityOverlay({ children, enabled = true }) {
   const [warningMessage, setWarningMessage] = useState(null);
-  const [isShieldActive, setIsShieldActive] = useState(false);
-  const shieldTimeoutRef = useRef(null);
+  const releaseTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!enabled) return;
 
-    const triggerWarning = (msg, duration = 3500) => {
+    const triggerWarningToast = (msg, duration = 3000) => {
       setWarningMessage(msg);
       if (navigator.vibrate) {
-        navigator.vibrate([50, 40, 50]);
+        try {
+          navigator.vibrate([60, 40, 60]);
+        } catch (e) {}
       }
       setTimeout(() => setWarningMessage(null), duration);
     };
 
-    const activateShield = (reason) => {
-      setIsShieldActive(true);
-      triggerWarning(reason, 4000);
-      if (shieldTimeoutRef.current) clearTimeout(shieldTimeoutRef.current);
-      shieldTimeoutRef.current = setTimeout(() => {
-        setIsShieldActive(false);
-      }, 2500);
+    // APAGÓN SÍNCRONO INMEDIATO (0ms de latencia antes de que el SO tome la foto)
+    const triggerInstantBlackout = (reason) => {
+      document.documentElement.classList.add('security-blackout');
+      const shield = document.getElementById('anti-screenshot-shield');
+      if (shield) {
+        shield.style.display = 'flex';
+      }
+      const reasonEl = document.getElementById('anti-screenshot-reason');
+      if (reasonEl && reason) {
+        reasonEl.textContent = reason;
+      }
+
+      // Vaciar portapapeles en cualquier intento de captura
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText('Fotografía protegida - Sebastian G • San Antero');
+        }
+      } catch (err) {}
+
+      if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
+      releaseTimeoutRef.current = setTimeout(() => {
+        releaseInstantBlackout();
+      }, 2200);
     };
 
-    // 1. BLOQUEO DE GESTOS MULTI-TÁCTILES EN CELULARES (Xiaomi 3 dedos, Samsung palma, etc.)
+    const releaseInstantBlackout = () => {
+      document.documentElement.classList.remove('security-blackout');
+      const shield = document.getElementById('anti-screenshot-shield');
+      if (shield) {
+        shield.style.display = 'none';
+      }
+    };
+
+    // 1. BLOQUEO DE GESTOS MULTI-TÁCTILES (3 dedos Xiaomi/OnePlus/Realme/Motorola, palma Samsung)
     const handleTouchStart = (e) => {
       if (e.touches && e.touches.length >= 2) {
-        // Gesto multi-touch detectado
-        e.preventDefault();
-        e.stopPropagation();
-        activateShield('⚠️ Gesto multi-táctil bloqueado: Las capturas de pantalla están protegidas.');
+        try {
+          e.preventDefault();
+          e.stopPropagation();
+        } catch (err) {}
+        triggerInstantBlackout('Gesto multi-táctil detectado. Las capturas están bloqueadas.');
+        triggerWarningToast('🚫 Gesto de captura bloqueado por seguridad.');
       }
     };
 
     const handleTouchMove = (e) => {
       if (e.touches && e.touches.length >= 2) {
-        e.preventDefault();
-        e.stopPropagation();
-        activateShield('⚠️ Gesto de captura bloqueado por seguridad.');
+        try {
+          e.preventDefault();
+          e.stopPropagation();
+        } catch (err) {}
+        triggerInstantBlackout('Gesto de captura bloqueado.');
       }
     };
 
-    // 2. APAGÓN DE SEGURIDAD POR PÉRDIDA DE FOCO / CAMBIO DE VISIBILIDAD (Botones físicos de captura)
+    // 2. APAGÓN POR PÉRDIDA DE FOCO (Botones físicos de captura Vol+Power / Barra de notificaciones)
     const handleBlur = () => {
-      setIsShieldActive(true);
-      // Limpiar portapapeles en intento de captura
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText('Contenido protegido por derechos de autor - Sebastian G');
-        }
-      } catch (err) {}
+      triggerInstantBlackout('Captura de pantalla o cambio de ventana bloqueado.');
     };
 
     const handleFocus = () => {
-      if (shieldTimeoutRef.current) clearTimeout(shieldTimeoutRef.current);
-      shieldTimeoutRef.current = setTimeout(() => {
-        setIsShieldActive(false);
-      }, 600);
+      if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
+      releaseTimeoutRef.current = setTimeout(() => {
+        releaseInstantBlackout();
+      }, 350);
     };
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        setIsShieldActive(true);
+        triggerInstantBlackout('Pantalla oculta.');
       } else {
-        setTimeout(() => setIsShieldActive(false), 500);
+        if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
+        releaseTimeoutRef.current = setTimeout(() => {
+          releaseInstantBlackout();
+        }, 350);
       }
     };
 
     // 3. BLOQUEO DE CLIC DERECHO Y PULSACIÓN PROLONGADA
     const handleContextMenu = (e) => {
       e.preventDefault();
-      triggerWarning('Las opciones de descarga y clic derecho están bloqueadas.');
+      triggerWarningToast('Las opciones de descarga y clic derecho están deshabilitadas.');
     };
 
-    // 4. BLOQUEO DE TECLAS DE INSPECCIÓN Y CAPTURA EN PC / TABLET
+    // 4. BLOQUEO DE TECLAS DE CAPTURA EN PC / TABLETS
     const handleKeyDown = (e) => {
-      // PrintScreen
+      // Tecla PrintScreen
       if (e.key === 'PrintScreen' || e.code === 'PrintScreen') {
         e.preventDefault();
         e.stopPropagation();
-        activateShield('🚫 Captura de pantalla bloqueada.');
-        try {
-          if (navigator.clipboard) {
-            navigator.clipboard.writeText('');
-          }
-        } catch (err) {}
+        triggerInstantBlackout('Captura con PrintScreen bloqueada.');
+        triggerWarningToast('🚫 Captura de pantalla bloqueada.');
         return false;
       }
 
-      // F12
-      if (e.key === 'F12') {
+      // Windows + Shift + S / Command + Shift + 3/4
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
         e.stopPropagation();
-        triggerWarning('El modo desarrollador está deshabilitado.');
+        triggerInstantBlackout('Herramienta de recortes bloqueada.');
         return false;
       }
 
-      // Ctrl + Shift + I, Ctrl + Shift + J, Ctrl + Shift + C, Ctrl + Shift + S
-      if (e.ctrlKey && e.shiftKey) {
+      // F12 o Desarrollador
+      if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'i' || e.key === 'I' || e.key === 'j' || e.key === 'J' || e.key === 'c' || e.key === 'C'))) {
         e.preventDefault();
         e.stopPropagation();
-        triggerWarning('Acción deshabilitada por seguridad.');
+        triggerWarningToast('El modo inspección está deshabilitado.');
         return false;
       }
 
-      // Ctrl + U (Ver código fuente)
-      if (e.ctrlKey && (e.key === 'u' || e.key === 'U')) {
+      // Guardar (Ctrl+S), Imprimir (Ctrl+P), Ver fuente (Ctrl+U)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P' || e.key === 'u' || e.key === 'U')) {
         e.preventDefault();
         e.stopPropagation();
-        triggerWarning('Ver código fuente está deshabilitado.');
-        return false;
-      }
-
-      // Ctrl + S (Guardar página) o Ctrl + P (Imprimir)
-      if (e.ctrlKey && (e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P')) {
-        e.preventDefault();
-        e.stopPropagation();
-        triggerWarning('Guardar o imprimir fotos está restringido.');
+        triggerWarningToast('Guardar o imprimir fotos está restringido.');
         return false;
       }
     };
@@ -131,7 +145,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
       }
     };
 
-    // Escuchadores pasivos false para poder interceptar gestos
+    // Registrar escuchadores
     window.addEventListener('touchstart', handleTouchStart, { passive: false });
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('blur', handleBlur);
@@ -142,6 +156,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
     document.addEventListener('dragstart', handleDragStart);
 
     return () => {
+      if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('blur', handleBlur);
@@ -156,28 +171,40 @@ export default function SecurityOverlay({ children, enabled = true }) {
   return (
     <div className="protected-photo-zone select-none relative min-h-screen">
       
-      {/* ESCUDO DE APAGÓN TOTAL AL INTENTAR CAPTURA O GESTO MULTI-TOUCH */}
-      {isShieldActive && (
-        <div className="fixed inset-0 z-[9999] bg-black flex flex-col items-center justify-center p-6 text-center select-none animate-fadeIn">
-          <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 flex items-center justify-center text-amber-400 mb-6 shadow-[0_0_50px_rgba(245,158,11,0.3)] animate-pulse">
-            <Lock className="w-10 h-10" />
-          </div>
-
-          <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white mb-2">
-            Vista Protegida contra Capturas
-          </h3>
-          <p className="text-sm text-amber-300/90 font-medium max-w-md mx-auto mb-4">
-            Sebastian G • Propiedad Intelectual Protegida
-          </p>
-          <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 max-w-sm text-xs text-stone-400 leading-relaxed">
-            Las fotografías están protegidas contra capturas de pantalla, gestos y descargas no autorizadas para salvaguardar la privacidad de la sesión.
-          </div>
+      {/* ESCUDO DOM INSTANTÁNEO DE APAGÓN NEGRO (0MS) */}
+      <div
+        id="anti-screenshot-shield"
+        onClick={() => {
+          document.documentElement.classList.remove('security-blackout');
+          const shield = document.getElementById('anti-screenshot-shield');
+          if (shield) shield.style.display = 'none';
+        }}
+        className="fixed inset-0 z-[99999999] bg-black flex-col items-center justify-center p-6 text-center select-none cursor-pointer"
+      >
+        <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 flex items-center justify-center text-amber-400 mb-6 shadow-[0_0_50px_rgba(245,158,11,0.3)] animate-pulse">
+          <Lock className="w-10 h-10" />
         </div>
-      )}
 
-      {/* ALERTA FLOTANTE CUANDO SE INTERCEPTA UNA ACCIÓN */}
-      {warningMessage && !isShieldActive && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[999] max-w-md w-[92%] bg-stone-900/95 border-2 border-amber-500/80 text-white px-5 py-3.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3 animate-bounce">
+        <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white mb-2">
+          Vista Protegida contra Capturas
+        </h3>
+        <p className="text-sm text-amber-300 font-semibold max-w-md mx-auto mb-2">
+          Sebastian G • Propiedad Intelectual Protegida
+        </p>
+        <p id="anti-screenshot-reason" className="text-xs text-amber-400/80 font-mono mb-4">
+          Captura de pantalla no autorizada
+        </p>
+        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 max-w-sm text-xs text-stone-300 leading-relaxed">
+          Las fotografías están protegidas contra capturas de pantalla, gestos y descargas no autorizadas.
+        </div>
+        <p className="text-[11px] text-amber-400/70 mt-6 font-medium">
+          Toca en cualquier parte de la pantalla para desbloquear
+        </p>
+      </div>
+
+      {/* ALERTA FLOTANTE EN CASO DE INTENTO BLOQUEADO */}
+      {warningMessage && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[999999] max-w-md w-[92%] bg-stone-900/95 border-2 border-amber-500/80 text-white px-5 py-3.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3 animate-bounce">
           <ShieldAlert className="w-7 h-7 text-amber-400 shrink-0" />
           <div>
             <p className="font-bold text-xs uppercase tracking-wider text-amber-300">Protección Activa</p>

@@ -6,6 +6,7 @@ import BookingModal from './components/BookingModal';
 import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
+import SecurityOverlay from './components/SecurityOverlay';
 import { getSettings, getCatalog, getPackages } from './services/api';
 import { supabase } from './services/supabase';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
@@ -118,51 +119,54 @@ export default function App() {
         />
       )}
 
-      {/* CONTENIDO SEGÚN VISTA */}
-      <main className="flex-1">
-        {currentView === 'home' && (
-          <>
-            <Catalog
-              catalog={catalog}
-              packages={packages}
-              onOpenBooking={() => handleOpenBooking(null)}
-              onNavigateToAdmin={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-            />
-            <div id="packages-section" className="border-t border-stone-800/80 bg-stone-900/40">
+      {/* PROTECCIÓN GLOBAL DE SEGURIDAD ANTI-CAPTURAS Y ANTI-GESTOS */}
+      <SecurityOverlay enabled={currentView !== 'admin'}>
+        {/* CONTENIDO SEGÚN VISTA */}
+        <main className="flex-1">
+          {currentView === 'home' && (
+            <>
+              <Catalog
+                catalog={catalog}
+                packages={packages}
+                onOpenBooking={() => handleOpenBooking(null)}
+                onNavigateToAdmin={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+              />
+              <div id="packages-section" className="border-t border-stone-800/80 bg-stone-900/40">
+                <PackagesSection
+                  packages={packages}
+                  onSelectPackage={(pkg) => handleOpenBooking(pkg)}
+                />
+              </div>
+            </>
+          )}
+
+          {currentView === 'packages' && (
+            <div className="pt-8">
               <PackagesSection
                 packages={packages}
                 onSelectPackage={(pkg) => handleOpenBooking(pkg)}
               />
             </div>
-          </>
-        )}
+          )}
 
-        {currentView === 'packages' && (
-          <div className="pt-8">
-            <PackagesSection
-              packages={packages}
-              onSelectPackage={(pkg) => handleOpenBooking(pkg)}
+          {currentView === 'gallery' && (
+            <ClientGallery
+              token={activeGalleryToken}
+              onBackToHome={() => setCurrentView('home')}
             />
-          </div>
-        )}
+          )}
 
-        {currentView === 'gallery' && (
-          <ClientGallery
-            token={activeGalleryToken}
-            onBackToHome={() => setCurrentView('home')}
-          />
-        )}
-
-        {currentView === 'admin' && (
-          <AdminPanel
-            onOpenGalleryToken={handleOpenGalleryToken}
-            onCatalogUpdated={loadInitialData}
-            onBackToHome={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-            onLogout={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-            onPackagesUpdated={(newPkgs) => setPackages(newPkgs)}
-          />
-        )}
-      </main>
+          {currentView === 'admin' && (
+            <AdminPanel
+              onOpenGalleryToken={handleOpenGalleryToken}
+              onCatalogUpdated={loadInitialData}
+              onBackToHome={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+              onLogout={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+              onPackagesUpdated={(newPkgs) => setPackages(newPkgs)}
+            />
+          )}
+        </main>
+      </SecurityOverlay>
 
       {/* MODAL DE RESERVA DIRECTA SIN REGISTRO */}
       <BookingModal
