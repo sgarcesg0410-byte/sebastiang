@@ -767,24 +767,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </button>
               </div>
 
-              {/* Botón de Ayuda Rápida sin textos cortados */}
-              <button
-                type="button"
-                onClick={() => {
-                  setPinInput('1234');
-                  verifyAdminPin('1234').then(() => {
-                    setIsAuthenticated(true);
-                    loadAllAdminData();
-                  }).catch(() => {
-                    setAuthError('PIN 1234 no reconocido');
-                  });
-                }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-semibold hover:bg-amber-500/20 active:scale-95 transition-all mb-4"
-              >
-                <Key className="w-3.5 h-3.5 text-amber-400" />
-                <span>PIN inicial: 1234 (Toca para probar)</span>
-              </button>
-
               <div className="pt-3 border-t border-stone-800/80 space-y-2">
                 <button
                   type="button"

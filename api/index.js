@@ -34,7 +34,7 @@ function getDB() {
       watermarkText: "SEBASTIAN G",
       watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
       watermarkLogoUrl: "/logo-white.png",
-      adminPin: "1234",
+      adminPin: "0493",
       printedPhotoPrice: 7000
     },
     packages: [
@@ -336,7 +336,7 @@ app.post('/api/gallery/:token/submit', (req, res) => {
 
 app.post('/api/admin/auth', (req, res) => {
   const { pin } = req.body;
-  if (pin === (runtimeDB.settings.adminPin || '1234')) {
+  if (pin === (runtimeDB.settings.adminPin || '0493')) {
     res.json({ success: true, token: 'admin-authorized-token' });
   } else {
     res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
@@ -522,7 +522,7 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
 // --- SEGURIDAD Y CAMBIO / RECUPERACIÓN DE PIN ---
 app.post('/api/admin/pin/change', (req, res) => {
   const { currentPin, newPin } = req.body;
-  if (currentPin !== (runtimeDB.settings.adminPin || '1234')) {
+  if (currentPin !== (runtimeDB.settings.adminPin || '0493')) {
     return res.status(401).json({ error: 'El PIN actual no coincide.' });
   }
   if (!newPin || String(newPin).length < 4) {

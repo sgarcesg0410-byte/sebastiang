@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS = {
   watermarkText: "SEBASTIAN G",
   watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
   watermarkLogoUrl: "/logo-white.png",
-  adminPin: "1234",
+  adminPin: "0493",
   printedPhotoPrice: 7000
 };
 
@@ -467,23 +467,36 @@ export async function submitGallerySelection(token, selections) {
 }
 
 export async function verifyAdminPin(pin) {
-  const localSavedPin = localStorage.getItem(LOCAL_PIN_KEY);
+  // Purga de seguridad: si localSavedPin quedó con el pin viejo '1234', lo eliminamos
+  let localSavedPin = localStorage.getItem(LOCAL_PIN_KEY);
+  if (localSavedPin === '1234') {
+    localStorage.removeItem(LOCAL_PIN_KEY);
+    localSavedPin = null;
+  }
+
+  const cleanPin = String(pin || '').trim();
+
   try {
     const res = await fetch(`${API_BASE}/admin/auth`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin })
+      body: JSON.stringify({ pin: cleanPin })
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem(LOCAL_PIN_KEY, cleanPin);
+      return data;
+    }
   } catch (err) {
     console.warn('Verificando PIN en modo offline:', err);
   }
 
-  if (localSavedPin && pin === localSavedPin) {
+  if (localSavedPin && cleanPin === localSavedPin && cleanPin !== '1234') {
     return { success: true, token: 'admin-authorized-token' };
   }
 
-  if (pin === DEFAULT_SETTINGS.adminPin) {
+  if (cleanPin === DEFAULT_SETTINGS.adminPin) {
+    localStorage.setItem(LOCAL_PIN_KEY, cleanPin);
     return { success: true, token: 'admin-authorized-token' };
   }
   throw new Error('PIN incorrecto.');
@@ -753,7 +766,8 @@ export async function changeAdminPin(currentPin, newPin) {
     throw new Error(err.error || 'Error al cambiar PIN');
   } catch (err) {
     // Si falla el servidor, verificar localmente
-    const localPin = localStorage.getItem(LOCAL_PIN_KEY) || DEFAULT_SETTINGS.adminPin;
+    const rawLocal = localStorage.getItem(LOCAL_PIN_KEY);
+    const localPin = (rawLocal && rawLocal !== '1234') ? rawLocal : DEFAULT_SETTINGS.adminPin;
     if (currentPin === localPin) {
       localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
       return { success: true, message: '¡PIN actualizado exitosamente!' };
@@ -786,7 +800,9 @@ export async function recoverAdminPin(phone, newPin = null) {
       if (newPin) {
         localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
       }
-      return { success: true, verified: true, currentPin: localStorage.getItem(LOCAL_PIN_KEY) || DEFAULT_SETTINGS.adminPin };
+      const rawLocal = localStorage.getItem(LOCAL_PIN_KEY);
+      const activePin = (rawLocal && rawLocal !== '1234') ? rawLocal : DEFAULT_SETTINGS.adminPin;
+      return { success: true, verified: true, currentPin: activePin };
     }
     throw err;
   }
