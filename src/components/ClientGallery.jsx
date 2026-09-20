@@ -365,6 +365,15 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                   {/* CAPA TRANSPARENTE ANTI-DESCARGA */}
                   <div className="absolute inset-0 z-10 bg-transparent select-none" />
 
+                  {/* MALLA DE MARCA DE AGUA REPETIDA EN TODA LA FOTO */}
+                  <div className="absolute inset-0 z-15 pointer-events-none overflow-hidden opacity-30 select-none flex flex-wrap gap-6 items-center justify-around -rotate-12 scale-125">
+                    {Array.from({ length: 15 }).map((_, i) => (
+                      <span key={i} className="text-[10px] font-black tracking-wider text-white/50 uppercase whitespace-nowrap drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
+                        SEBASTIAN G • PROHIBIDA SU DESCARGA
+                      </span>
+                    ))}
+                  </div>
+
                   {/* MARCA DE AGUA GIGANTE CENTRAL CON EL LOGOTIPO OFICIAL DE SEBASTIAN G */}
                   <div className="watermark-overlay z-20">
                     <div className="watermark-content animate-watermark flex flex-col items-center justify-center text-center">

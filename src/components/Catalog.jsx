@@ -150,7 +150,7 @@ export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) 
         {/* Banner informativo de cierre sin botones redundantes */}
         <div className="mt-16 bg-gradient-to-r from-amber-950/30 via-stone-900 to-amber-950/30 border border-amber-500/20 rounded-3xl p-6 sm:p-10 text-center">
           <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-1">
-            Estudio Fotográfico San Antero
+            Sebastian G • San Antero
           </span>
           <p className="text-sm text-stone-300 font-light max-w-xl mx-auto">
             "Capturamos momentos, creamos recuerdos. ♡" • Explora nuestros paquetes más abajo para ver precios y agendar tu fecha.

@@ -5,6 +5,7 @@ import PackagesSection from './components/PackagesSection';
 import BookingModal from './components/BookingModal';
 import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
+import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import { getSettings, getCatalog, getPackages } from './services/api';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
 
@@ -13,6 +14,16 @@ export default function App() {
   const [activeGalleryToken, setActiveGalleryToken] = useState('demo-cliente-2026');
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
+
+  // Bienvenida interactiva al abrir la app (solo primera vez por sesión si no entra directo a galería)
+  const [showIntro, setShowIntro] = useState(() => {
+    try {
+      if (window.location.pathname.startsWith('/galeria/')) return false;
+      return !sessionStorage.getItem('sebastian_g_intro_shown');
+    } catch (e) {
+      return false;
+    }
+  });
 
   // Datos globales
   const [settings, setSettings] = useState({});
@@ -66,20 +77,34 @@ export default function App() {
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 flex flex-col justify-between selection:bg-amber-500 selection:text-black">
       
-      {/* BARRA SUPERIOR */}
-      <Navbar
-        currentView={currentView}
-        setCurrentView={(view) => {
-          if (view === 'demo-gallery') {
-            setActiveGalleryToken('demo-cliente-2026');
-            setCurrentView('gallery');
-          } else {
-            setCurrentView(view);
-          }
-        }}
-        onOpenBooking={() => handleOpenBooking(null)}
-        photographerName={settings.photographerName}
-      />
+      {/* INTRO Y BIENVENIDA CON LOGO 3D INTERACTIVO */}
+      {showIntro && (
+        <InteractiveLogoIntro
+          onComplete={() => {
+            try {
+              sessionStorage.setItem('sebastian_g_intro_shown', 'true');
+            } catch (e) {}
+            setShowIntro(false);
+          }}
+        />
+      )}
+
+      {/* BARRA SUPERIOR (SOLO SE MUESTRA EN VISTAS PÚBLICAS, NO EN EL DASHBOARD DEL FOTÓGRAFO) */}
+      {currentView !== 'admin' && (
+        <Navbar
+          currentView={currentView}
+          setCurrentView={(view) => {
+            if (view === 'demo-gallery') {
+              setActiveGalleryToken('demo-cliente-2026');
+              setCurrentView('gallery');
+            } else {
+              setCurrentView(view);
+            }
+          }}
+          onOpenBooking={() => handleOpenBooking(null)}
+          photographerName={settings.photographerName}
+        />
+      )}
 
       {/* CONTENIDO SEGÚN VISTA */}
       <main className="flex-1">
@@ -119,6 +144,9 @@ export default function App() {
           <AdminPanel
             onOpenGalleryToken={handleOpenGalleryToken}
             onCatalogUpdated={loadInitialData}
+            onBackToHome={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            onLogout={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            onPackagesUpdated={(newPkgs) => setPackages(newPkgs)}
           />
         )}
       </main>
@@ -132,57 +160,62 @@ export default function App() {
         settings={settings}
       />
 
-      {/* PIE DE PÁGINA */}
-      <footer className="border-t border-stone-800/80 bg-stone-950 py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
-              <Camera className="w-5 h-5" />
+      {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD) */}
+      {currentView !== 'admin' && (
+        <footer className="border-t border-stone-800/80 bg-stone-950 py-12 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <img
+                src="/logo-white.png"
+                alt="Sebastian G"
+                className="h-12 w-auto object-contain filter drop-shadow-[0_2px_8px_rgba(255,255,255,0.3)] cursor-pointer"
+                onClick={() => setShowIntro(true)}
+                title="Toca para ver el logo interactivo"
+              />
+              <div className="border-l border-stone-800 pl-3">
+                <span className="text-xs font-bold text-white block font-serif">
+                  {settings.photographerName || 'Sebastian G'}
+                </span>
+                <span className="text-[11px] text-amber-400 block">
+                  San Antero • Córdoba
+                </span>
+              </div>
             </div>
-            <div>
-              <p className="font-serif font-bold text-white text-base">
-                {settings.photographerName || 'Estudio San Antero'}
-              </p>
-              <p className="text-xs text-amber-400 flex items-center justify-center md:justify-start gap-1">
-                <MapPin className="w-3 h-3" />
-                <span>San Antero • Coveñas • Córdoba, Colombia</span>
-              </p>
+
+            <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-stone-400">
+              <button
+                onClick={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="hover:text-amber-400"
+              >
+                Inicio & Catálogo
+              </button>
+              <button
+                onClick={() => { setCurrentView('packages'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="hover:text-amber-400"
+              >
+                Paquetes
+              </button>
+              <button
+                onClick={() => { setActiveGalleryToken('demo-cliente-2026'); setCurrentView('gallery'); }}
+                className="hover:text-amber-400 flex items-center gap-1"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                <span>Demostración de Selección</span>
+              </button>
+              <button
+                onClick={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="hover:text-amber-400 font-semibold"
+              >
+                Panel Fotógrafo
+              </button>
+            </div>
+
+            <div className="text-xs text-stone-500 font-medium tracking-wide">
+              SG Software Solutions
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-stone-400">
-            <button
-              onClick={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-              className="hover:text-amber-400"
-            >
-              Catálogo
-            </button>
-            <button
-              onClick={() => { setCurrentView('packages'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-              className="hover:text-amber-400"
-            >
-              Paquetes
-            </button>
-            <button
-              onClick={() => { setActiveGalleryToken('demo-cliente-2026'); setCurrentView('gallery'); }}
-              className="hover:text-amber-400 flex items-center gap-1"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-              <span>Demostración de Selección</span>
-            </button>
-            <button
-              onClick={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-              className="hover:text-amber-400 font-semibold"
-            >
-              Panel Fotógrafo
-            </button>
-          </div>
-
-          <div className="text-xs text-stone-500">
-            © {new Date().getFullYear()} Estudio Fotográfico • Todos los derechos reservados
-          </div>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

@@ -163,6 +163,38 @@ app.get('/api/packages', (req, res) => {
   res.json(runtimeDB.packages || []);
 });
 
+app.post('/api/packages', (req, res) => {
+  const { packages } = req.body;
+  if (Array.isArray(packages)) {
+    runtimeDB.packages = packages;
+    try {
+      const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+      if (fs.existsSync(dbPath)) {
+        const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+        current.packages = packages;
+        fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+      }
+    } catch (e) {}
+  }
+  res.json({ success: true, packages: runtimeDB.packages });
+});
+
+app.post('/api/settings', (req, res) => {
+  const newSettings = req.body;
+  if (newSettings && typeof newSettings === 'object') {
+    runtimeDB.settings = { ...runtimeDB.settings, ...newSettings };
+    try {
+      const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+      if (fs.existsSync(dbPath)) {
+        const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+        current.settings = runtimeDB.settings;
+        fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+      }
+    } catch (e) {}
+  }
+  res.json({ success: true, settings: runtimeDB.settings });
+});
+
 app.post('/api/bookings', (req, res) => {
   const { clientName, clientWhatsApp, packageId, locationType, specificLocation, dateTime, description } = req.body;
   const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];

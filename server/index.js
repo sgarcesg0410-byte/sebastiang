@@ -57,6 +57,30 @@ app.get('/api/packages', (req, res) => {
   res.json(db.packages || []);
 });
 
+// Actualizar paquetes de fotos (precios, descripciones, etc.)
+app.post('/api/packages', (req, res) => {
+  const { packages } = req.body;
+  if (Array.isArray(packages)) {
+    const db = readDB();
+    db.packages = packages;
+    writeDB(db);
+    return res.json({ success: true, packages: db.packages });
+  }
+  res.status(400).json({ error: 'Formato inválido de paquetes' });
+});
+
+// Actualizar configuración general
+app.post('/api/settings', (req, res) => {
+  const newSettings = req.body;
+  if (newSettings && typeof newSettings === 'object') {
+    const db = readDB();
+    db.settings = { ...db.settings, ...newSettings };
+    writeDB(db);
+    return res.json({ success: true, settings: db.settings });
+  }
+  res.status(400).json({ error: 'Configuración inválida' });
+});
+
 // Registrar nueva reserva (sin necesidad de registrarse)
 app.post('/api/bookings', (req, res) => {
   const {

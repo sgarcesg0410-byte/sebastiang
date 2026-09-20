@@ -3,6 +3,8 @@ const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
 const LOCAL_BOOKINGS_KEY = 'sebastian_g_bookings_v1';
 const LOCAL_CATALOG_KEY = 'sebastian_g_catalog_v1';
 const LOCAL_PIN_KEY = 'sebastian_g_admin_pin';
+const LOCAL_PACKAGES_KEY = 'sebastian_g_packages_v1';
+const LOCAL_SETTINGS_KEY = 'sebastian_g_settings_v1';
 
 const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
@@ -84,16 +86,70 @@ function saveLocalBooking(booking) {
   }
 }
 
+function getLocalPackages() {
+  try {
+    const raw = localStorage.getItem(LOCAL_PACKAGES_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveLocalPackages(pkgs) {
+  try {
+    localStorage.setItem(LOCAL_PACKAGES_KEY, JSON.stringify(pkgs));
+  } catch (e) {
+    console.warn('No se pudo guardar paquetes en localStorage:', e);
+  }
+}
+
+function getLocalSettings() {
+  try {
+    const raw = localStorage.getItem(LOCAL_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveLocalSettings(st) {
+  try {
+    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(st));
+  } catch (e) {
+    console.warn('No se pudo guardar settings en localStorage:', e);
+  }
+}
+
 export async function getSettings() {
+  const localSt = getLocalSettings();
   try {
     const res = await fetch(`${API_BASE}/settings`);
-    if (!res.ok) throw new Error('Error al obtener configuración');
-    const data = await res.json();
-    return { ...DEFAULT_SETTINGS, ...data };
+    if (res.ok) {
+      const data = await res.json();
+      return { ...DEFAULT_SETTINGS, ...data, ...(localSt || {}) };
+    }
   } catch (err) {
-    console.warn('Usando configuración por defecto:', err);
-    return DEFAULT_SETTINGS;
+    console.warn('Usando configuración por defecto o local:', err);
   }
+  return { ...DEFAULT_SETTINGS, ...(localSt || {}) };
+}
+
+export async function updateSettings(newSettings) {
+  saveLocalSettings(newSettings);
+  try {
+    const res = await fetch(`${API_BASE}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newSettings)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.settings;
+    }
+  } catch (err) {
+    console.warn('Servidor offline al guardar settings, guardado localmente:', err);
+  }
+  return newSettings;
 }
 
 export async function getCatalog() {
@@ -114,14 +170,38 @@ export async function getCatalog() {
 }
 
 export async function getPackages() {
+  const localPkgs = getLocalPackages();
   try {
     const res = await fetch(`${API_BASE}/packages`);
-    if (!res.ok) throw new Error('Error al obtener paquetes');
-    return await res.json();
+    if (res.ok) {
+      const serverPkgs = await res.json();
+      if (localPkgs && localPkgs.length > 0) {
+        return localPkgs;
+      }
+      return serverPkgs;
+    }
   } catch (err) {
     console.error(err);
-    return [];
   }
+  return localPkgs || [];
+}
+
+export async function updatePackages(packages) {
+  saveLocalPackages(packages);
+  try {
+    const res = await fetch(`${API_BASE}/packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packages })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.packages;
+    }
+  } catch (err) {
+    console.warn('Servidor offline al guardar paquetes, guardado localmente:', err);
+  }
+  return packages;
 }
 
 export async function createBooking(data) {
