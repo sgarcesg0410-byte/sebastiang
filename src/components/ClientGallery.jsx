@@ -453,7 +453,8 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                   <img
                     src={photo.url}
                     alt={photo.title}
-                    className="w-full h-full object-cover pointer-events-none select-none"
+                    data-protected="true"
+                    className="w-full h-full object-cover pointer-events-none select-none protected-image"
                     loading="lazy"
                     draggable={false}
                   />

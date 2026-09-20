@@ -32,20 +32,33 @@
   display: none;
   position: fixed;
   inset: 0;
-  z-index: 99999999;
+  z-index: 2147483647 !important; /* Nivel máximo de z-index del navegador */
   background-color: #000000 !important;
   color: #ffffff;
   user-select: none;
   -webkit-user-select: none;
+  touch-action: none;
 }
 
 /* Ocultación síncrona inmediata al activar el escudo */
+html.security-blackout,
+html.security-blackout body {
+  background-color: #000000 !important;
+}
+
 html.security-blackout img,
+html.security-blackout picture,
+html.security-blackout canvas,
+html.security-blackout video,
+html.security-blackout svg,
 html.security-blackout .protected-image,
-html.security-blackout [data-protected="true"] {
+html.security-blackout [data-protected="true"],
+html.security-blackout [role="dialog"] img {
+  display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;
-  filter: blur(80px) brightness(0) !important;
+  filter: blur(100px) brightness(0) !important;
+  transform: scale(0) !important;
   transition: none !important;
 }
 

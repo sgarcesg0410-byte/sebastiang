@@ -183,7 +183,8 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 <img
                   src={photo.url}
                   alt={photo.title}
-                  className="w-full h-full object-cover pointer-events-none select-none group-hover:scale-105 transition-transform duration-500"
+                  data-protected="true"
+                  className="w-full h-full object-cover pointer-events-none select-none group-hover:scale-105 transition-transform duration-500 protected-image"
                   loading="lazy"
                   draggable={false}
                 />
@@ -281,7 +282,8 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               <img
                 src={previewPhoto.url}
                 alt={previewPhoto.title}
-                className="max-h-[64vh] w-auto max-w-full object-contain pointer-events-none select-none"
+                data-protected="true"
+                className="max-h-[64vh] w-auto max-w-full object-contain pointer-events-none select-none protected-image"
                 draggable={false}
               />
 
