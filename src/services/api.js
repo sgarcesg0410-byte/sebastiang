@@ -10,6 +10,23 @@ const LOCAL_SETTINGS_KEY = 'sebastian_g_settings_v1';
 
 const SAMPLE_PHOTO_IDS = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'];
 
+export const DEFAULT_REAL_CATALOG = [
+  {
+    id: "cat-verano-salsero",
+    title: "Verano salsero",
+    category: "Retratos",
+    url: "/catalog/verano-salsero.jpg",
+    location: "Playas de Coveñas"
+  },
+  {
+    id: "cat-atardecer-covenas",
+    title: "Atardecer",
+    category: "Retratos",
+    url: "/catalog/atardecer-covenas.jpg",
+    location: "Playas el Edén - Coveñas"
+  }
+];
+
 export function isSampleItem(item) {
   if (!item) return false;
   if (SAMPLE_PHOTO_IDS.includes(item.id)) return true;
@@ -21,7 +38,8 @@ export function getDeletedCatalogIds() {
   try {
     const raw = localStorage.getItem(LOCAL_DELETED_CATALOG_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    const arr = Array.isArray(parsed) ? parsed : [];
+    return arr.filter(id => id !== 'cat-verano-salsero' && id !== 'cat-atardecer-covenas');
   } catch (e) {
     return [];
   }
@@ -209,6 +227,13 @@ export async function getCatalog() {
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
 
   const map = new Map();
+  // Primero incluir las fotos reales de Sebastian G
+  DEFAULT_REAL_CATALOG.forEach(item => {
+    if (!deletedIds.has(item.id)) {
+      map.set(item.id, item);
+    }
+  });
+
   [...localItems, ...serverCatalog].forEach(item => {
     if (!item || !item.id) return;
     if (deletedIds.has(item.id)) return;

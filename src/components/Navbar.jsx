@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Menu, X, Sparkles } from 'lucide-react';
 
-export default function Navbar({ onOpenBooking, currentView, setCurrentView, photographerName = "Sebastian G" }) {
+export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setCurrentView, photographerName = "Sebastian G" }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navigateTo = (view) => {
@@ -72,6 +72,17 @@ export default function Navbar({ onOpenBooking, currentView, setCurrentView, pho
           >
             <span>🔐 Panel Fotógrafo</span>
           </button>
+
+          {onReplayIntro && (
+            <button
+              onClick={onReplayIntro}
+              className="text-xs font-semibold px-3 py-1.5 rounded-xl border text-amber-300/90 hover:text-amber-200 bg-amber-500/10 border-amber-500/30 hover:border-amber-400/50 transition-all flex items-center gap-1.5 active:scale-95"
+              title="Ver animación de bienvenida con el logo 3D interactivo"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Ver Intro</span>
+            </button>
+          )}
         </nav>
 
         {/* Botón Acción Principal */}
@@ -126,6 +137,16 @@ export default function Navbar({ onOpenBooking, currentView, setCurrentView, pho
             <span>🔐 Panel del Fotógrafo</span>
             <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">Subir fotos</span>
           </button>
+
+          {onReplayIntro && (
+            <button
+              onClick={() => { setMobileMenuOpen(false); onReplayIntro(); }}
+              className="w-full text-left py-2.5 px-3 rounded-xl bg-stone-800/50 text-amber-300 text-xs font-semibold hover:bg-stone-800 flex items-center gap-2 border border-stone-700/50 transition-colors"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>✨ Ver Animación de Entrada del Logo</span>
+            </button>
+          )}
 
           <div className="pt-3 border-t border-stone-800">
             <button

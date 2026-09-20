@@ -15,8 +15,13 @@ export default function App() {
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
 
-  // Bienvenida interactiva opcional (desactivada por defecto para entrada directa y limpia al catálogo)
-  const [showIntro, setShowIntro] = useState(false);
+  // Bienvenida e intro con logo 3D interactivo (activo al entrar)
+  const [showIntro, setShowIntro] = useState(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.pathname.startsWith('/galeria/')) return false;
+    }
+    return true;
+  });
 
   // Datos globales
   const [settings, setSettings] = useState({});
@@ -92,6 +97,7 @@ export default function App() {
             }
           }}
           onOpenBooking={() => handleOpenBooking(null)}
+          onReplayIntro={() => setShowIntro(true)}
           photographerName={settings.photographerName}
         />
       )}
