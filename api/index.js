@@ -124,7 +124,24 @@ function getDB() {
         location: "Playas de Coveñas"
       }
     ],
-    bookings: [],
+    bookings: [
+      {
+        id: "book-real-jennifer-vasquez",
+        clientName: "Jennifer Vásquez",
+        clientWhatsApp: "+573244725167",
+        packageId: "pkg-8fotos",
+        packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+        totalPrice: 75000,
+        locationType: "local",
+        specificLocation: "Sesión Especial",
+        dateTime: "Reserva Confirmada",
+        description: "Sesión fotográfica confirmada",
+        createdAt: "2026-09-20T10:00:00.000Z",
+        status: "confirmed",
+        isReal: true
+      }
+    ],
+    payments: [],
     sessions: [
       {
         id: "sess-demo",
@@ -223,6 +240,15 @@ app.post('/api/bookings', (req, res) => {
 
   runtimeDB.bookings.unshift(newBooking);
 
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.bookings = runtimeDB.bookings;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
   const msgText = encodeURIComponent(
@@ -230,7 +256,7 @@ app.post('/api/bookings', (req, res) => {
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
     `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice.toLocaleString('es-CO')} COP)\n` +
-    `📍 *Lugar:* ${newBooking.locationType === 'outside_san_antero' ? 'Fuera de San Antero (' + newBooking.specificLocation + ')' : 'En San Antero (' + newBooking.specificLocation + ')'}\n` +
+    `📍 *Lugar:* ${newBooking.locationType === 'outside_san_antero' ? 'Locación Especial / Fuera (' + newBooking.specificLocation + ')' : 'Sesión Local (' + newBooking.specificLocation + ')'}\n` +
     `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
     `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}`
   );
@@ -347,7 +373,101 @@ app.patch('/api/admin/bookings/:id', (req, res) => {
   if (!booking) return res.status(404).json({ error: 'Reserva no encontrada.' });
 
   booking.status = status;
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.bookings = runtimeDB.bookings;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
   res.json({ success: true, booking });
+});
+
+// --- PASARELAS DE PAGO DIRECTO (NEQUI, DAVIPLATA, DALE) ---
+app.get('/api/admin/payments', (req, res) => {
+  res.json(runtimeDB.payments || []);
+});
+
+app.post('/api/payments', (req, res) => {
+  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount } = req.body;
+  const newPayment = {
+    id: `pay-${Date.now()}`,
+    clientName: (clientName || 'Cliente').trim(),
+    clientWhatsApp: (clientWhatsApp || '').trim(),
+    sessionToken: sessionToken || '',
+    packageTitle: packageTitle || 'Sesión Fotográfica',
+    amount: Number(amount) || 0,
+    method: method || 'nequi', // 'nequi' | 'daviplata' | 'dale'
+    reference: (reference || '').trim(),
+    voucherUrl: voucherUrl || null,
+    extraPhotosCount: Number(extraPhotosCount) || 0,
+    printedPhotosCount: Number(printedPhotosCount) || 0,
+    status: 'pending', // 'pending' | 'verified'
+    createdAt: new Date().toISOString()
+  };
+
+  if (!runtimeDB.payments) runtimeDB.payments = [];
+  runtimeDB.payments.unshift(newPayment);
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.payments = runtimeDB.payments;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
+  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+  const methodNames = {
+    nequi: 'Nequi (3244725167)',
+    daviplata: 'DaviPlata (Llave @PLATA3244725167)',
+    dale: 'Dale! (Llave @SGG04)'
+  };
+  const methodName = methodNames[newPayment.method] || newPayment.method;
+
+  const msgText = encodeURIComponent(
+    `💰 *¡Hola Sebastian G! Acabo de registrar mi pago de fotos:*\n\n` +
+    `👤 *Cliente:* ${newPayment.clientName}\n` +
+    `📱 *WhatsApp:* ${newPayment.clientWhatsApp}\n` +
+    `💵 *Monto Transferido:* $${newPayment.amount.toLocaleString('es-CO')} COP\n` +
+    `💳 *Pasarela / Billetera:* ${methodName}\n` +
+    `🔢 *Referencia:* ${newPayment.reference || 'Comprobante adjunto'}\n` +
+    `📸 *Detalle:* ${newPayment.extraPhotosCount} fotos extra elegidas` +
+    (newPayment.printedPhotosCount > 0 ? ` + ${newPayment.printedPhotosCount} fotos impresas` : '') + `\n\n` +
+    `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
+  );
+
+  res.status(201).json({
+    success: true,
+    payment: newPayment,
+    directWhatsAppUrl: `https://wa.me/${photogWhatsApp1}?text=${msgText}`,
+    secondaryWhatsAppUrl: `https://wa.me/${photogWhatsApp2}?text=${msgText}`
+  });
+});
+
+app.patch('/api/admin/payments/:id', (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  const payment = (runtimeDB.payments || []).find(p => p.id === id);
+  if (!payment) return res.status(404).json({ error: 'Pago no encontrado.' });
+
+  payment.status = status;
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.payments = runtimeDB.payments;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
+  res.json({ success: true, payment });
 });
 
 app.get('/api/admin/sessions', (req, res) => {

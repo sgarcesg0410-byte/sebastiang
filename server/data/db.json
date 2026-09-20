@@ -102,20 +102,22 @@
   ],
   "bookings": [
     {
-      "id": "book-demo-1",
-      "clientName": "Camila Rodríguez",
-      "clientWhatsApp": "+573105551234",
+      "id": "book-real-jennifer-vasquez",
+      "clientName": "Jennifer Vásquez",
+      "clientWhatsApp": "+573244725167",
       "packageId": "pkg-8fotos",
-      "packageName": "8 Fotos Digitales (+ 2 Gratis)",
+      "packageName": "8 Fotos Digitales (+ 2 Fotos Gratis)",
       "totalPrice": 75000,
-      "locationType": "san_antero",
-      "specificLocation": "Playa Blanca, sector Las Cabañas",
-      "dateTime": "2026-09-24 a las 16:30",
-      "description": "Fotos para mi cumpleaños, con vestido al atardecer.",
-      "createdAt": "2026-09-19T10:00:00.000Z",
-      "status": "confirmed"
+      "locationType": "local",
+      "specificLocation": "Sesión Especial",
+      "dateTime": "Reserva Confirmada",
+      "description": "Sesión fotográfica confirmada",
+      "createdAt": "2026-09-20T10:00:00.000Z",
+      "status": "confirmed",
+      "isReal": true
     }
   ],
+  "payments": [],
   "sessions": [
     {
       "id": "sess-demo",

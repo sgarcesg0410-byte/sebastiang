@@ -31,7 +31,14 @@ import {
   DollarSign,
   LogOut,
   Tag,
-  Delete
+  Delete,
+  CreditCard,
+  TrendingUp,
+  BarChart2,
+  Crown,
+  Bell,
+  Volume2,
+  Users
 } from 'lucide-react';
 import { 
   verifyAdminPin, 
@@ -50,8 +57,11 @@ import {
   deleteAllSampleCatalogPhotos,
   isSampleItem,
   changeAdminPin,
-  recoverAdminPin
+  recoverAdminPin,
+  getAdminPayments,
+  updatePaymentStatus
 } from '../services/api';
+import { getLocalAnalytics } from '../services/analytics';
 
 // Función para procesar fotos conservando la fidelidad de revelado de Adobe Lightroom (Ultra HD 2.4K, 92% calidad)
 function compressImageFile(file, maxWidth = 2400, quality = 0.92) {
@@ -93,6 +103,26 @@ function compressImageFile(file, maxWidth = 2400, quality = 0.92) {
   });
 }
 
+// Chime de audio sintetizado Web Audio API para notificaciones en tiempo real
+function playNotificationChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.18); // A5
+    gain.gain.setValueAtTime(0.28, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.48);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+  } catch (e) {}
+}
+
 export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBackToHome, onLogout, onPackagesUpdated }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -109,7 +139,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [recoveredPinDisplay, setRecoveredPinDisplay] = useState('');
 
   // Pestañas
-  const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
+  const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'payments' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
 
   // Gestión de Precios
   const [editablePackages, setEditablePackages] = useState([]);
@@ -120,6 +150,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   // Datos del sistema
   const [bookings, setBookings] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [analyticsStats, setAnalyticsStats] = useState(getLocalAnalytics());
+  const [realtimeAlert, setRealtimeAlert] = useState(null);
+  const [viewingVoucherModal, setViewingVoucherModal] = useState(null);
+  const previousCountsRef = useRef({ bookings: 0, payments: 0, initialized: false });
   const [sessions, setSessions] = useState([]);
   const [catalog, setCatalog] = useState([]);
   const [settings, setSettings] = useState({
@@ -247,16 +282,51 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const loadAllAdminData = async () => {
     try {
       setLoadingData(true);
-      const [bData, sData, setData, pData, cData] = await Promise.all([
+      const [bData, sData, setData, pData, cData, payData] = await Promise.all([
         getAdminBookings(),
         getAdminSessions(),
         getSettings(),
         getPackages(),
-        getCatalog()
+        getCatalog(),
+        getAdminPayments()
       ]);
       setBookings(bData);
       setSessions(sData);
       if (cData) setCatalog(cData);
+      if (payData) setPayments(payData);
+      setAnalyticsStats(getLocalAnalytics());
+
+      // Alerta sonora y visual si llega una nueva reserva o pago en tiempo real
+      if (previousCountsRef.current.initialized) {
+        const newBookings = bData.length > previousCountsRef.current.bookings;
+        const newPayments = (payData ? payData.length : 0) > previousCountsRef.current.payments;
+        if (newBookings) {
+          playNotificationChime();
+          const latest = bData[0];
+          setRealtimeAlert({
+            type: 'booking',
+            message: `🔔 ¡Nueva Reserva en Tiempo Real de ${latest?.clientName || 'un cliente'}!`,
+            targetTab: 'bookings'
+          });
+          setTimeout(() => setRealtimeAlert(null), 8000);
+        } else if (newPayments) {
+          playNotificationChime();
+          const latestPay = payData?.[0];
+          setRealtimeAlert({
+            type: 'payment',
+            message: `💰 ¡Nuevo Pago Recibido de ${latestPay?.clientName || 'un cliente'} ($${Number(latestPay?.amount || 0).toLocaleString('es-CO')} COP)!`,
+            targetTab: 'payments'
+          });
+          setTimeout(() => setRealtimeAlert(null), 8000);
+        }
+      }
+
+      previousCountsRef.current = {
+        bookings: bData.length,
+        payments: payData ? payData.length : 0,
+        initialized: true
+      };
+
       if (setData) {
         setSettings(setData);
         setEditablePrintedPhotoPrice(setData.printedPhotoPrice || 7000);
@@ -281,6 +351,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setLoadingData(false);
     }
   };
+
+  // Monitoreo en vivo cada 7 segundos para avisar cuando hagan reservas o pagos
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = setInterval(() => {
+      loadAllAdminData();
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   // Handlers para edición de precios y fotos
   const handlePackagePriceChange = (pkgId, newPrice) => {
@@ -906,7 +985,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               Panel de Fotógrafo
             </span>
             <span className="text-xs text-stone-400 font-medium block">
-              Sebastian G • San Antero, Córdoba
+              Sebastian G • Fotografía & Edición Profesional
             </span>
           </div>
         </div>
@@ -933,6 +1012,71 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         </div>
       </div>
 
+      {/* ALERTA VISUAL Y SONORA EN TIEMPO REAL CUANDO ENTRA UNA RESERVA O PAGO */}
+      {realtimeAlert && (
+        <div 
+          onClick={() => setActiveTab(realtimeAlert.targetTab)}
+          className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-black text-xs sm:text-sm flex items-center justify-between shadow-2xl cursor-pointer ring-4 ring-amber-400/40 animate-pulse transition-all"
+        >
+          <div className="flex items-center gap-2.5">
+            <Bell className="w-5 h-5 fill-stone-950 shrink-0" />
+            <span>{realtimeAlert.message}</span>
+          </div>
+          <span className="text-xs font-bold uppercase underline shrink-0 ml-2">Ver Ahora &rarr;</span>
+        </div>
+      )}
+
+      {/* BARRA DE MÉTRICAS EN VIVO Y ESTADÍSTICAS RÁPIDAS */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div 
+          onClick={() => setActiveTab('analytics')}
+          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
+        >
+          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
+            <span className="font-semibold">Visitas Totales</span>
+            <Eye className="w-4 h-4 text-amber-400" />
+          </div>
+          <span className="text-2xl font-black text-white font-mono">{analyticsStats.totalVisits}</span>
+          <span className="text-[10px] text-emerald-400 block mt-0.5 font-bold">+{analyticsStats.todayVisits} hoy</span>
+        </div>
+
+        <div 
+          onClick={() => setActiveTab('analytics')}
+          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
+        >
+          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
+            <span className="font-semibold">Enlace Compartido</span>
+            <Share2 className="w-4 h-4 text-pink-400" />
+          </div>
+          <span className="text-2xl font-black text-white font-mono">{analyticsStats.totalShares}</span>
+          <span className="text-[10px] text-stone-400 block mt-0.5">Por WhatsApp / Web</span>
+        </div>
+
+        <div 
+          onClick={() => setActiveTab('payments')}
+          className="bg-stone-900/80 border border-stone-800 hover:border-emerald-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
+        >
+          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
+            <span className="font-semibold">Pagos en Vivo</span>
+            <CreditCard className="w-4 h-4 text-emerald-400" />
+          </div>
+          <span className="text-2xl font-black text-white font-mono">{payments.length}</span>
+          <span className="text-[10px] text-emerald-400 block mt-0.5 font-bold">Nequi, DaviPlata & Dale</span>
+        </div>
+
+        <div 
+          onClick={() => setActiveTab('loyalty')}
+          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
+        >
+          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
+            <span className="font-semibold">Fidelización VIP</span>
+            <Crown className="w-4 h-4 text-amber-400" />
+          </div>
+          <span className="text-2xl font-black text-white font-mono">15%</span>
+          <span className="text-[10px] text-amber-400 block mt-0.5 font-bold">Clientes recurrentes</span>
+        </div>
+      </div>
+
       {/* CABECERA DEL PANEL DE CONTROL */}
       <div className="flex flex-col gap-4 pb-6 border-b border-stone-800 mb-8">
         <div>
@@ -947,50 +1091,91 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </p>
         </div>
 
-        {/* Pestañas de navegación 100% responsive: Grid de 6 columnas adaptables, sin scrollbars */}
+        {/* Pestañas de navegación 100% responsive: Grid adaptable */}
         <div className="w-full bg-stone-900/95 p-1.5 sm:p-2 rounded-2xl border border-stone-800/90 shadow-xl no-scrollbar">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 sm:gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-1.5 sm:gap-2">
             <button
               onClick={() => setActiveTab('bookings')}
-              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'bookings'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
               }`}
             >
-              <Calendar className="w-4 h-4 shrink-0" />
+              <Calendar className="w-3.5 h-3.5 shrink-0" />
               <span>Reservas</span>
               {bookings.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'bookings' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'bookings' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
                   {bookings.length}
                 </span>
               )}
             </button>
 
             <button
+              onClick={() => setActiveTab('payments')}
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
+                activeTab === 'payments'
+                  ? 'bg-gradient-to-r from-emerald-500 to-emerald-400 text-stone-950 shadow-lg shadow-emerald-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <CreditCard className="w-3.5 h-3.5 shrink-0" />
+              <span>Pagos</span>
+              {payments.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'payments' ? 'bg-stone-950 text-emerald-400' : 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'}`}>
+                  {payments.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
+                activeTab === 'analytics'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5 shrink-0" />
+              <span>Tráfico</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('loyalty')}
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
+                activeTab === 'loyalty'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <Crown className="w-3.5 h-3.5 shrink-0" />
+              <span>Fidelización</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('create-session')}
-              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'create-session'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
               }`}
             >
-              <Plus className="w-4 h-4 shrink-0" />
+              <Plus className="w-3.5 h-3.5 shrink-0" />
               <span>Subir Fotos</span>
             </button>
 
             <button
               onClick={() => setActiveTab('sessions')}
-              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'sessions'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
               }`}
             >
-              <ImageIcon className="w-4 h-4 shrink-0" />
+              <ImageIcon className="w-3.5 h-3.5 shrink-0" />
               <span>Selecciones</span>
               {sessions.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
                   {sessions.length}
                 </span>
               )}
@@ -998,16 +1183,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
             <button
               onClick={() => setActiveTab('catalog-manager')}
-              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'catalog-manager'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
               }`}
             >
-              <FolderPlus className="w-4 h-4 shrink-0" />
+              <FolderPlus className="w-3.5 h-3.5 shrink-0" />
               <span>Catálogo</span>
               {catalog.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'catalog-manager' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'catalog-manager' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
                   {catalog.length}
                 </span>
               )}
@@ -1015,26 +1200,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
             <button
               onClick={() => setActiveTab('pricing-manager')}
-              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'pricing-manager'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
               }`}
             >
-              <DollarSign className="w-4 h-4 shrink-0" />
+              <DollarSign className="w-3.5 h-3.5 shrink-0" />
               <span>Precios</span>
             </button>
 
             <button
               onClick={() => setActiveTab('settings')}
-              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'settings'
                   ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
                   : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
               }`}
             >
-              <Settings className="w-4 h-4 shrink-0" />
-              <span>Ajustes & PIN</span>
+              <Settings className="w-3.5 h-3.5 shrink-0" />
+              <span>Ajustes</span>
             </button>
           </div>
         </div>
@@ -1124,7 +1309,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         <div className="flex justify-between items-center">
                           <span className="text-stone-400">Ubicación:</span>
                           <span className={`font-semibold ${isOutside ? 'text-amber-300' : 'text-stone-200'}`}>
-                            {booking.specificLocation || (isOutside ? 'Fuera de San Antero' : 'San Antero')}
+                            {booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'Sesión Local')}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -1167,6 +1352,303 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* PESTAÑA: PAGOS EN TIEMPO REAL (NEQUI, DAVIPLATA, DALE) */}
+      {activeTab === 'payments' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-serif font-bold text-white">
+                Registro de Pagos en Tiempo Real
+              </h3>
+              <p className="text-xs text-stone-400">
+                Pagos recibidos directamente vía Nequi, DaviPlata y Dale! con comprobantes y detalles.
+              </p>
+            </div>
+            <button
+              onClick={loadAllAdminData}
+              className="p-2 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 flex items-center gap-1 text-xs self-start sm:self-auto"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
+              <span>Actualizar Pagos</span>
+            </button>
+          </div>
+
+          {payments.length === 0 ? (
+            <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
+              <CreditCard className="w-12 h-12 text-stone-600 mx-auto mb-3" />
+              <h4 className="text-base font-bold text-stone-300 mb-1">Aún no hay pagos registrados</h4>
+              <p className="text-xs max-w-md mx-auto text-stone-500">
+                Cuando tus clientes seleccionen fotos adicionales o impresiones en su galería y paguen por Nequi (3244725167), DaviPlata (@PLATA3244725167) o Dale! (@SGG04), aparecerán aquí automáticamente en tiempo real.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {payments.map((payment) => {
+                const clientPhoneClean = (payment.clientWhatsApp || '').replace(/\D/g, '');
+                const methodBadge = {
+                  nequi: { name: 'Nequi', key: '3244725167', color: 'bg-purple-900/60 text-purple-200 border-purple-500/40' },
+                  daviplata: { name: 'DaviPlata', key: '@PLATA3244725167', color: 'bg-red-900/60 text-red-200 border-red-500/40' },
+                  dale: { name: 'Dale!', key: '@SGG04', color: 'bg-amber-900/60 text-amber-200 border-amber-500/40' }
+                }[payment.method] || { name: payment.method, key: '', color: 'bg-stone-800 text-stone-300 border-stone-700' };
+
+                return (
+                  <div
+                    key={payment.id}
+                    className="bg-stone-900 border border-stone-800 rounded-3xl p-6 flex flex-col justify-between space-y-4 hover:border-emerald-500/40 transition-colors shadow-xl"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg border ${methodBadge.color}`}>
+                          {methodBadge.name} • {methodBadge.key}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${payment.status === 'verified' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                          {payment.status === 'verified' ? 'Verificado ✓' : 'Pendiente Verificación'}
+                        </span>
+                      </div>
+
+                      <h4 className="text-xl font-serif font-bold text-white">
+                        {payment.clientName}
+                      </h4>
+
+                      <div className="mt-1">
+                        <a
+                          href={`https://wa.me/${clientPhoneClean}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>{payment.clientWhatsApp || 'Sin WhatsApp'} (Contactar)</span>
+                        </a>
+                      </div>
+
+                      <div className="mt-4 p-3.5 rounded-2xl bg-stone-950 border border-stone-800/80 space-y-2 text-xs">
+                        <div className="flex justify-between items-center">
+                          <span className="text-stone-400">Monto Transferido:</span>
+                          <span className="text-xl font-black text-emerald-400 font-mono">
+                            ${Number(payment.amount || 0).toLocaleString('es-CO')} COP
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-stone-300">
+                          <span className="text-stone-400">Referencia:</span>
+                          <span className="font-mono font-bold text-white bg-stone-900 px-2 py-0.5 rounded border border-stone-800">
+                            {payment.reference || 'Sin referencia'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-stone-300">
+                          <span className="text-stone-400">Detalle Selección:</span>
+                          <span className="font-medium text-amber-300">
+                            {payment.extraPhotosCount || 0} fotos extra
+                            {payment.printedPhotosCount > 0 ? ` + ${payment.printedPhotosCount} impresiones` : ''}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-stone-400 text-[11px]">
+                          <span>Fecha:</span>
+                          <span>{new Date(payment.createdAt).toLocaleString('es-CO')}</span>
+                        </div>
+                      </div>
+
+                      {/* Comprobante de pago (Thumbnail) */}
+                      {payment.voucherUrl && (
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={() => setViewingVoucherModal(payment.voucherUrl)}
+                            className="w-full bg-stone-950 hover:bg-stone-800 border border-stone-800 rounded-xl p-2 flex items-center justify-between text-xs text-stone-300 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <img src={payment.voucherUrl} alt="Comprobante" className="w-8 h-8 rounded-lg object-cover" />
+                              <span className="font-semibold text-emerald-400">Ver Comprobante Adjunto</span>
+                            </div>
+                            <ExternalLink className="w-3.5 h-3.5 text-stone-400" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-stone-800 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const newStatus = payment.status === 'verified' ? 'pending' : 'verified';
+                          await updatePaymentStatus(payment.id, newStatus);
+                          loadAllAdminData();
+                        }}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all ${
+                          payment.status === 'verified'
+                            ? 'bg-stone-950 border-stone-700 text-stone-400 hover:text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                        }`}
+                      >
+                        {payment.status === 'verified' ? 'Marcar Pendiente' : 'Aprobar Pago ✓'}
+                      </button>
+
+                      <a
+                        href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${payment.clientName}! Te escribe Sebastian G. Hemos recibido y verificado tu pago de $${Number(payment.amount || 0).toLocaleString('es-CO')} COP con éxito. ¡Muchas gracias!`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-xl"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Confirmar</span>
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PESTAÑA: ANALÍTICAS Y TRÁFICO EN VIVO */}
+      {activeTab === 'analytics' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-serif font-bold text-white">
+                Métricas & Tráfico en Vivo
+              </h3>
+              <p className="text-xs text-stone-400">
+                Monitoreo en tiempo real de visitantes, visitas de hoy y enlaces compartidos.
+              </p>
+            </div>
+            <button
+              onClick={() => setAnalyticsStats(getLocalAnalytics())}
+              className="p-2 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 flex items-center gap-1 text-xs self-start sm:self-auto"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Actualizar Métricas</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 text-left shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-400">Visitas Totales</span>
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Eye className="w-5 h-5" />
+                </div>
+              </div>
+              <span className="text-4xl font-black text-white font-mono block">
+                {analyticsStats.totalVisits}
+              </span>
+              <p className="text-xs text-stone-400 mt-2">
+                Personas que han ingresado a explorar tu portafolio y paquetes fotográficos.
+              </p>
+            </div>
+
+            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 text-left shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">Visitas de Hoy</span>
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
+              </div>
+              <span className="text-4xl font-black text-emerald-400 font-mono block">
+                {analyticsStats.todayVisits}
+              </span>
+              <p className="text-xs text-stone-400 mt-2">
+                Tráfico registrado el día de hoy ({analyticsStats.todayDate}).
+              </p>
+            </div>
+
+            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 text-left shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider text-pink-400">Veces Compartido</span>
+                <div className="w-10 h-10 rounded-xl bg-pink-500/20 border border-pink-500/30 flex items-center justify-center text-pink-400">
+                  <Share2 className="w-5 h-5" />
+                </div>
+              </div>
+              <span className="text-4xl font-black text-white font-mono block">
+                {analyticsStats.totalShares}
+              </span>
+              <p className="text-xs text-stone-400 mt-2">
+                Veces que los clientes o visitantes han compartido el enlace de tu web a sus contactos.
+              </p>
+            </div>
+          </div>
+
+          {/* Desglose por canales */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 text-left">
+            <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-4">
+              Canales de Difusión del Enlace
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800">
+                <span className="text-xs text-stone-400 block mb-1">Compartido por WhatsApp</span>
+                <span className="text-2xl font-black text-emerald-400 font-mono">{analyticsStats.sharesByChannel?.whatsapp || 0}</span>
+              </div>
+              <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800">
+                <span className="text-xs text-stone-400 block mb-1">Enlace Copiado al Portapapeles</span>
+                <span className="text-2xl font-black text-blue-400 font-mono">{analyticsStats.sharesByChannel?.copy_link || 0}</span>
+              </div>
+              <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800">
+                <span className="text-xs text-stone-400 block mb-1">Compartido Nativo (Celular)</span>
+                <span className="text-2xl font-black text-purple-400 font-mono">{analyticsStats.sharesByChannel?.native || 0}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PESTAÑA: PROGRAMA DE FIDELIZACIÓN VIP */}
+      {activeTab === 'loyalty' && (
+        <div className="space-y-6 text-left">
+          <div>
+            <h3 className="text-xl font-serif font-bold text-white">
+              Programa de Fidelización & Clientes VIP
+            </h3>
+            <p className="text-xs text-stone-400">
+              Detección automática por número de WhatsApp con aplicación automática de 15% de descuento en sesiones recurrentes.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-gradient-to-br from-amber-950/50 via-stone-900 to-stone-900 border border-amber-500/40 rounded-3xl p-6 shadow-xl">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4">
+                <Crown className="w-6 h-6" />
+              </div>
+              <h4 className="text-lg font-serif font-bold text-white mb-2">
+                Fidelización Automática (15% OFF)
+              </h4>
+              <p className="text-xs text-stone-300 leading-relaxed mb-4">
+                Cuando un cliente que ya realizó una sesión contigo vuelve a ingresar su número de WhatsApp para reservar o seleccionar fotos, la plataforma lo reconoce al instante como <strong>Cliente VIP</strong> y le otorga un <strong>15% de descuento directo</strong>.
+              </p>
+              <div className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800 space-y-1.5 text-xs text-stone-300">
+                <div className="flex justify-between">
+                  <span className="text-stone-400">Descuento aplicado:</span>
+                  <span className="font-bold text-amber-400">15% de Descuento</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-stone-400">Activación:</span>
+                  <span className="font-semibold text-emerald-400">Automática por WhatsApp</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6">
+              <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-4">
+                Clientes Recurrentes Registrados
+              </h4>
+              <div className="space-y-3">
+                {bookings.map((b) => (
+                  <div key={b.id} className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-white block">{b.clientName}</span>
+                      <span className="text-[11px] text-stone-400">{b.clientWhatsApp}</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      Cliente VIP (15% OFF)
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2280,6 +2762,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               >
                 Cerrar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA VER COMPROBANTE DE PAGO EN TAMAÑO COMPLETO */}
+      {viewingVoucherModal && (
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative max-w-2xl w-full bg-stone-900 border border-stone-700 rounded-3xl p-5 text-center shadow-2xl">
+            <div className="flex items-center justify-between pb-3 mb-3 border-b border-stone-800">
+              <span className="text-sm font-bold text-white">Comprobante de Transferencia Bancaria</span>
+              <button
+                type="button"
+                onClick={() => setViewingVoucherModal(null)}
+                className="px-3 py-1 rounded-xl bg-stone-950 text-stone-400 hover:text-white border border-stone-800 text-xs font-bold"
+              >
+                Cerrar ✕
+              </button>
+            </div>
+            <div className="max-h-[75vh] overflow-auto rounded-2xl bg-black p-2 flex items-center justify-center">
+              <img src={viewingVoucherModal} alt="Comprobante de Pago" className="max-w-full max-h-[70vh] object-contain rounded-xl" />
             </div>
           </div>
         </div>

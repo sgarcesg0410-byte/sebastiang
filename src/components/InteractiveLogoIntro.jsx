@@ -156,7 +156,7 @@ export default function InteractiveLogoIntro({ onComplete }) {
         {/* Leyenda de ubicación y marca */}
         <div className="text-center mt-6 space-y-1">
           <p className="text-xs uppercase tracking-[0.25em] text-pink-400/90 font-bold">
-            San Antero • Córdoba
+            Fotografía & Edición Profesional
           </p>
           <p className="text-stone-300 font-serif italic text-base sm:text-lg font-light">
             "Capturamos momentos, creamos recuerdos. ♡"

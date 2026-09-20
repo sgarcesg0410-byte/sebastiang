@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { createBooking } from '../services/api';
+import { createBooking, checkClientLoyalty } from '../services/api';
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, settings = {} }) {
   if (!isOpen) return null;
@@ -23,9 +23,27 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     printedPhotosCount: 0
   });
 
+  const [loyalInfo, setLoyalInfo] = useState({ isLoyal: false, discountPercent: 0, clientName: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [submittedBooking, setSubmittedBooking] = useState(null);
+
+  // Detección automática de cliente frecuente para fidelización
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (formData.clientWhatsApp && formData.clientWhatsApp.replace(/\D/g, '').length >= 7) {
+        const res = await checkClientLoyalty(formData.clientWhatsApp);
+        setLoyalInfo(res);
+        if (res.isLoyal && !formData.clientName && res.clientName && res.clientName !== 'Cliente VIP') {
+          setFormData(prev => ({ ...prev, clientName: res.clientName }));
+        }
+      } else {
+        setLoyalInfo({ isLoyal: false, discountPercent: 0, clientName: '' });
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [formData.clientWhatsApp]);
 
   // Asegurar que al abrir siempre comience scrolleado arriba de todo
   useEffect(() => {
@@ -42,13 +60,15 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
   const currentPackage = packages.find(p => p.id === formData.packageId) || packages[0];
 
-  // Cálculo invisible fuera de San Antero (+ $10.000 COP)
+  // Cálculo con recargo por locación especial (+ $10.000 COP)
   const baseOrSurchargedPrice = currentPackage
     ? (formData.locationType === 'outside' ? currentPackage.price + surchargeAmount : currentPackage.price)
     : 0;
 
+  // Descuento de fidelización del 15% para clientes recurrentes
+  const loyaltyDiscount = loyalInfo.isLoyal ? Math.round(baseOrSurchargedPrice * 0.15) : 0;
   const printedPhotosTotal = Number(formData.printedPhotosCount || 0) * printedPhotoPrice;
-  const calculatedPrice = baseOrSurchargedPrice + printedPhotosTotal;
+  const calculatedPrice = (baseOrSurchargedPrice - loyaltyDiscount) + printedPhotosTotal;
 
   const formatPrice = (val) => Number(val).toLocaleString('es-CO');
 
@@ -91,8 +111,12 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         clientName: formData.clientName,
         clientWhatsApp: formData.clientWhatsApp,
         packageId: formData.packageId,
+        packageName: currentPackage ? `${currentPackage.name} (+2 Gratis)` : 'Sesión Fotográfica',
+        totalPrice: calculatedPrice,
+        loyaltyDiscount: loyaltyDiscount,
+        isVipClient: loyalInfo.isLoyal,
         locationType: formData.locationType,
-        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'San Antero' : 'Fuera de San Antero'),
+        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'Sesión Local' : 'Locación Especial / Fuera'),
         dateTime: `${formData.date} a las ${formData.time}`,
         description: formData.description,
         printedPhotosCount: Number(formData.printedPhotosCount || 0)
@@ -138,7 +162,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                 Reservar Sesión Fotográfica
               </h3>
               <span className="text-[10px] text-amber-400 font-semibold block">
-                San Antero • Sin Registros
+                Fotografía & Edición Profesional
               </span>
             </div>
           </div>
@@ -267,15 +291,30 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                   required
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
                 />
-                <div className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg leading-tight">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400 mt-0.5" />
-                  <span>
-                    <strong>Importante:</strong> Por este WhatsApp recibirás el enlace para elegir tus fotos protegidas.
-                  </span>
-                </div>
+                
+                {loyalInfo.isLoyal ? (
+                  <div className="mt-2 bg-gradient-to-r from-amber-950/80 via-stone-900 to-amber-950/80 border-2 border-amber-400/60 rounded-xl p-3 flex items-center gap-2.5 shadow-lg">
+                    <Crown className="w-5 h-5 text-amber-400 shrink-0" />
+                    <div>
+                      <span className="text-xs font-black text-amber-300 block">
+                        👑 ¡Cliente Preferencial VIP Detectado! ({loyalInfo.clientName})
+                      </span>
+                      <p className="text-[11px] text-amber-100/90 leading-tight mt-0.5">
+                        Tienes un <strong>15% de Descuento Especial</strong> aplicado automáticamente en el valor total de tu sesión.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg leading-tight">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400 mt-0.5" />
+                    <span>
+                      <strong>Importante:</strong> Por este WhatsApp recibirás el enlace privado para elegir tus fotos protegidas.
+                    </span>
+                  </div>
+                )}
               </div>
 
-              {/* 3. LUGAR DE LA SESIÓN (LÓGICA INVISIBLE SAN ANTERO) */}
+              {/* 3. LUGAR DE LA SESIÓN (ESCENARIOS LIBRES Y ABIERTOS) */}
               <div>
                 <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-amber-400" />
@@ -286,25 +325,25 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                   <button
                     type="button"
                     onClick={() => handleLocationTypeChange('san_antero')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 text-center ${
                       formData.locationType === 'san_antero'
                         ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-md shadow-amber-500/15'
                         : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
                     }`}
                   >
-                    <span>📍 En San Antero</span>
+                    <span>📍 Sesión Local / En Locación</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => handleLocationTypeChange('outside')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 text-center ${
                       formData.locationType === 'outside'
                         ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-md shadow-amber-500/15'
                         : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
                     }`}
                   >
-                    <span>🚗 Fuera de San Antero</span>
+                    <span>🚗 Locación Especial / Fuera (+ $10k)</span>
                   </button>
                 </div>
 
@@ -314,7 +353,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     name="specificLocation"
                     value={formData.specificLocation}
                     onChange={handleInputChange}
-                    placeholder="Ej: Playa Blanca, Cispatá, Casco Urbano, etc."
+                    placeholder="Ej: Playa, Parque, Casa, Hacienda, Casco Urbano, etc."
                     className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
                   />
                 ) : (
@@ -323,9 +362,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     name="specificLocation"
                     value={formData.specificLocation}
                     onChange={handleInputChange}
-                    placeholder="Especifica municipio o locación (Ej: Coveñas, Lorica, etc.)"
-                    required
-                    className="w-full bg-stone-950 border border-amber-500/50 rounded-xl px-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                    placeholder="Ej: Finca, Hotel campestre, A domicilio, Municipio vecino o Viaje"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
                   />
                 )}
               </div>
@@ -428,6 +466,11 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     <span className="text-xs text-stone-200 font-medium">
                       {currentPackage?.name} (+2 Gratis)
                     </span>
+                    {loyaltyDiscount > 0 && (
+                      <span className="text-[11px] text-emerald-400 font-semibold block mt-0.5">
+                        👑 Descuento VIP Aplicado (-15%)
+                      </span>
+                    )}
                   </div>
                   <div className="text-right">
                     <span className="text-xl font-extrabold text-amber-400 font-mono">

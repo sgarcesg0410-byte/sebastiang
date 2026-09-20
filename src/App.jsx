@@ -8,6 +8,7 @@ import AdminPanel from './components/AdminPanel';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import { getSettings, getCatalog, getPackages } from './services/api';
+import { trackPageVisit } from './services/analytics';
 import { supabase } from './services/supabase';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
@@ -33,6 +34,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Registrar visita en analítica en tiempo real
+    trackPageVisit();
+
     // Detectar si la URL contiene una ruta de galería tipo /galeria/token
     const path = window.location.pathname;
     if (path.startsWith('/galeria/')) {
@@ -194,7 +198,7 @@ export default function App() {
                   {settings.photographerName || 'Sebastian G'}
                 </span>
                 <span className="text-[11px] font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-pink-400 to-purple-400 block uppercase">
-                  San Antero • Córdoba
+                  Fotografía & Edición Profesional
                 </span>
               </div>
             </div>

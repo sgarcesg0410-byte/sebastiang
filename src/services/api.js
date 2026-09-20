@@ -117,18 +117,69 @@ function saveLocalSession(session) {
   }
 }
 
-function getLocalBookings() {
+export const REAL_DEFAULT_BOOKINGS = [
+  {
+    id: "book-real-jennifer-vasquez",
+    clientName: "Jennifer Vásquez",
+    clientWhatsApp: "+573244725167",
+    packageId: "pkg-8fotos",
+    packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+    totalPrice: 75000,
+    locationType: "local",
+    specificLocation: "Sesión Especial",
+    dateTime: "Reserva Confirmada",
+    description: "Sesión fotográfica confirmada",
+    createdAt: "2026-09-20T10:00:00.000Z",
+    status: "confirmed",
+    isReal: true
+  }
+];
+
+const LOCAL_PAYMENTS_KEY = 'sebastian_g_payments_v1';
+
+function getLocalPayments() {
   try {
-    const raw = localStorage.getItem(LOCAL_BOOKINGS_KEY);
+    const raw = localStorage.getItem(LOCAL_PAYMENTS_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
   }
 }
 
+function saveLocalPayment(payment) {
+  try {
+    const payments = getLocalPayments().filter(p => p.id !== payment.id);
+    payments.unshift(payment);
+    localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(payments));
+  } catch (e) {
+    console.warn('No se pudo guardar pago en localStorage:', e);
+  }
+}
+
+function getLocalBookings() {
+  try {
+    const raw = localStorage.getItem(LOCAL_BOOKINGS_KEY);
+    let list = raw ? JSON.parse(raw) : [];
+    // Filtrar cualquier reserva de muestra o demo que haya quedado guardada
+    list = (Array.isArray(list) ? list : []).filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
+    
+    // Asegurar que Jennifer Vásquez esté siempre presente
+    const hasJennifer = list.some(b => b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez');
+    if (!hasJennifer) {
+      list.push(...REAL_DEFAULT_BOOKINGS);
+      try {
+        localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
+      } catch (e) {}
+    }
+    return list;
+  } catch (e) {
+    return REAL_DEFAULT_BOOKINGS;
+  }
+}
+
 function saveLocalBooking(booking) {
   try {
-    const bookings = getLocalBookings().filter(b => b.id !== booking.id);
+    const bookings = getLocalBookings().filter(b => b.id !== booking.id && b.clientName !== 'Camila Rodríguez');
     bookings.unshift(booking);
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(bookings));
   } catch (e) {
@@ -547,19 +598,37 @@ export async function verifyAdminPin(pin) {
 }
 
 export async function getAdminBookings() {
+  let combined = [];
   try {
     const res = await fetch(`${API_BASE}/admin/bookings`);
     if (res.ok) {
       const data = await res.json();
       const local = getLocalBookings();
       const map = new Map();
-      [...data, ...local].forEach(b => map.set(b.id, b));
-      return Array.from(map.values());
+      [...data, ...local].forEach(b => {
+        if (b && b.id && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1') {
+          map.set(b.id, b);
+        }
+      });
+      combined = Array.from(map.values());
     }
   } catch (err) {
     console.warn(err);
+    combined = getLocalBookings();
   }
-  return getLocalBookings();
+
+  if (combined.length === 0) {
+    combined = [...REAL_DEFAULT_BOOKINGS];
+  } else {
+    // Asegurar que Jennifer siempre esté
+    const hasJennifer = combined.some(b => b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez');
+    if (!hasJennifer) {
+      combined.push(...REAL_DEFAULT_BOOKINGS);
+    }
+  }
+
+  // Filtrar cualquier rastro de reservas demo
+  return combined.filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
 }
 
 export async function updateBookingStatus(id, status) {
@@ -577,6 +646,142 @@ export async function updateBookingStatus(id, status) {
   const local = getLocalBookings().map(b => b.id === id ? { ...b, status } : b);
   localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(local));
   return { success: true };
+}
+
+// --- PAGOS EN TIEMPO REAL (NEQUI, DAVIPLATA, DALE) ---
+export async function getAdminPayments() {
+  try {
+    const res = await fetch(`${API_BASE}/admin/payments`);
+    if (res.ok) {
+      const serverPayments = await res.json();
+      const localPayments = getLocalPayments();
+      const map = new Map();
+      [...serverPayments, ...localPayments].forEach(p => {
+        if (p && p.id) map.set(p.id, p);
+      });
+      return Array.from(map.values());
+    }
+  } catch (err) {
+    console.warn('Consultando pagos locales:', err);
+  }
+  return getLocalPayments();
+}
+
+export async function createPayment(paymentData) {
+  let serverResult = null;
+  try {
+    const res = await fetch(`${API_BASE}/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(paymentData)
+    });
+    if (res.ok) {
+      serverResult = await res.json();
+      if (serverResult?.payment) {
+        saveLocalPayment(serverResult.payment);
+        return serverResult;
+      }
+    }
+  } catch (err) {
+    console.warn('Creando pago con respaldo local:', err);
+  }
+
+  // Fallback local garantizado
+  const newPayment = {
+    id: `pay-${Date.now()}`,
+    clientName: (paymentData.clientName || 'Cliente').trim(),
+    clientWhatsApp: (paymentData.clientWhatsApp || '').trim(),
+    sessionToken: paymentData.sessionToken || '',
+    packageTitle: paymentData.packageTitle || 'Sesión Fotográfica',
+    amount: Number(paymentData.amount) || 0,
+    method: paymentData.method || 'nequi',
+    reference: (paymentData.reference || '').trim(),
+    voucherUrl: paymentData.voucherUrl || null,
+    extraPhotosCount: Number(paymentData.extraPhotosCount) || 0,
+    printedPhotosCount: Number(paymentData.printedPhotosCount) || 0,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  };
+  saveLocalPayment(newPayment);
+
+  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+  const methodNames = {
+    nequi: 'Nequi (3244725167)',
+    daviplata: 'DaviPlata (Llave @PLATA3244725167)',
+    dale: 'Dale! (Llave @SGG04)'
+  };
+  const methodName = methodNames[newPayment.method] || newPayment.method;
+
+  const msgText = encodeURIComponent(
+    `💰 *¡Hola Sebastian G! Acabo de registrar mi pago de fotos:*\n\n` +
+    `👤 *Cliente:* ${newPayment.clientName}\n` +
+    `📱 *WhatsApp:* ${newPayment.clientWhatsApp}\n` +
+    `💵 *Monto Transferido:* $${newPayment.amount.toLocaleString('es-CO')} COP\n` +
+    `💳 *Pasarela / Billetera:* ${methodName}\n` +
+    `🔢 *Referencia:* ${newPayment.reference || 'Comprobante adjunto'}\n` +
+    `📸 *Detalle:* ${newPayment.extraPhotosCount} fotos extra elegidas` +
+    (newPayment.printedPhotosCount > 0 ? ` + ${newPayment.printedPhotosCount} impresiones` : '') + `\n\n` +
+    `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
+  );
+
+  return {
+    success: true,
+    payment: newPayment,
+    directWhatsAppUrl: `https://wa.me/${p1}?text=${msgText}`,
+    secondaryWhatsAppUrl: `https://wa.me/${p2}?text=${msgText}`
+  };
+}
+
+export async function updatePaymentStatus(id, status) {
+  try {
+    const res = await fetch(`${API_BASE}/admin/payments/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn(err);
+  }
+
+  const local = getLocalPayments().map(p => p.id === id ? { ...p, status } : p);
+  localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(local));
+  return { success: true };
+}
+
+// --- PROGRAMA DE FIDELIZACIÓN PARA CLIENTES RECURRENTES ---
+export async function checkClientLoyalty(phone) {
+  if (!phone) return { isLoyal: false, discountPercent: 0 };
+  const clean = phone.replace(/\D/g, '');
+  if (clean.length < 7) return { isLoyal: false, discountPercent: 0 };
+
+  try {
+    const bookings = await getAdminBookings();
+    const sessions = await getAdminSessions();
+
+    const matchedBooking = bookings.find(b => {
+      const bClean = (b.clientWhatsApp || '').replace(/\D/g, '');
+      return bClean && (bClean.endsWith(clean.slice(-8)) || clean.endsWith(bClean.slice(-8)));
+    });
+
+    const matchedSession = sessions.find(s => {
+      const sClean = (s.clientWhatsApp || '').replace(/\D/g, '');
+      return sClean && (sClean.endsWith(clean.slice(-8)) || clean.endsWith(sClean.slice(-8)));
+    });
+
+    if (matchedBooking || matchedSession) {
+      const clientName = matchedBooking?.clientName || matchedSession?.clientName || 'Cliente VIP';
+      return {
+        isLoyal: true,
+        discountPercent: 15,
+        clientName,
+        previousSessions: 1
+      };
+    }
+  } catch (e) {}
+
+  return { isLoyal: false, discountPercent: 0 };
 }
 
 export async function getAdminSessions() {

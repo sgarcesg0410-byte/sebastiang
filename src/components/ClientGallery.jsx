@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Shield, 
   Lock, 
@@ -12,10 +12,16 @@ import {
   HelpCircle,
   Camera,
   Heart,
-  Share2
+  Share2,
+  CreditCard,
+  Copy,
+  Upload,
+  Printer,
+  ChevronRight,
+  ExternalLink
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { getGalleryByToken, submitGallerySelection } from '../services/api';
+import { getGalleryByToken, submitGallerySelection, createPayment } from '../services/api';
 
 export default function ClientGallery({ token = "demo-cliente-2026", onBackToHome }) {
   const [galleryData, setGalleryData] = useState(null);
@@ -27,6 +33,52 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionResult, setSubmissionResult] = useState(null);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+
+  // Estados de Pasarela de Pago Directo (Nequi, DaviPlata, Dale)
+  const [selectedWallet, setSelectedWallet] = useState('nequi'); // 'nequi' | 'daviplata' | 'dale'
+  const [copiedKeyFeedback, setCopiedKeyFeedback] = useState(null);
+  const [voucherImage, setVoucherImage] = useState(null);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [printedPhotosCount, setPrintedPhotosCount] = useState(0);
+  const voucherInputRef = useRef(null);
+
+  const copyToClipboard = (text, keyName) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+    }
+    setCopiedKeyFeedback(keyName);
+    setTimeout(() => setCopiedKeyFeedback(null), 2500);
+  };
+
+  const handleVoucherUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        const maxDim = 1200;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        setVoucherImage(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Contador de tiempo restante
   const [timeRemaining, setTimeRemaining] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
@@ -116,7 +168,18 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     });
   };
 
-  // Enviar selección final
+  // Cálculos de selección y pasarela de pago directo
+  const selectedCount = Object.values(selections).filter(s => s.selected).length;
+  const maxAllowed = galleryData?.maxPhotosAllowed || 10;
+  const extraPhotos = Math.max(0, selectedCount - maxAllowed);
+  const extraPhotoPrice = 7000;
+  const printedPrice = galleryData?.watermarkSettings?.printedPhotoPrice || 7000;
+  const extraPhotosTotal = extraPhotos * extraPhotoPrice;
+  const printedPhotosTotal = printedPhotosCount * printedPrice;
+  const totalAmount = extraPhotosTotal + printedPhotosTotal;
+  const formatPrice = (val) => Number(val).toLocaleString('es-CO');
+
+  // Enviar selección final y pago directo
   const handleConfirmSubmit = async () => {
     try {
       setIsSubmitting(true);
@@ -126,7 +189,28 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
         clientComment: val.comment
       }));
 
+      // 1. Guardar selección de fotos en el sistema
       const res = await submitGallerySelection(token, payload);
+
+      // 2. Si hay saldo de pago por fotos extra o impresiones, registrar el pago en tiempo real
+      if (totalAmount > 0) {
+        try {
+          await createPayment({
+            clientName: galleryData.clientName,
+            clientWhatsApp: galleryData.clientWhatsApp,
+            sessionToken: token,
+            packageTitle: galleryData.packageTitle,
+            amount: totalAmount,
+            method: selectedWallet,
+            reference: paymentReference,
+            voucherUrl: voucherImage,
+            extraPhotosCount: extraPhotos,
+            printedPhotosCount: printedPhotosCount
+          });
+        } catch (payErr) {
+          console.warn('Error al registrar pago en tiempo real:', payErr);
+        }
+      }
 
       try {
         confetti({
@@ -140,9 +224,23 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
       setConfirmModalOpen(false);
       setGalleryData(prev => ({ ...prev, isSubmitted: true }));
 
-      // Abrir WhatsApp automáticamente con el listado detallado
+      // Abrir WhatsApp automáticamente con el listado detallado y los datos de pago
       if (res.directWhatsAppUrl) {
-        window.open(res.directWhatsAppUrl, '_blank');
+        let finalUrl = res.directWhatsAppUrl;
+        if (totalAmount > 0) {
+          const walletLabels = {
+            nequi: 'Nequi (3244725167)',
+            daviplata: 'DaviPlata (Llave @PLATA3244725167)',
+            dale: 'Dale! (Llave @SGG04)'
+          };
+          const payText = `\n\n💳 *PAGO REGISTRADO:*` +
+            `\n💰 *Monto:* $${formatPrice(totalAmount)} COP` +
+            `\n🏦 *Medio:* ${walletLabels[selectedWallet] || selectedWallet}` +
+            (paymentReference ? `\n🔢 *Referencia:* ${paymentReference}` : '') +
+            (voucherImage ? `\n📸 *Comprobante:* Adjuntado en el sistema` : '');
+          finalUrl += encodeURIComponent(payText);
+        }
+        window.open(finalUrl, '_blank');
       }
     } catch (err) {
       alert(err.message || 'Error al enviar selección.');
@@ -178,7 +276,6 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     );
   }
 
-  const selectedCount = Object.values(selections).filter(s => s.selected).length;
   const isLocked = galleryData.isExpired || galleryData.isSubmitted || Boolean(submissionResult);
   const watermarkSubtext = galleryData.watermarkSettings?.watermarkSubtext || "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA";
 
@@ -465,7 +562,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
         <div className="fixed bottom-0 inset-x-0 z-40 bg-stone-950/95 backdrop-blur-md border-t border-stone-800 p-4 shadow-2xl">
           <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
                   Tu Selección:
                 </span>
@@ -473,10 +570,15 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                   {selectedCount} fotos elegidas
                 </span>
                 <span className="text-xs text-stone-400">
-                  (Paquete incluye {galleryData.maxPhotosAllowed})
+                  (Paquete incluye {maxAllowed})
                 </span>
+                {extraPhotos > 0 && (
+                  <span className="text-xs font-bold text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30">
+                    +{extraPhotos} extra (${formatPrice(extraPhotosTotal)} COP)
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] text-stone-400 hidden sm:block">
+              <p className="text-[11px] text-stone-400 hidden sm:block mt-0.5">
                 Solo puedes enviar una única vez. Al confirmar, el enlace se bloqueará.
               </p>
             </div>
@@ -489,50 +591,325 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-sm px-7 py-3.5 rounded-xl shadow-lg shadow-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98] transition-all"
               >
                 <CheckCircle2 className="w-5 h-5 fill-stone-950" />
-                <span>Enviar Mi Selección Definitiva</span>
+                <span>
+                  {extraPhotos > 0 ? `Pagar Fotos Extra y Enviar ($${formatPrice(extraPhotosTotal)} COP)` : 'Enviar Mi Selección Definitiva'}
+                </span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* MODAL DE CONFIRMACIÓN DE ENVÍO ÚNICO */}
+        {/* MODAL DE CONFIRMACIÓN Y PASARELA DE PAGO DIRECTO */}
         {confirmModalOpen && (
-          <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-stone-900 border border-stone-700 rounded-3xl max-w-md w-full p-6 text-center shadow-2xl">
-              <div className="w-14 h-14 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <AlertTriangle className="w-8 h-8" />
-              </div>
+          <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+            <div className="bg-stone-900 border border-stone-700 rounded-3xl max-w-lg w-full p-5 sm:p-7 text-center shadow-2xl my-auto max-h-[95vh] flex flex-col">
+              
+              <div className="overflow-y-auto space-y-4 pr-1 text-left">
+                {/* Cabecera del Modal */}
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-2xl flex items-center justify-center shrink-0">
+                    <Sparkles className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-lg sm:text-xl font-serif font-bold text-white leading-tight">
+                      Confirmar Selección {totalAmount > 0 ? '& Pago Directo' : 'Definitiva'}
+                    </h4>
+                    <span className="text-[11px] text-amber-400 font-semibold block">
+                      {galleryData.clientName} • {galleryData.packageTitle}
+                    </span>
+                  </div>
+                </div>
 
-              <h4 className="text-xl font-serif font-bold text-white mb-2">
-                ¿Confirmar selección final?
-              </h4>
+                {/* Resumen de Fotos y Costos */}
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-2.5 text-xs">
+                  <div className="flex justify-between text-stone-300">
+                    <span className="text-stone-400">Fotos incluidas en tu paquete:</span>
+                    <span className="font-bold text-emerald-400">{maxAllowed} fotos (Ya incluidas)</span>
+                  </div>
 
-              <p className="text-xs text-stone-300 leading-relaxed mb-4">
-                Has seleccionado <strong>{selectedCount} fotos</strong>.
-              </p>
+                  <div className="flex justify-between text-stone-300">
+                    <span className="text-stone-400">Total fotos elegidas:</span>
+                    <span className="font-bold text-white">{selectedCount} fotos</span>
+                  </div>
 
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 text-xs text-amber-200 text-left mb-6 leading-tight">
-                ⚠️ <strong>Aviso Importante:</strong> Solo puedes enviar tu selección <strong>una única vez</strong>. Una vez confirmada, las fotos quedarán bloqueadas y se enviará la notificación a Sebastian.
-              </div>
+                  {extraPhotos > 0 && (
+                    <div className="flex justify-between text-amber-300 bg-amber-500/10 p-2 rounded-xl border border-amber-500/20">
+                      <span>Fotos adicionales (+{extraPhotos} fotos a $7.000 c/u):</span>
+                      <span className="font-bold font-mono">+${formatPrice(extraPhotosTotal)} COP</span>
+                    </div>
+                  )}
 
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={handleConfirmSubmit}
-                  className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm py-3 rounded-xl shadow-md disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Enviando y bloqueando...' : 'Sí, Enviar Mi Selección Definitiva'}
-                </button>
+                  {/* Selector opcional de fotos impresas */}
+                  <div className="pt-2 border-t border-stone-800 flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-stone-200 block">Fotos Impresas 10x15</span>
+                      <span className="text-[10px] text-stone-400">Papel fotográfico profesional ($7.000 c/u)</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-stone-900 border border-stone-700 rounded-xl px-2 py-1">
+                      <button
+                        type="button"
+                        onClick={() => setPrintedPhotosCount(Math.max(0, printedPhotosCount - 1))}
+                        className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                      >
+                        -
+                      </button>
+                      <span className="w-5 text-center font-bold text-white font-mono">{printedPhotosCount}</span>
+                      <button
+                        type="button"
+                        onClick={() => setPrintedPhotosCount(printedPhotosCount + 1)}
+                        className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
 
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => setConfirmModalOpen(false)}
-                  className="w-full py-2.5 text-xs text-stone-400 hover:text-stone-200"
-                >
-                  Volver a revisar mis fotos
-                </button>
+                  {printedPhotosCount > 0 && (
+                    <div className="flex justify-between text-stone-300">
+                      <span className="text-stone-400">Total impresiones ({printedPhotosCount}):</span>
+                      <span className="font-bold font-mono text-amber-400">+${formatPrice(printedPhotosTotal)} COP</span>
+                    </div>
+                  )}
+
+                  {/* TOTAL GENERAL */}
+                  <div className="pt-2.5 border-t border-stone-800 flex justify-between items-center">
+                    <span className="text-xs font-bold uppercase tracking-wider text-stone-300">
+                      Total a Pagar:
+                    </span>
+                    <span className={`text-xl font-black font-mono ${totalAmount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {totalAmount > 0 ? `$${formatPrice(totalAmount)} COP` : '$0 COP (Cubierto)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* SI EL TOTAL ES > 0, SE ACTIVA LA PASARELA DE PAGO DIRECTO */}
+                {totalAmount > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <CreditCard className="w-4 h-4 text-amber-400" />
+                        <span>Pasarela de Pago Directo</span>
+                      </label>
+                      <span className="text-[10px] text-stone-400 font-medium">Sin intermediarios</span>
+                    </div>
+
+                    {/* Selector de billeteras: Nequi, DaviPlata, Dale */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWallet('nequi')}
+                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${
+                          selectedWallet === 'nequi'
+                            ? 'bg-purple-950/60 border-purple-500 text-purple-200 shadow-md shadow-purple-900/30 ring-1 ring-purple-500'
+                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">Nequi</span>
+                        <span className="text-[10px] opacity-75">3244725167</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWallet('daviplata')}
+                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${
+                          selectedWallet === 'daviplata'
+                            ? 'bg-red-950/60 border-red-500 text-red-200 shadow-md shadow-red-900/30 ring-1 ring-red-500'
+                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">DaviPlata</span>
+                        <span className="text-[10px] opacity-75">Por Llave</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWallet('dale')}
+                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${
+                          selectedWallet === 'dale'
+                            ? 'bg-amber-950/60 border-amber-500 text-amber-200 shadow-md shadow-amber-900/30 ring-1 ring-amber-500'
+                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black">Dale!</span>
+                        <span className="text-[10px] opacity-75">Por Llave</span>
+                      </button>
+                    </div>
+
+                    {/* Detalle de la cuenta seleccionada */}
+                    {selectedWallet === 'nequi' && (
+                      <div className="bg-purple-950/30 border border-purple-500/40 rounded-2xl p-3.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-purple-200">
+                            Número Nequi de Sebastian:
+                          </span>
+                          <span className="text-xs font-mono font-bold text-white bg-purple-900/60 px-2 py-0.5 rounded-md">
+                            3244725167
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-purple-200/80 leading-relaxed">
+                          Abre tu app Nequi y transfiere <strong>${formatPrice(totalAmount)} COP</strong> al número <strong>3244725167</strong>.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard('3244725167', 'nequi')}
+                          className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-colors"
+                        >
+                          {copiedKeyFeedback === 'nequi' ? (
+                            <>
+                              <Check className="w-4 h-4 stroke-[3]" />
+                              <span>¡Número 3244725167 Copiado!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span>Copiar Número Nequi (3244725167)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {selectedWallet === 'daviplata' && (
+                      <div className="bg-red-950/30 border border-red-500/40 rounded-2xl p-3.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-red-200">
+                            Llave DaviPlata de Sebastian:
+                          </span>
+                          <span className="text-xs font-mono font-bold text-white bg-red-900/60 px-2 py-0.5 rounded-md">
+                            @PLATA3244725167
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-red-200/80 leading-relaxed">
+                          Abre DaviPlata &gt; Pasa Plata &gt; Por Llave &gt; Ingresa <strong>@PLATA3244725167</strong> por valor de <strong>${formatPrice(totalAmount)} COP</strong>.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard('@PLATA3244725167', 'daviplata')}
+                          className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-colors"
+                        >
+                          {copiedKeyFeedback === 'daviplata' ? (
+                            <>
+                              <Check className="w-4 h-4 stroke-[3]" />
+                              <span>¡Llave @PLATA3244725167 Copiada!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span>Copiar Llave (@PLATA3244725167)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {selectedWallet === 'dale' && (
+                      <div className="bg-amber-950/30 border border-amber-500/40 rounded-2xl p-3.5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-amber-200">
+                            Llave Dale! de Sebastian:
+                          </span>
+                          <span className="text-xs font-mono font-bold text-white bg-amber-900/60 px-2 py-0.5 rounded-md">
+                            @SGG04
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                          Abre Dale! &gt; Transfiere a la Llave <strong>@SGG04</strong> por valor de <strong>${formatPrice(totalAmount)} COP</strong>.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard('@SGG04', 'dale')}
+                          className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-xs py-2 px-3 rounded-xl transition-colors"
+                        >
+                          {copiedKeyFeedback === 'dale' ? (
+                            <>
+                              <Check className="w-4 h-4 stroke-[3]" />
+                              <span>¡Llave @SGG04 Copiada!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span>Copiar Llave (@SGG04)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Subida de comprobante y número de referencia */}
+                    <div className="space-y-2 pt-1">
+                      <label className="block text-[11px] font-semibold text-stone-300">
+                        Comprobante de Transferencia (Captura o Foto):
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        ref={voucherInputRef}
+                        onChange={handleVoucherUpload}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => voucherInputRef.current?.click()}
+                        className="w-full bg-stone-950 hover:bg-stone-800 border border-dashed border-stone-700 hover:border-amber-500/60 rounded-xl p-2.5 text-xs text-stone-300 flex items-center justify-center gap-2 transition-all"
+                      >
+                        <Upload className="w-4 h-4 text-amber-400" />
+                        <span>{voucherImage ? '✓ Comprobante cargado (Toca para cambiar)' : 'Adjuntar foto o captura del comprobante'}</span>
+                      </button>
+
+                      {voucherImage && (
+                        <div className="flex items-center gap-2 bg-stone-950 p-2 rounded-xl border border-emerald-500/40">
+                          <img src={voucherImage} alt="Comprobante" className="w-8 h-8 rounded-lg object-cover" />
+                          <span className="text-[11px] text-emerald-400 font-medium">✓ Comprobante listo para enviar a Sebastian</span>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-stone-300 mb-1">
+                          Número de Referencia o Aprobación (Opcional):
+                        </label>
+                        <input
+                          type="text"
+                          value={paymentReference}
+                          onChange={(e) => setPaymentReference(e.target.value)}
+                          placeholder="Ej: M123456 o número de confirmación"
+                          className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-600 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* AVISO IMPORTANTE DE BLOQUEO ÚNICO */}
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-[11px] text-amber-200 leading-tight">
+                  ⚠️ <strong>Recordatorio:</strong> Solo puedes enviar tu selección <strong>una única vez</strong>. Al confirmar, tus fotos quedarán bloqueadas y Sebastian recibirá la notificación inmediata con tus fotos y comprobante de pago.
+                </div>
+
+                {/* BOTONES DE ACCIÓN */}
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={handleConfirmSubmit}
+                    className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-extrabold text-sm py-3.5 rounded-xl shadow-lg shadow-amber-500/25 disabled:opacity-50 active:scale-[0.98] transition-all"
+                  >
+                    {isSubmitting ? (
+                      'Procesando y guardando...'
+                    ) : totalAmount > 0 ? (
+                      `✓ Registrar Pago de $${formatPrice(totalAmount)} COP y Enviar Fotos`
+                    ) : (
+                      '✓ Sí, Enviar Mi Selección Definitiva'
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => setConfirmModalOpen(false)}
+                    className="w-full py-2.5 text-xs text-stone-400 hover:text-stone-200"
+                  >
+                    Volver a revisar mis fotos
+                  </button>
+                </div>
               </div>
             </div>
           </div>

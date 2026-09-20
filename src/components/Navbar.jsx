@@ -29,7 +29,7 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
               {photographerName}
             </span>
             <span className="text-[10px] sm:text-[11px] font-bold tracking-widest uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-pink-400 to-purple-400 block">
-              San Antero • Córdoba
+              Fotografía & Edición Profesional
             </span>
           </div>
         </div>
