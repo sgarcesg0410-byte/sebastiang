@@ -1,0 +1,225 @@
+{
+  "settings": {
+    "photographerName": "Sebastian G",
+    "photographerSubtitle": "",
+    "photographerWhatsApp": "+573001234567",
+    "outOfSanAnteroSurcharge": 10000,
+    "currencySymbol": "$",
+    "tagline": "Capturamos momentos, creamos recuerdos. ♡",
+    "watermarkText": "SEBASTIAN G",
+    "watermarkSubtext": "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
+    "watermarkLogoUrl": "/logo-white.png",
+    "adminPin": "1234",
+    "printedPhotoPrice": 7000
+  },
+  "packages": [
+    {
+      "id": "pkg-4fotos",
+      "name": "4 Fotos Digitales",
+      "price": 45000,
+      "photoCount": 4,
+      "freePhotos": 2,
+      "totalPhotos": 6,
+      "duration": "45 minutos",
+      "outfits": "1 a 2 cambios",
+      "description": "Ideal para fotos individuales, retratos en playa o sesión casual.",
+      "features": [
+        "4 Fotos Digitales en Alta Calidad",
+        "+ 2 Fotos GRATIS incluidas (Total: 6 fotos)",
+        "Edición y retoque profesional",
+        "Atención personalizada",
+        "Enlace privado de WhatsApp para elegir tus favoritas"
+      ],
+      "popular": false
+    },
+    {
+      "id": "pkg-6fotos",
+      "name": "6 Fotos Digitales",
+      "price": 65000,
+      "photoCount": 6,
+      "freePhotos": 2,
+      "totalPhotos": 8,
+      "duration": "1 hora",
+      "outfits": "2 cambios de vestuario",
+      "description": "Perfecto para parejas, cumpleaños o retratos con variedad de poses.",
+      "features": [
+        "6 Fotos Digitales en Alta Calidad",
+        "+ 2 Fotos GRATIS incluidas (Total: 8 fotos)",
+        "Edición y retoque profesional",
+        "Atención personalizada",
+        "Enlace privado de WhatsApp con 3 días para seleccionar"
+      ],
+      "popular": false
+    },
+    {
+      "id": "pkg-8fotos",
+      "name": "8 Fotos Digitales",
+      "price": 75000,
+      "photoCount": 8,
+      "freePhotos": 2,
+      "totalPhotos": 10,
+      "duration": "1 hora y media",
+      "outfits": "2 a 3 cambios",
+      "description": "Nuestra opción favorita para familias, quinceañeras y atardeceres frente al mar.",
+      "features": [
+        "8 Fotos Digitales en Alta Calidad",
+        "+ 2 Fotos GRATIS incluidas (Total: 10 fotos)",
+        "Edición profesional detallada",
+        "Asesoría de poses en locación",
+        "Selección exclusiva mediante enlace protegido"
+      ],
+      "popular": true
+    },
+    {
+      "id": "pkg-10fotos",
+      "name": "10 Fotos Digitales",
+      "price": 85000,
+      "photoCount": 10,
+      "freePhotos": 2,
+      "totalPhotos": 12,
+      "duration": "Hasta 2 horas",
+      "outfits": "Cambios ilimitados",
+      "description": "Cobertura completa con fotos variadas de plano entero, medio cuerpo y primeros planos.",
+      "features": [
+        "10 Fotos Digitales en Alta Calidad",
+        "+ 2 Fotos GRATIS incluidas (Total: 12 fotos)",
+        "Edición y colorización profesional cinematográfica",
+        "Prioridad de entrega",
+        "Opción de añadir impresiones 10x15 a $7.000 c/u"
+      ],
+      "popular": false
+    }
+  ],
+  "catalog": [
+    {
+      "id": "cat-1",
+      "title": "Atardecer en Playa Blanca",
+      "category": "Playas San Antero",
+      "url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80",
+      "location": "Playa Blanca, San Antero"
+    },
+    {
+      "id": "cat-2",
+      "title": "Retrato Urbano & Estilo",
+      "category": "Retratos",
+      "url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1000&q=80",
+      "location": "San Antero"
+    },
+    {
+      "id": "cat-3",
+      "title": "Amor Frente al Mar",
+      "category": "Parejas & Bodas",
+      "url": "https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&w=1000&q=80",
+      "location": "Punta Bolívar"
+    },
+    {
+      "id": "cat-4",
+      "title": "Sesión Quinceañera Tropical",
+      "category": "Quinceañeras",
+      "url": "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1000&q=80",
+      "location": "San Antero"
+    },
+    {
+      "id": "cat-5",
+      "title": "Paseo en los Manglares de Cispatá",
+      "category": "Playas San Antero",
+      "url": "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1000&q=80",
+      "location": "Bahía Cispatá"
+    },
+    {
+      "id": "cat-6",
+      "title": "Estilo Callejero Chic",
+      "category": "Retratos",
+      "url": "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1000&q=80",
+      "location": "Plaza Principal"
+    },
+    {
+      "id": "cat-7",
+      "title": "Boda Íntima en la Orilla",
+      "category": "Parejas & Bodas",
+      "url": "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1000&q=80",
+      "location": "Grau, San Antero"
+    },
+    {
+      "id": "cat-8",
+      "title": "Sonrisa Espontánea",
+      "category": "Retratos",
+      "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1000&q=80",
+      "location": "San Antero"
+    }
+  ],
+  "bookings": [
+    {
+      "id": "book-demo-1",
+      "clientName": "Camila Rodríguez",
+      "clientWhatsApp": "+573105551234",
+      "packageId": "pkg-8fotos",
+      "packageName": "8 Fotos Digitales (+ 2 Gratis)",
+      "totalPrice": 75000,
+      "locationType": "san_antero",
+      "specificLocation": "Playa Blanca, sector Las Cabañas",
+      "dateTime": "2026-09-24 a las 16:30",
+      "description": "Fotos para mi cumpleaños, con vestido al atardecer.",
+      "createdAt": "2026-09-19T10:00:00.000Z",
+      "status": "confirmed"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "sess-demo",
+      "token": "demo-cliente-2026",
+      "clientName": "Camila Rodríguez",
+      "clientWhatsApp": "+573105551234",
+      "packageTitle": "8 Fotos Digitales (+ 2 Fotos Gratis)",
+      "maxPhotosAllowed": 10,
+      "createdAt": "2026-09-19T12:00:00.000Z",
+      "expiresAt": "2026-09-22T23:59:59.000Z",
+      "status": "pending",
+      "submittedAt": null,
+      "photos": [
+        {
+          "id": "photo-1",
+          "title": "Foto 001 - Retrato Primer Plano",
+          "url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80",
+          "selected": false,
+          "clientComment": ""
+        },
+        {
+          "id": "photo-2",
+          "title": "Foto 002 - Mirada al Atardecer",
+          "url": "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80",
+          "selected": false,
+          "clientComment": ""
+        },
+        {
+          "id": "photo-3",
+          "title": "Foto 003 - Sonrisa en la Orilla",
+          "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80",
+          "selected": false,
+          "clientComment": ""
+        },
+        {
+          "id": "photo-4",
+          "title": "Foto 004 - Movimiento y Brisa",
+          "url": "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80",
+          "selected": false,
+          "clientComment": ""
+        },
+        {
+          "id": "photo-5",
+          "title": "Foto 005 - Plano Entero en la Playa",
+          "url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80",
+          "selected": false,
+          "clientComment": ""
+        },
+        {
+          "id": "photo-6",
+          "title": "Foto 006 - Silueta en Contraluz",
+          "url": "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80",
+          "selected": false,
+          "clientComment": ""
+        }
+      ]
+    }
+  ]
+}
