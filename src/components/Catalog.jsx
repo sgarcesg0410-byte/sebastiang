@@ -133,7 +133,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 onClick={() => setPreviewPhoto(photo)}
                 className="group relative rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-lg hover:border-amber-500/50 transition-all duration-300 cursor-pointer"
               >
-              {/* Contenedor de Imagen con Protección Anti-Captura */}
+              {/* Contenedor de Imagen con Protección Anti-Descarga */}
               <div className="relative aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
                 <img
                   src={photo.url}
@@ -145,21 +145,6 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
 
                 {/* Capa transparente anti-toque y anti-descarga */}
                 <div className="absolute inset-0 z-10 bg-transparent select-none" />
-
-                {/* Malla de marca de agua diagonal de seguridad */}
-                <div className="catalog-watermark-ribbon">
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <span key={i} className="text-[9px] font-black tracking-widest text-white/40 uppercase whitespace-nowrap drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
-                      SEBASTIAN G • PROHIBIDA SU CAPTURA
-                    </span>
-                  ))}
-                </div>
-
-                {/* Sello de marca en la esquina inferior */}
-                <div className="absolute top-4 right-14 z-20 pointer-events-none flex items-center gap-1 px-2 py-0.5 rounded-md bg-stone-950/70 border border-white/10 backdrop-blur-sm">
-                  <img src="/app-icon.png" alt="SG" className="w-3.5 h-3.5 rounded object-cover" />
-                  <span className="text-[9px] font-bold text-amber-300 tracking-wider">SEBASTIAN G</span>
-                </div>
               </div>
 
               {/* Degradado oscuro inferior */}
@@ -255,27 +240,8 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 draggable={false}
               />
 
-              {/* Capa transparente anti-guardado */}
+              {/* Capa transparente anti-guardado y anti-arrastre */}
               <div className="absolute inset-0 z-10 bg-transparent select-none" />
-
-              {/* Malla de marca de agua diagonal */}
-              <div className="catalog-watermark-ribbon">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <span key={i} className="text-[10px] sm:text-xs font-black tracking-widest text-white/40 uppercase whitespace-nowrap drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
-                    SEBASTIAN G • MUESTRA EXCLUSIVA • PROHIBIDA SU CAPTURA
-                  </span>
-                ))}
-              </div>
-
-              {/* Sello central de agua */}
-              <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
-                <div className="px-4 py-2 rounded-2xl bg-black/60 border border-amber-500/40 backdrop-blur-sm flex items-center gap-2 -rotate-12 shadow-2xl">
-                  <img src="/app-icon.png" alt="SG" className="w-6 h-6 rounded-lg object-cover" />
-                  <span className="text-xs font-black text-amber-300 tracking-widest uppercase">
-                    SEBASTIAN G • MUESTRA PROTEGIDA
-                  </span>
-                </div>
-              </div>
             </div>
 
             <div className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-stone-900 border-t border-stone-800">

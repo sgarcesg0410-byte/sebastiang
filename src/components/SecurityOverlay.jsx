@@ -104,21 +104,25 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     // 4. BLOQUEO DE TECLAS DE CAPTURA EN PC / TABLETS
     const handleKeyDown = (e) => {
-      // Tecla PrintScreen
-      if (e.key === 'PrintScreen' || e.code === 'PrintScreen') {
+      // Tecla PrintScreen (keydown en algunos navegadores)
+      if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
         e.preventDefault();
         e.stopPropagation();
         triggerInstantBlackout('Captura con PrintScreen bloqueada.');
         triggerWarningToast('🚫 Captura de pantalla bloqueada.');
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba');
+          }
+        } catch (err) {}
         return false;
       }
 
       // Windows + Shift + S / Command + Shift + 3/4
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
-        e.preventDefault();
-        e.stopPropagation();
-        triggerInstantBlackout('Herramienta de recortes bloqueada.');
-        return false;
+      if ((e.metaKey || e.ctrlKey || e.shiftKey) && (e.key === 's' || e.key === 'S' || e.code === 'KeyS')) {
+        if (e.shiftKey) {
+          triggerInstantBlackout('Herramienta de recortes bloqueada.');
+        }
       }
 
       // F12 o Desarrollador
@@ -138,11 +142,38 @@ export default function SecurityOverlay({ children, enabled = true }) {
       }
     };
 
-    // 5. BLOQUEO DE ARRASTRE DE IMÁGENES
+    // En Windows Chromium / Edge, PrintScreen (Imp Pnt) solo dispara 'keyup'
+    const handleKeyUp = (e) => {
+      if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
+        triggerInstantBlackout('Captura con Impr Pant bloqueada.');
+        triggerWarningToast('🚫 Captura con Impr Pant bloqueada.');
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba');
+          }
+        } catch (err) {}
+      }
+
+      if (e.shiftKey && (e.key === 's' || e.key === 'S' || e.code === 'KeyS')) {
+        triggerInstantBlackout('Herramienta de recortes de Windows bloqueada.');
+      }
+    };
+
+    // 5. BLOQUEO DE COPIA Y ARRASTRE DE IMÁGENES
     const handleDragStart = (e) => {
       if (e.target.tagName === 'IMG') {
         e.preventDefault();
       }
+    };
+
+    const handleCopy = (e) => {
+      e.preventDefault();
+      try {
+        if (e.clipboardData) {
+          e.clipboardData.setData('text/plain', '⚠️ FOTOGRAFÍA PROTEGIDA - Sebastian G • San Antero, Córdoba');
+        }
+      } catch (err) {}
+      triggerWarningToast('Copiar fotos está restringido.');
     };
 
     // Registrar escuchadores
@@ -153,7 +184,9 @@ export default function SecurityOverlay({ children, enabled = true }) {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     document.addEventListener('contextmenu', handleContextMenu);
     document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('keyup', handleKeyUp, true);
     document.addEventListener('dragstart', handleDragStart);
+    document.addEventListener('copy', handleCopy);
 
     return () => {
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
@@ -164,7 +197,9 @@ export default function SecurityOverlay({ children, enabled = true }) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       document.removeEventListener('contextmenu', handleContextMenu);
       document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keyup', handleKeyUp, true);
       document.removeEventListener('dragstart', handleDragStart);
+      document.removeEventListener('copy', handleCopy);
     };
   }, [enabled]);
 

@@ -49,23 +49,6 @@ html.security-blackout [data-protected="true"] {
   transition: none !important;
 }
 
-/* Malla de Marca de Agua de Seguridad en Catálogo */
-.catalog-watermark-ribbon {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-around;
-  gap: 16px;
-  transform: rotate(-18deg) scale(1.35);
-  opacity: 0.35;
-  user-select: none;
-  z-index: 15;
-}
-
 /* Bloqueo total al intentar imprimir */
 @media print {
   html, body {
