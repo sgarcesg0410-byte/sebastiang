@@ -63,11 +63,14 @@ export default function Navbar({ onOpenBooking, currentView, setCurrentView, pho
 
           <button
             onClick={() => navigateTo('admin')}
-            className={`text-xs font-semibold px-3 py-1.5 rounded-lg border border-stone-700 transition-colors ${
-              currentView === 'admin' ? 'bg-stone-800 text-amber-400 border-amber-500/50' : 'text-stone-400 hover:text-stone-200 hover:bg-stone-900'
+            className={`text-xs font-semibold px-3.5 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
+              currentView === 'admin' 
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm' 
+                : 'text-stone-300 hover:text-white bg-stone-900/90 border-stone-800 hover:border-amber-500/40'
             }`}
+            title="Panel de control para subir fotos al catálogo, actualizar precios y gestionar sesiones"
           >
-            Panel Fotógrafo
+            <span>🔐 Panel Fotógrafo</span>
           </button>
         </nav>
 
@@ -118,9 +121,10 @@ export default function Navbar({ onOpenBooking, currentView, setCurrentView, pho
           </button>
           <button
             onClick={() => navigateTo('admin')}
-            className="block w-full text-left py-2 text-stone-400 text-sm hover:text-stone-200"
+            className="block w-full text-left py-2.5 px-3 rounded-xl bg-stone-800/90 text-amber-300 text-sm font-semibold hover:bg-stone-800 flex items-center justify-between border border-amber-500/20"
           >
-            🔐 Panel del Fotógrafo
+            <span>🔐 Panel del Fotógrafo</span>
+            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">Subir fotos</span>
           </button>
 
           <div className="pt-3 border-t border-stone-800">

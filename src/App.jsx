@@ -15,15 +15,8 @@ export default function App() {
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
 
-  // Bienvenida interactiva al abrir la app (solo primera vez por sesión si no entra directo a galería)
-  const [showIntro, setShowIntro] = useState(() => {
-    try {
-      if (window.location.pathname.startsWith('/galeria/')) return false;
-      return !sessionStorage.getItem('sebastian_g_intro_shown');
-    } catch (e) {
-      return false;
-    }
-  });
+  // Bienvenida interactiva opcional (desactivada por defecto para entrada directa y limpia al catálogo)
+  const [showIntro, setShowIntro] = useState(false);
 
   // Datos globales
   const [settings, setSettings] = useState({});
@@ -53,9 +46,9 @@ export default function App() {
         getCatalog(),
         getPackages()
       ]);
-      setSettings(sData);
-      setCatalog(cData);
-      setPackages(pData);
+      setSettings(sData || {});
+      setCatalog(Array.isArray(cData) ? cData : []);
+      setPackages(Array.isArray(pData) ? pData : []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -81,9 +74,6 @@ export default function App() {
       {showIntro && (
         <InteractiveLogoIntro
           onComplete={() => {
-            try {
-              sessionStorage.setItem('sebastian_g_intro_shown', 'true');
-            } catch (e) {}
             setShowIntro(false);
           }}
         />
@@ -114,6 +104,7 @@ export default function App() {
               catalog={catalog}
               packages={packages}
               onOpenBooking={() => handleOpenBooking(null)}
+              onNavigateToAdmin={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
             />
             <div id="packages-section" className="border-t border-stone-800/80 bg-stone-900/40">
               <PackagesSection

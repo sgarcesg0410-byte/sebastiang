@@ -20,7 +20,8 @@ export function isSampleItem(item) {
 export function getDeletedCatalogIds() {
   try {
     const raw = localStorage.getItem(LOCAL_DELETED_CATALOG_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     return [];
   }
@@ -54,7 +55,8 @@ const DEFAULT_SETTINGS = {
 function getLocalCatalog() {
   try {
     const raw = localStorage.getItem(LOCAL_CATALOG_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     return [];
   }
@@ -192,13 +194,18 @@ export async function getCatalog() {
   let serverCatalog = [];
   try {
     const res = await fetch(`${API_BASE}/catalog`);
-    if (res.ok) serverCatalog = await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      serverCatalog = Array.isArray(data) ? data : [];
+    }
   } catch (err) {
     console.warn('Error obteniendo catálogo de servidor:', err);
   }
 
-  const localItems = getLocalCatalog();
-  const deletedIds = new Set(getDeletedCatalogIds());
+  const rawLocal = getLocalCatalog();
+  const localItems = Array.isArray(rawLocal) ? rawLocal : [];
+  const rawDeleted = getDeletedCatalogIds();
+  const deletedIds = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
 
   const map = new Map();

@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
 import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera } from 'lucide-react';
 
-export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) {
+export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin, packages = [] }) {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [likes, setLikes] = useState({});
   const [previewPhoto, setPreviewPhoto] = useState(null);
 
   const categories = ['Todas', 'Playas San Antero', 'Retratos', 'Parejas & Bodas', 'Quinceañeras'];
 
+  const safeCatalog = Array.isArray(catalog) ? catalog.filter(Boolean) : [];
+
   const filteredPhotos = selectedCategory === 'Todas'
-    ? catalog
-    : catalog.filter(photo => photo.category === selectedCategory);
+    ? safeCatalog
+    : safeCatalog.filter(photo => photo && photo.category === selectedCategory);
 
   const toggleLike = (id, e) => {
     e.stopPropagation();
@@ -63,9 +65,21 @@ export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) 
         {/* Cabecera de Catálogo y Filtros */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
-            <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-2">
-              Portafolio de Trabajo
-            </span>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block">
+                Portafolio de Trabajo
+              </span>
+              {onNavigateToAdmin && (
+                <button
+                  type="button"
+                  onClick={onNavigateToAdmin}
+                  className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 transition-all hover:scale-105"
+                  title="Entra a tu panel para subir fotos al catálogo"
+                >
+                  + Subir Fotos
+                </button>
+              )}
+            </div>
             <h2 className="text-3xl sm:text-4xl font-serif font-bold text-white">
               Catálogo de Fotos
             </h2>
@@ -94,10 +108,22 @@ export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) 
 
         {/* Galería Grid */}
         {filteredPhotos.length === 0 ? (
-          <div className="p-12 text-center bg-stone-900/40 border border-dashed border-stone-800 rounded-3xl max-w-xl mx-auto my-8">
-            <Camera className="w-10 h-10 text-stone-600 mx-auto mb-3" />
-            <p className="text-sm font-semibold text-stone-300">Portafolio en Actualización</p>
-            <p className="text-xs text-stone-500 mt-1">Pronto estaremos publicando nuevas tomas y sesiones fotográficas en San Antero.</p>
+          <div className="p-10 sm:p-14 text-center bg-stone-900/60 border border-dashed border-amber-500/30 rounded-3xl max-w-xl mx-auto my-8 shadow-xl">
+            <Camera className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+            <h3 className="text-lg font-serif font-bold text-white">Catálogo de Fotos Listo</h3>
+            <p className="text-xs text-stone-400 mt-1 max-w-sm mx-auto">
+              Las fotos de muestra han sido retiradas. Sube tus fotos reales de sesiones de Lightroom para que tus clientes las vean aquí.
+            </p>
+            {onNavigateToAdmin && (
+              <button
+                type="button"
+                onClick={onNavigateToAdmin}
+                className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-extrabold text-xs rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
+              >
+                <Sparkles className="w-4 h-4 fill-stone-950" />
+                <span>📸 Entrar al Panel para Subir Fotos</span>
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
