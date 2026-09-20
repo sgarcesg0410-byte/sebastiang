@@ -60,9 +60,22 @@ import {
   changeAdminPin,
   recoverAdminPin,
   getAdminPayments,
-  updatePaymentStatus
+  updatePaymentStatus,
+  formatDateTime12Hour
 } from '../services/api';
 import { getLocalAnalytics } from '../services/analytics';
+
+// Función para enviar notificaciones de escritorio / móvil en segundo plano
+function sendBrowserNotification(title, body) {
+  try {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, {
+        body,
+        icon: '/app-icon.png'
+      });
+    }
+  } catch (e) {}
+}
 
 // Función para procesar fotos conservando la fidelidad de revelado de Adobe Lightroom (Ultra HD 2.4K, 92% calidad)
 function compressImageFile(file, maxWidth = 2400, quality = 0.92) {
@@ -222,6 +235,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     try {
       await verifyAdminPin(pinInput);
       setIsAuthenticated(true);
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+        try {
+          Notification.requestPermission();
+        } catch (err) {}
+      }
       loadAllAdminData();
     } catch (err) {
       setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
@@ -307,21 +325,29 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         if (newBookings) {
           playNotificationChime();
           const latest = bData[0];
+          sendBrowserNotification(
+            '📸 ¡Nueva Reserva Recibida!',
+            `${latest?.clientName || 'Un cliente'} ha reservado (${latest?.packageName || 'Sesión'}) para el ${formatDateTime12Hour(latest?.dateTime) || 'próximamente'}`
+          );
           setRealtimeAlert({
             type: 'booking',
-            message: `🔔 ¡Nueva Reserva en Tiempo Real de ${latest?.clientName || 'un cliente'}!`,
+            message: `🔔 ¡Nueva Reserva en Tiempo Real de ${latest?.clientName || 'un cliente'} (${formatDateTime12Hour(latest?.dateTime)})!`,
             targetTab: 'bookings'
           });
-          setTimeout(() => setRealtimeAlert(null), 8000);
+          setTimeout(() => setRealtimeAlert(null), 9000);
         } else if (newPayments) {
           playNotificationChime();
           const latestPay = payData?.[0];
+          sendBrowserNotification(
+            '💰 ¡Nuevo Pago Recibido!',
+            `${latestPay?.clientName || 'Un cliente'} pagó $${Number(latestPay?.amount || 0).toLocaleString('es-CO')} COP vía ${latestPay?.method?.toUpperCase() || 'transferencia'}`
+          );
           setRealtimeAlert({
             type: 'payment',
             message: `💰 ¡Nuevo Pago Recibido de ${latestPay?.clientName || 'un cliente'} ($${Number(latestPay?.amount || 0).toLocaleString('es-CO')} COP)!`,
             targetTab: 'payments'
           });
-          setTimeout(() => setRealtimeAlert(null), 8000);
+          setTimeout(() => setRealtimeAlert(null), 9000);
         }
       }
 
@@ -356,12 +382,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Monitoreo en vivo cada 7 segundos para avisar cuando hagan reservas o pagos
+  // Monitoreo en vivo cada 4 segundos para avisar instantáneamente cuando hagan reservas o pagos
   useEffect(() => {
     if (!isAuthenticated) return;
     const interval = setInterval(() => {
       loadAllAdminData();
-    }, 7000);
+    }, 4000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
@@ -1332,7 +1358,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         </div>
                         <div className="flex justify-between">
                           <span className="text-stone-400">Fecha y Hora:</span>
-                          <span className="font-semibold text-white">{booking.dateTime}</span>
+                          <span className="font-semibold text-white">{formatDateTime12Hour(booking.dateTime)}</span>
                         </div>
                       </div>
 
@@ -1356,7 +1382,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       </select>
 
                       <a
-                        href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${booking.dateTime}.`)}`}
+                        href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg"

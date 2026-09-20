@@ -135,15 +135,42 @@ export const REAL_DEFAULT_BOOKINGS = [
     packageId: "pkg-8fotos",
     packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
     totalPrice: 75000,
-    locationType: "local",
-    specificLocation: "Sesión Especial",
-    dateTime: "Reserva Confirmada",
-    description: "Sesión fotográfica confirmada",
-    createdAt: "2026-09-20T10:00:00.000Z",
+    locationType: "san_antero",
+    specificLocation: "Playa Blanca, sector Las Cabañas",
+    dateTime: "24/09/2026 a las 4:30 p. m.",
+    description: "Fotos para mi cumpleaños, con vestido al atardecer.",
+    createdAt: "2026-09-19T10:00:00.000Z",
     status: "confirmed",
     isReal: true
   }
 ];
+
+export function formatTo12Hour(time24) {
+  if (!time24) return '';
+  if (/a\.?\s*m\.?|p\.?\s*m\.?/i.test(time24)) return time24;
+  const match = time24.trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return time24;
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2];
+  const ampm = hours >= 12 ? 'p. m.' : 'a. m.';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${ampm}`;
+}
+
+export function formatDateTime12Hour(dateTimeStr) {
+  if (!dateTimeStr) return '';
+  if (/a\.?\s*m\.?|p\.?\s*m\.?/i.test(dateTimeStr)) return dateTimeStr;
+  if (dateTimeStr.includes(' a las ')) {
+    const [datePart, timePart] = dateTimeStr.split(' a las ');
+    return `${datePart} a las ${formatTo12Hour(timePart)}`;
+  }
+  if (dateTimeStr.includes('T')) {
+    const [datePart, timePart] = dateTimeStr.split('T');
+    return `${datePart} a las ${formatTo12Hour(timePart)}`;
+  }
+  return formatTo12Hour(dateTimeStr);
+}
 
 const LOCAL_PAYMENTS_KEY = 'sebastian_g_payments_v1';
 
@@ -173,14 +200,36 @@ function getLocalBookings() {
     // Filtrar cualquier reserva de muestra o demo que haya quedado guardada
     list = (Array.isArray(list) ? list : []).filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
     
-    // Asegurar que Jennifer Vásquez esté siempre presente
-    const hasJennifer = list.some(b => b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez');
-    if (!hasJennifer) {
-      list.push(...REAL_DEFAULT_BOOKINGS);
-      try {
-        localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
-      } catch (e) {}
+    // Asegurar que Jennifer Vásquez esté siempre presente con sus datos reales restaurados
+    let found = false;
+    list = list.map(b => {
+      if (b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez') {
+        found = true;
+        return {
+          ...b,
+          id: "book-real-jennifer-vasquez",
+          clientName: "Jennifer Vásquez",
+          clientWhatsApp: "+573244725167",
+          packageId: "pkg-8fotos",
+          packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+          totalPrice: 75000,
+          locationType: "san_antero",
+          specificLocation: "Playa Blanca, sector Las Cabañas",
+          dateTime: "24/09/2026 a las 4:30 p. m.",
+          description: "Fotos para mi cumpleaños, con vestido al atardecer.",
+          status: "confirmed",
+          isReal: true
+        };
+      }
+      return b;
+    });
+
+    if (!found) {
+      list.unshift(...REAL_DEFAULT_BOOKINGS);
     }
+    try {
+      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
+    } catch (e) {}
     return list;
   } catch (e) {
     return REAL_DEFAULT_BOOKINGS;
@@ -445,9 +494,11 @@ export async function createBooking(data) {
     `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
+    `📦 *Paquete:* ${newBooking.packageName || 'Sesión Fotográfica'} ($${Number(newBooking.totalPrice || 0).toLocaleString('es-CO')} COP)\n` +
     `📍 *Lugar:* ${newBooking.specificLocation || 'San Antero'}\n` +
-    `🗓️ *Fecha:* ${newBooking.dateTime}\n` +
-    `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}`
+    `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
+    `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
+    `_Quedo atento a tu confirmación para agendarla definitivamente._`
   );
 
   return {
@@ -664,10 +715,32 @@ export async function getAdminBookings() {
   if (combined.length === 0) {
     combined = [...REAL_DEFAULT_BOOKINGS];
   } else {
-    // Asegurar que Jennifer siempre esté
-    const hasJennifer = combined.some(b => b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez');
+    // Asegurar que Jennifer siempre esté con sus datos correctos restaurados
+    let hasJennifer = false;
+    combined = combined.map(b => {
+      if (b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez') {
+        hasJennifer = true;
+        return {
+          ...b,
+          id: "book-real-jennifer-vasquez",
+          clientName: "Jennifer Vásquez",
+          clientWhatsApp: "+573244725167",
+          packageId: "pkg-8fotos",
+          packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+          totalPrice: 75000,
+          locationType: "san_antero",
+          specificLocation: "Playa Blanca, sector Las Cabañas",
+          dateTime: "24/09/2026 a las 4:30 p. m.",
+          description: "Fotos para mi cumpleaños, con vestido al atardecer.",
+          status: "confirmed",
+          isReal: true
+        };
+      }
+      return b;
+    });
+
     if (!hasJennifer) {
-      combined.push(...REAL_DEFAULT_BOOKINGS);
+      combined.unshift(...REAL_DEFAULT_BOOKINGS);
     }
   }
 

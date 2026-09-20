@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { createBooking, checkClientLoyalty } from '../services/api';
+import { createBooking, checkClientLoyalty, formatTo12Hour } from '../services/api';
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, settings = {} }) {
   if (!isOpen) return null;
@@ -107,18 +107,29 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     try {
       setIsSubmitting(true);
 
+      // Formatear fecha a DD/MM/YYYY y hora estrictamente a formato 12 horas (h:mm a. m. / p. m.)
+      let formattedDate = formData.date;
+      if (formattedDate && formattedDate.includes('-')) {
+        const parts = formattedDate.split('-');
+        if (parts.length === 3) {
+          formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+      }
+      const formattedTime12 = formatTo12Hour(formData.time);
+      const formattedDateTime = `${formattedDate} a las ${formattedTime12}`;
+
       const bookingPayload = {
-        clientName: formData.clientName,
-        clientWhatsApp: formData.clientWhatsApp,
+        clientName: formData.clientName.trim(),
+        clientWhatsApp: formData.clientWhatsApp.trim(),
         packageId: formData.packageId,
-        packageName: currentPackage ? `${currentPackage.name} (+2 Gratis)` : 'Sesión Fotográfica',
+        packageName: currentPackage ? `${currentPackage.name} (+ 2 Fotos Gratis)` : 'Sesión Fotográfica',
         totalPrice: calculatedPrice,
         loyaltyDiscount: loyaltyDiscount,
         isVipClient: loyalInfo.isLoyal,
         locationType: formData.locationType,
-        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'Sesión Local' : 'Locación Especial / Fuera'),
-        dateTime: `${formData.date} a las ${formData.time}`,
-        description: formData.description,
+        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'San Antero (Playa / Sector)' : 'Locación Especial / Fuera'),
+        dateTime: formattedDateTime,
+        description: formData.description.trim(),
         printedPhotosCount: Number(formData.printedPhotosCount || 0)
       };
 
@@ -131,6 +142,13 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
           origin: { y: 0.6 }
         });
       } catch (e) {}
+
+      // Abrir inmediatamente WhatsApp Línea 1 para notificar al fotógrafo
+      if (result.directWhatsAppUrl) {
+        try {
+          window.open(result.directWhatsAppUrl, '_blank');
+        } catch (e) {}
+      }
 
       setSubmittedBooking({
         ...result.booking,
@@ -224,7 +242,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold py-3.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 active:scale-98 transition-all"
                   >
                     <MessageCircle className="w-5 h-5 fill-white" />
-                    <span>Confirmar con Sebastian (Línea 1: 324 472 5167) 📲</span>
+                    <span>Notificar a WhatsApp Línea 1 (324 472 5167) 📲</span>
                   </a>
                 )}
 
@@ -233,10 +251,10 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     href={submittedBooking.secondaryWhatsAppUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full flex items-center justify-center gap-2 bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 font-bold py-3 px-6 rounded-xl text-xs active:scale-98 transition-all"
+                    className="w-full flex items-center justify-center gap-2 bg-emerald-950/80 border border-emerald-500/50 hover:bg-emerald-900/80 text-emerald-200 font-extrabold py-3 px-6 rounded-xl text-xs active:scale-98 transition-all shadow-md"
                   >
-                    <MessageCircle className="w-4 h-4" />
-                    <span>Enviar a Línea 2 (302 369 6513)</span>
+                    <MessageCircle className="w-4 h-4 fill-emerald-400" />
+                    <span>Notificar también a WhatsApp Línea 2 (302 369 6513) 📲</span>
                   </a>
                 )}
 
