@@ -93,13 +93,20 @@ export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) 
         </div>
 
         {/* Galería Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredPhotos.map((photo) => (
-            <div
-              key={photo.id}
-              onClick={() => setPreviewPhoto(photo)}
-              className="group relative rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-lg hover:border-amber-500/50 transition-all duration-300 cursor-pointer"
-            >
+        {filteredPhotos.length === 0 ? (
+          <div className="p-12 text-center bg-stone-900/40 border border-dashed border-stone-800 rounded-3xl max-w-xl mx-auto my-8">
+            <Camera className="w-10 h-10 text-stone-600 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-stone-300">Portafolio en Actualización</p>
+            <p className="text-xs text-stone-500 mt-1">Pronto estaremos publicando nuevas tomas y sesiones fotográficas en San Antero.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredPhotos.map((photo) => (
+              <div
+                key={photo.id}
+                onClick={() => setPreviewPhoto(photo)}
+                className="group relative rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-lg hover:border-amber-500/50 transition-all duration-300 cursor-pointer"
+              >
               {/* Contenedor de Imagen */}
               <div className="aspect-[4/5] w-full overflow-hidden bg-stone-950">
                 <img
@@ -146,6 +153,7 @@ export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) 
             </div>
           ))}
         </div>
+      )}
 
         {/* Banner informativo de cierre sin botones redundantes */}
         <div className="mt-16 bg-gradient-to-r from-amber-950/30 via-stone-900 to-amber-950/30 border border-amber-500/20 rounded-3xl p-6 sm:p-10 text-center">

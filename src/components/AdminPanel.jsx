@@ -46,6 +46,8 @@ import {
   getCatalog,
   addCatalogPhoto,
   deleteCatalogPhoto,
+  deleteAllSampleCatalogPhotos,
+  isSampleItem,
   changeAdminPin,
   recoverAdminPin
 } from '../services/api';
@@ -160,6 +162,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   });
   const [isUploadingCatalogPhoto, setIsUploadingCatalogPhoto] = useState(false);
   const [catalogUploadSuccess, setCatalogUploadSuccess] = useState('');
+  const [purgeSamplesLoading, setPurgeSamplesLoading] = useState(false);
+  const [purgeSamplesSuccess, setPurgeSamplesSuccess] = useState('');
   const catalogFileInputRef = useRef(null);
 
   // Cambio de PIN dentro del Panel
@@ -529,12 +533,39 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   const handleDeleteCatalogItem = async (id) => {
     if (!confirm('¿Seguro que deseas eliminar esta foto del catálogo público?')) return;
+    // Eliminación optimista instantánea
+    setCatalog(prev => prev.filter(c => c.id !== id));
     try {
       await deleteCatalogPhoto(id);
-      loadAllAdminData();
+      const updatedCatalog = await getCatalog();
+      setCatalog(updatedCatalog);
       if (onCatalogUpdated) onCatalogUpdated();
     } catch (err) {
+      console.error('Error al eliminar foto de catálogo:', err);
       alert('Error al eliminar foto');
+      loadAllAdminData();
+    }
+  };
+
+  const handleDeleteAllSamples = async () => {
+    if (!confirm('¿Deseas quitar TODAS las fotos de muestra del catálogo para dejar únicamente tus fotos reales?')) return;
+    setPurgeSamplesLoading(true);
+    setPurgeSamplesSuccess('');
+    // Filtrar de inmediato en pantalla
+    setCatalog(prev => prev.filter(c => !isSampleItem(c)));
+    try {
+      await deleteAllSampleCatalogPhotos();
+      const updatedCatalog = await getCatalog();
+      setCatalog(updatedCatalog);
+      if (onCatalogUpdated) onCatalogUpdated();
+      setPurgeSamplesSuccess('¡Fotos de muestra eliminadas con éxito! Ahora solo se muestran tus fotos reales.');
+      setTimeout(() => setPurgeSamplesSuccess(''), 5000);
+    } catch (err) {
+      console.error('Error al purgar muestras:', err);
+      alert('Error al purgar fotos de muestra');
+      loadAllAdminData();
+    } finally {
+      setPurgeSamplesLoading(false);
     }
   };
 
@@ -1716,35 +1747,90 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
           {/* LISTADO DE FOTOS ACTIVAS DEL CATÁLOGO */}
           <div className="space-y-4">
-            <h4 className="text-lg font-serif font-bold text-white">
-              Fotos Publicadas Actualmente en el Catálogo ({catalog.length})
-            </h4>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-stone-900/60 p-4 rounded-2xl border border-stone-800">
+              <div>
+                <h4 className="text-lg font-serif font-bold text-white flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-amber-400" />
+                  <span>Fotos Publicadas en el Catálogo ({catalog.length})</span>
+                </h4>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  Estas fotos se exhiben en la página principal para que los clientes vean tu portafolio en San Antero.
+                </p>
+              </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {catalog.map((item) => (
-                <div key={item.id} className="group relative bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden shadow-md">
-                  <div className="aspect-[4/5] bg-stone-950">
-                    <img src={item.url} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                  </div>
-
-                  <div className="p-3 bg-stone-900 border-t border-stone-800/80">
-                    <span className="text-[10px] font-bold text-amber-400 uppercase block">{item.category}</span>
-                    <h5 className="text-xs font-bold text-white truncate">{item.title}</h5>
-                    <p className="text-[11px] text-stone-400 truncate">{item.location}</p>
-                  </div>
-
-                  {/* Botón eliminar de catálogo */}
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteCatalogItem(item.id)}
-                    className="absolute top-2 right-2 p-2 bg-red-600/90 hover:bg-red-500 text-white rounded-xl shadow-lg transition-transform active:scale-95"
-                    title="Eliminar foto del catálogo"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
+              {catalog.some(item => isSampleItem(item)) && (
+                <button
+                  type="button"
+                  onClick={handleDeleteAllSamples}
+                  disabled={purgeSamplesLoading}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-red-950/80 hover:bg-red-900 border border-red-500/50 text-red-200 text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50"
+                  title="Eliminar todas las fotos de muestra predeterminadas (Unsplash)"
+                >
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                  <span>{purgeSamplesLoading ? 'Quitando...' : '🗑️ Quitar Fotos de Muestra'}</span>
+                </button>
+              )}
             </div>
+
+            {purgeSamplesSuccess && (
+              <div className="p-3.5 bg-emerald-950/80 border border-emerald-500/50 rounded-2xl text-emerald-200 text-xs flex items-center gap-2.5 shadow-lg">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-semibold">{purgeSamplesSuccess}</span>
+              </div>
+            )}
+
+            {catalog.length === 0 ? (
+              <div className="p-12 text-center bg-stone-900/40 border border-dashed border-stone-800 rounded-3xl">
+                <Camera className="w-12 h-12 text-stone-600 mx-auto mb-3" />
+                <p className="text-sm font-semibold text-stone-300">Aún no hay fotos en tu catálogo</p>
+                <p className="text-xs text-stone-500 mt-1 max-w-md mx-auto">
+                  Usa el botón "Seleccionar Foto de tu Galería" arriba para publicar tus fotos editadas de Lightroom. Solo aparecerán las fotos que tú subas.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                {catalog.map((item) => {
+                  const isSample = isSampleItem(item);
+                  return (
+                    <div key={item.id} className="group relative bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden shadow-md flex flex-col justify-between">
+                      <div className="aspect-[4/5] bg-stone-950 relative overflow-hidden">
+                        <img 
+                          src={item.url} 
+                          alt={item.title} 
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                          loading="lazy"
+                        />
+                        {isSample ? (
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase bg-amber-500/90 text-stone-950 shadow-md">
+                            Muestra Demo
+                          </span>
+                        ) : (
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase bg-emerald-600/90 text-white shadow-md">
+                            Tu Foto
+                          </span>
+                        )}
+
+                        {/* Botón eliminar de catálogo */}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCatalogItem(item.id)}
+                          className="absolute top-2 right-2 p-2 bg-red-600/90 hover:bg-red-500 text-white rounded-xl shadow-lg transition-transform active:scale-95"
+                          title="Eliminar foto del catálogo"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="p-3 bg-stone-900 border-t border-stone-800/80">
+                        <span className="text-[10px] font-bold text-amber-400 uppercase block">{item.category}</span>
+                        <h5 className="text-xs font-bold text-white truncate">{item.title}</h5>
+                        <p className="text-[11px] text-stone-400 truncate">{item.location}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

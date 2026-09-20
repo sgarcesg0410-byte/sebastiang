@@ -91,64 +91,7 @@
       "popular": false
     }
   ],
-  "catalog": [
-    {
-      "id": "cat-1",
-      "title": "Atardecer en Playa Blanca",
-      "category": "Playas San Antero",
-      "url": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80",
-      "location": "Playa Blanca, San Antero"
-    },
-    {
-      "id": "cat-2",
-      "title": "Retrato Urbano & Estilo",
-      "category": "Retratos",
-      "url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1000&q=80",
-      "location": "San Antero"
-    },
-    {
-      "id": "cat-3",
-      "title": "Amor Frente al Mar",
-      "category": "Parejas & Bodas",
-      "url": "https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&w=1000&q=80",
-      "location": "Punta Bolívar"
-    },
-    {
-      "id": "cat-4",
-      "title": "Sesión Quinceañera Tropical",
-      "category": "Quinceañeras",
-      "url": "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1000&q=80",
-      "location": "San Antero"
-    },
-    {
-      "id": "cat-5",
-      "title": "Paseo en los Manglares de Cispatá",
-      "category": "Playas San Antero",
-      "url": "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1000&q=80",
-      "location": "Bahía Cispatá"
-    },
-    {
-      "id": "cat-6",
-      "title": "Estilo Callejero Chic",
-      "category": "Retratos",
-      "url": "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1000&q=80",
-      "location": "Plaza Principal"
-    },
-    {
-      "id": "cat-7",
-      "title": "Boda Íntima en la Orilla",
-      "category": "Parejas & Bodas",
-      "url": "https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1000&q=80",
-      "location": "Grau, San Antero"
-    },
-    {
-      "id": "cat-8",
-      "title": "Sonrisa Espontánea",
-      "category": "Retratos",
-      "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1000&q=80",
-      "location": "San Antero"
-    }
-  ],
+  "catalog": [],
   "bookings": [
     {
       "id": "book-demo-1",

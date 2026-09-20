@@ -452,6 +452,17 @@ app.delete('/api/admin/catalog/:id', (req, res) => {
   res.json({ success: true, id });
 });
 
+app.post('/api/admin/catalog/delete-samples', (req, res) => {
+  const db = readDB();
+  db.catalog = (db.catalog || []).filter(c => {
+    const isSample = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'].includes(c.id) ||
+      (c.url && c.url.includes('unsplash.com'));
+    return !isSample;
+  });
+  writeDB(db);
+  res.json({ success: true, catalog: db.catalog });
+});
+
 // --- SEGURIDAD Y CAMBIO / RECUPERACIÓN DE PIN ---
 app.post('/api/admin/pin/change', (req, res) => {
   const { currentPin, newPin } = req.body;

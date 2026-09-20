@@ -115,12 +115,7 @@ function getDB() {
         popular: false
       }
     ],
-    catalog: [
-      { id: "cat-1", title: "Atardecer en Playa Blanca", category: "Playas San Antero", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1000&q=80", location: "Playa Blanca, San Antero" },
-      { id: "cat-2", title: "Retrato Urbano & Estilo", category: "Retratos", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1000&q=80", location: "San Antero" },
-      { id: "cat-3", title: "Amor Frente al Mar", category: "Parejas & Bodas", url: "https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&w=1000&q=80", location: "Punta Bolívar" },
-      { id: "cat-4", title: "Sesión Quinceañera Tropical", category: "Quinceañeras", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1000&q=80", location: "San Antero" }
-    ],
+    catalog: [],
     bookings: [],
     sessions: [
       {
@@ -453,13 +448,52 @@ app.post('/api/admin/catalog', (req, res) => {
   };
   if (!runtimeDB.catalog) runtimeDB.catalog = [];
   runtimeDB.catalog.unshift(newItem);
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.catalog = runtimeDB.catalog;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
   res.status(201).json({ success: true, item: newItem });
 });
 
 app.delete('/api/admin/catalog/:id', (req, res) => {
   const { id } = req.params;
   runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => c.id !== id);
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.catalog = runtimeDB.catalog;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
   res.json({ success: true, id });
+});
+
+app.post('/api/admin/catalog/delete-samples', (req, res) => {
+  runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => {
+    const isSample = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'].includes(c.id) ||
+      (c.url && c.url.includes('unsplash.com'));
+    return !isSample;
+  });
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.catalog = runtimeDB.catalog;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
+  res.json({ success: true, catalog: runtimeDB.catalog });
 });
 
 // --- SEGURIDAD Y CAMBIO / RECUPERACIÓN DE PIN ---

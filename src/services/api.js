@@ -2,9 +2,39 @@ const API_BASE = '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
 const LOCAL_BOOKINGS_KEY = 'sebastian_g_bookings_v1';
 const LOCAL_CATALOG_KEY = 'sebastian_g_catalog_v1';
+const LOCAL_DELETED_CATALOG_KEY = 'sebastian_g_deleted_catalog_ids_v2';
+const LOCAL_SAMPLES_PURGED_KEY = 'sebastian_g_samples_purged_v1';
 const LOCAL_PIN_KEY = 'sebastian_g_admin_pin';
 const LOCAL_PACKAGES_KEY = 'sebastian_g_packages_v1';
 const LOCAL_SETTINGS_KEY = 'sebastian_g_settings_v1';
+
+const SAMPLE_PHOTO_IDS = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'];
+
+export function isSampleItem(item) {
+  if (!item) return false;
+  if (SAMPLE_PHOTO_IDS.includes(item.id)) return true;
+  if (typeof item.url === 'string' && item.url.includes('images.unsplash.com')) return true;
+  return false;
+}
+
+export function getDeletedCatalogIds() {
+  try {
+    const raw = localStorage.getItem(LOCAL_DELETED_CATALOG_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function addDeletedCatalogId(id) {
+  try {
+    const ids = getDeletedCatalogIds();
+    if (!ids.includes(id)) {
+      ids.push(id);
+      localStorage.setItem(LOCAL_DELETED_CATALOG_KEY, JSON.stringify(ids));
+    }
+  } catch (e) {}
+}
 
 const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
@@ -35,6 +65,11 @@ function saveLocalCatalogItem(item) {
     const items = getLocalCatalog().filter(i => i.id !== item.id);
     items.unshift(item);
     localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
+    // Si estaba en la lista de eliminados, removerlo porque se está agregando de nuevo
+    try {
+      const deletedIds = getDeletedCatalogIds().filter(id => id !== item.id);
+      localStorage.setItem(LOCAL_DELETED_CATALOG_KEY, JSON.stringify(deletedIds));
+    } catch (e) {}
   } catch (e) {
     console.warn('No se pudo guardar item de catálogo:', e);
   }
@@ -42,6 +77,7 @@ function saveLocalCatalogItem(item) {
 
 function removeLocalCatalogItem(id) {
   try {
+    addDeletedCatalogId(id);
     const items = getLocalCatalog().filter(i => i.id !== id);
     localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
   } catch (e) {}
@@ -162,9 +198,15 @@ export async function getCatalog() {
   }
 
   const localItems = getLocalCatalog();
+  const deletedIds = new Set(getDeletedCatalogIds());
+  const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
+
   const map = new Map();
   [...localItems, ...serverCatalog].forEach(item => {
-    if (item && item.id) map.set(item.id, item);
+    if (!item || !item.id) return;
+    if (deletedIds.has(item.id)) return;
+    if (samplesPurged && isSampleItem(item)) return;
+    map.set(item.id, item);
   });
   return Array.from(map.values());
 }
@@ -567,19 +609,39 @@ export async function addCatalogPhoto(photoData) {
 }
 
 export async function deleteCatalogPhoto(id) {
+  addDeletedCatalogId(id);
+  removeLocalCatalogItem(id);
   try {
     const res = await fetch(`${API_BASE}/admin/catalog/${id}`, {
       method: 'DELETE'
     });
     if (res.ok) {
-      removeLocalCatalogItem(id);
       return await res.json();
     }
   } catch (err) {
     console.warn('Fallback local para eliminar de catálogo:', err);
   }
-  removeLocalCatalogItem(id);
   return { success: true, id };
+}
+
+export async function deleteAllSampleCatalogPhotos() {
+  try {
+    localStorage.setItem(LOCAL_SAMPLES_PURGED_KEY, 'true');
+    SAMPLE_PHOTO_IDS.forEach(id => addDeletedCatalogId(id));
+
+    const local = getLocalCatalog().filter(i => !isSampleItem(i));
+    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(local));
+
+    const res = await fetch(`${API_BASE}/admin/catalog/delete-samples`, {
+      method: 'POST'
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Fallback local al purgar muestras:', err);
+  }
+  return { success: true };
 }
 
 export async function changeAdminPin(currentPin, newPin) {
