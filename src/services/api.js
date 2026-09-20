@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 const API_BASE = '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
 const LOCAL_BOOKINGS_KEY = 'sebastian_g_bookings_v1';
@@ -208,6 +210,19 @@ export async function updateSettings(newSettings) {
 }
 
 export async function getCatalog() {
+  let supabaseCatalog = [];
+  try {
+    const { data, error } = await supabase
+      .from('catalog')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error && Array.isArray(data)) {
+      supabaseCatalog = data;
+    }
+  } catch (err) {
+    console.warn('Error obteniendo catálogo de Supabase:', err);
+  }
+
   let serverCatalog = [];
   try {
     const res = await fetch(`${API_BASE}/catalog`);
@@ -225,11 +240,39 @@ export async function getCatalog() {
   const deletedIds = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
 
+  // AUTO-SYNC INTELIGENTE: Si en este dispositivo hay fotos en localItems que no están en Supabase, sincronizarlas automáticamente
+  if (localItems.length > 0) {
+    setTimeout(async () => {
+      try {
+        for (const localItem of localItems) {
+          if (!localItem || !localItem.id || deletedIds.has(localItem.id)) continue;
+          const norm = (localItem.title || '').trim().toLowerCase();
+          const exists = supabaseCatalog.some(s => 
+            s.id === localItem.id || (s.title && s.title.trim().toLowerCase() === norm)
+          );
+          if (!exists && localItem.url && localItem.title) {
+            await supabase.from('catalog').insert({
+              id: String(localItem.id),
+              title: localItem.title.trim(),
+              category: localItem.category || 'Retratos',
+              location: localItem.location || 'San Antero',
+              url: localItem.url
+            });
+            console.log('✓ Foto sincronizada a Supabase en la nube:', localItem.title);
+          }
+        }
+      } catch (e) {
+        console.warn('Error en auto-sync a Supabase:', e);
+      }
+    }, 1200);
+  }
+
   // Fuentes en orden de prioridad:
-  // 1. Fotos subidas localmente en este dispositivo
-  // 2. Fotos sincronizadas desde el servidor
-  // 3. Catálogo base predeterminado
-  const allCandidates = [...localItems, ...serverCatalog, ...DEFAULT_REAL_CATALOG];
+  // 1. Fotos en la nube Supabase (sincronizadas entre todos los dispositivos)
+  // 2. Fotos locales en este dispositivo
+  // 3. Fotos del servidor
+  // 4. Catálogo base predeterminado
+  const allCandidates = [...supabaseCatalog, ...localItems, ...serverCatalog, ...DEFAULT_REAL_CATALOG];
 
   const result = [];
   const seenIds = new Set();
@@ -660,6 +703,27 @@ export async function updateAdminSettings(settings, packages) {
 }
 
 export async function addCatalogPhoto(photoData) {
+  const newItem = {
+    id: `cat-${Date.now()}`,
+    title: (photoData.title || '').trim(),
+    category: (photoData.category || 'Retratos').trim(),
+    location: (photoData.location || 'San Antero').trim(),
+    url: photoData.url
+  };
+
+  // 1. Guardar primero en Supabase en la nube
+  try {
+    const { data, error } = await supabase.from('catalog').insert(newItem).select();
+    if (!error && data && data.length > 0) {
+      saveLocalCatalogItem(data[0]);
+      return { success: true, item: data[0] };
+    }
+    if (error) console.warn('Supabase insert error:', error);
+  } catch (err) {
+    console.warn('Error insertando en Supabase:', err);
+  }
+
+  // 2. Fallback a servidor / Vercel
   try {
     const res = await fetch(`${API_BASE}/admin/catalog`, {
       method: 'POST',
@@ -675,10 +739,7 @@ export async function addCatalogPhoto(photoData) {
     console.warn('Fallback local para catálogo:', err);
   }
 
-  const newItem = {
-    id: `cat-${Date.now()}`,
-    ...photoData
-  };
+  // 3. Fallback a almacenamiento local
   saveLocalCatalogItem(newItem);
   return { success: true, item: newItem };
 }
@@ -694,8 +755,18 @@ export async function deleteCatalogPhoto(id, title = null) {
 
   const normTitle = title ? title.trim().toLowerCase() : null;
 
+  // 1. Borrar en Supabase en la nube
+  try {
+    await supabase.from('catalog').delete().eq('id', id);
+    if (normTitle) {
+      await supabase.from('catalog').delete().ilike('title', normTitle);
+    }
+  } catch (err) {
+    console.warn('Error eliminando de Supabase:', err);
+  }
+
+  // 2. Borrar en almacenamiento local
   if (normTitle) {
-    // Marcar como eliminados todos los IDs con ese título
     local.forEach(i => {
       if (i.title && i.title.trim().toLowerCase() === normTitle) {
         addDeletedCatalogId(i.id);
@@ -725,10 +796,9 @@ export async function deleteCatalogPhoto(id, title = null) {
     if (res.ok) {
       return await res.json();
     }
-  } catch (err) {
-    console.warn('Fallback local para eliminar de catálogo:', err);
-  }
-  return { success: true, id };
+  } catch (err) {}
+
+  return { success: true };
 }
 
 export async function deleteAllSampleCatalogPhotos() {

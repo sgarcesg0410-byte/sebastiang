@@ -7,6 +7,7 @@ import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import { getSettings, getCatalog, getPackages } from './services/api';
+import { supabase } from './services/supabase';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
 
 export default function App() {
@@ -41,6 +42,20 @@ export default function App() {
     }
 
     loadInitialData();
+
+    // Sincronización en tiempo real: lo que se haga en el celular se refleja de inmediato en el computador
+    const channel = supabase
+      .channel('catalog_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
+        getCatalog().then(data => {
+          if (Array.isArray(data)) setCatalog(data);
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadInitialData = async () => {
