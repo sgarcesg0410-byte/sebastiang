@@ -21,8 +21,12 @@ import {
   FileImage,
   ChevronRight,
   Sparkles,
-  Link,
-  Check
+  Link as LinkIcon,
+  Check,
+  Key,
+  HelpCircle,
+  FolderPlus,
+  Compass
 } from 'lucide-react';
 import { 
   verifyAdminPin, 
@@ -33,11 +37,16 @@ import {
   reopenAdminSession, 
   updateAdminSettings,
   getSettings,
-  getPackages
+  getPackages,
+  getCatalog,
+  addCatalogPhoto,
+  deleteCatalogPhoto,
+  changeAdminPin,
+  recoverAdminPin
 } from '../services/api';
 
-// Función para comprimir fotos en el navegador (mantiene calidad visual óptima pero liviana para subida y vista rápida)
-function compressImageFile(file, maxWidth = 1400, quality = 0.8) {
+// Función para procesar fotos conservando la fidelidad de revelado de Adobe Lightroom (Ultra HD 2.4K, 92% calidad)
+function compressImageFile(file, maxWidth = 2400, quality = 0.92) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -61,6 +70,8 @@ function compressImageFile(file, maxWidth = 1400, quality = 0.8) {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
@@ -74,17 +85,28 @@ function compressImageFile(file, maxWidth = 1400, quality = 0.8) {
   });
 }
 
-export default function AdminPanel({ onOpenGalleryToken }) {
+export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [authError, setAuthError] = useState('');
 
-  // Pestañas
-  const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'create-session' | 'sessions' | 'settings'
+  // Recuperación de PIN
+  const [isRecoveringPin, setIsRecoveringPin] = useState(false);
+  const [recoveryPhone, setRecoveryPhone] = useState('');
+  const [recoveryStep, setRecoveryStep] = useState(1); // 1: ingresar teléfono, 2: ingresar nuevo PIN
+  const [recoveryNewPin, setRecoveryNewPin] = useState('');
+  const [recoveryConfirmPin, setRecoveryConfirmPin] = useState('');
+  const [recoveryMsg, setRecoveryMsg] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [recoveredPinDisplay, setRecoveredPinDisplay] = useState('');
 
-  // Datos
+  // Pestañas
+  const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'create-session' | 'sessions' | 'catalog-manager' | 'settings'
+
+  // Datos del sistema
   const [bookings, setBookings] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [catalog, setCatalog] = useState([]);
   const [settings, setSettings] = useState({
     photographerName: 'Sebastian G',
     photographerWhatsApp: '+573244725167',
@@ -106,7 +128,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
     photoUrlsText: ''
   });
 
-  // Fotos cargadas desde Celular / PC
+  // Fotos cargadas para cliente
   const [uploadedPhotos, setUploadedPhotos] = useState([]);
   const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
   const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
@@ -115,6 +137,27 @@ export default function AdminPanel({ onOpenGalleryToken }) {
   const [useUrlMode, setUseUrlMode] = useState(false);
 
   const fileInputRef = useRef(null);
+
+  // Formulario Agregar Foto al Catálogo Público
+  const [newCatalogForm, setNewCatalogForm] = useState({
+    title: '',
+    category: 'Playas San Antero',
+    customCategory: '',
+    location: 'Playa Blanca, San Antero',
+    url: ''
+  });
+  const [isUploadingCatalogPhoto, setIsUploadingCatalogPhoto] = useState(false);
+  const [catalogUploadSuccess, setCatalogUploadSuccess] = useState('');
+  const catalogFileInputRef = useRef(null);
+
+  // Cambio de PIN dentro del Panel
+  const [pinChangeForm, setPinChangeForm] = useState({
+    currentPin: '',
+    newPin: '',
+    confirmPin: ''
+  });
+  const [pinChangeMsg, setPinChangeMsg] = useState('');
+  const [pinChangeError, setPinChangeError] = useState('');
 
   // Modal ver selecciones de cliente
   const [viewingSession, setViewingSession] = useState(null);
@@ -128,25 +171,78 @@ export default function AdminPanel({ onOpenGalleryToken }) {
       setIsAuthenticated(true);
       loadAllAdminData();
     } catch (err) {
-      setAuthError('PIN incorrecto. El PIN por defecto es 1234.');
+      setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
+    }
+  };
+
+  const handleStartRecovery = (e) => {
+    e.preventDefault();
+    setIsRecoveringPin(true);
+    setRecoveryStep(1);
+    setRecoveryError('');
+    setRecoveryMsg('');
+    setRecoveryPhone('');
+    setRecoveryNewPin('');
+    setRecoveryConfirmPin('');
+  };
+
+  const handleVerifyPhoneForRecovery = async (e) => {
+    e.preventDefault();
+    setRecoveryError('');
+    setRecoveryMsg('');
+    try {
+      const res = await recoverAdminPin(recoveryPhone);
+      setRecoveryStep(2);
+      setRecoveredPinDisplay(res.currentPin || '');
+      setRecoveryMsg('✓ Número verificado exitosamente. Ahora escribe tu nuevo PIN de acceso.');
+    } catch (err) {
+      setRecoveryError(err.message || 'El número ingresado no coincide con las líneas registradas (324 4725167 o 302 369 6513).');
+    }
+  };
+
+  const handleResetPinSubmit = async (e) => {
+    e.preventDefault();
+    setRecoveryError('');
+    setRecoveryMsg('');
+
+    if (recoveryNewPin.length < 4) {
+      setRecoveryError('El nuevo PIN debe tener al menos 4 números.');
+      return;
+    }
+
+    if (recoveryNewPin !== recoveryConfirmPin) {
+      setRecoveryError('Los dos PIN ingresados no coinciden.');
+      return;
+    }
+
+    try {
+      await recoverAdminPin(recoveryPhone, recoveryNewPin);
+      setRecoveryMsg('¡PIN actualizado con éxito! Ya puedes iniciar sesión con tu nuevo PIN.');
+      setTimeout(() => {
+        setIsRecoveringPin(false);
+        setPinInput(recoveryNewPin);
+      }, 2000);
+    } catch (err) {
+      setRecoveryError(err.message || 'Error al actualizar PIN');
     }
   };
 
   const loadAllAdminData = async () => {
     try {
       setLoadingData(true);
-      const [bData, sData, setData, pData] = await Promise.all([
+      const [bData, sData, setData, pData, cData] = await Promise.all([
         getAdminBookings(),
         getAdminSessions(),
         getSettings(),
-        getPackages()
+        getPackages(),
+        getCatalog()
       ]);
       setBookings(bData);
       setSessions(sData);
+      if (cData) setCatalog(cData);
       if (setData) setSettings(setData);
       if (pData && pData.length > 0) {
         setPackages(pData);
-        // Preseleccionar paquete de 8 fotos si no se ha configurado
         if (!newSessionForm.packageId) {
           const defaultPkg = pData.find(p => p.photoCount === 8) || pData[0];
           setNewSessionForm(prev => ({
@@ -173,7 +269,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
     }
   };
 
-  // Manejador de subida de archivos desde celular o computador
+  // Manejador de subida de fotos para clientes
   const handleFilesChosen = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -188,7 +284,8 @@ export default function AdminPanel({ onOpenGalleryToken }) {
       setProcessProgress({ current: i + 1, total: files.length });
       const file = files[i];
       try {
-        const compressedBase64 = await compressImageFile(file, 1400, 0.82);
+        // Ultra HD Lightroom Proofing (2400px, 92% calidad)
+        const compressedBase64 = await compressImageFile(file, 2400, 0.92);
         newItems.push({
           id: `upl-${Date.now()}-${startIndex + i + 1}`,
           title: `Foto #${startIndex + i + 1}`,
@@ -208,7 +305,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
   const handleRemovePhoto = (photoId) => {
     setUploadedPhotos(prev => {
       const filtered = prev.filter(p => p.id !== photoId);
-      // Renumerar fotos consecutivamente
       return filtered.map((p, idx) => ({
         ...p,
         title: `Foto #${idx + 1}`
@@ -265,9 +361,8 @@ export default function AdminPanel({ onOpenGalleryToken }) {
         }));
       }
 
-      // Si no seleccionó fotos, cargar 6 fotos profesionales de muestra
       if (finalPhotos.length === 0) {
-        if (!confirm('No has subido fotos desde tu dispositivo. ¿Deseas generar el enlace con 6 fotos de prueba para revisar cómo se ve?')) {
+        if (!confirm('No has subido fotos desde tu dispositivo. ¿Deseas generar el enlace con fotos de muestra para probarlo?')) {
           setIsCreatingSession(false);
           return;
         }
@@ -299,6 +394,103 @@ export default function AdminPanel({ onOpenGalleryToken }) {
     }
   };
 
+  // Manejador de subida para el Catálogo Público
+  const handleCatalogPhotoSelected = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsUploadingCatalogPhoto(true);
+      // Alta calidad para el catálogo promocional
+      const base64 = await compressImageFile(file, 2000, 0.90);
+      setNewCatalogForm(prev => ({
+        ...prev,
+        url: base64,
+        title: prev.title || file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ')
+      }));
+    } catch (err) {
+      alert('Error al procesar la foto para el catálogo.');
+    } finally {
+      setIsUploadingCatalogPhoto(false);
+    }
+  };
+
+  const handleAddCatalogPhotoSubmit = async (e) => {
+    e.preventDefault();
+    if (!newCatalogForm.title.trim()) {
+      alert('Por favor escribe un título para la foto del catálogo.');
+      return;
+    }
+    if (!newCatalogForm.url) {
+      alert('Por favor selecciona una foto para subir al catálogo.');
+      return;
+    }
+
+    try {
+      const categoryFinal = newCatalogForm.category === 'custom'
+        ? (newCatalogForm.customCategory.trim() || 'General')
+        : newCatalogForm.category;
+
+      const result = await addCatalogPhoto({
+        title: newCatalogForm.title.trim(),
+        category: categoryFinal,
+        location: newCatalogForm.location.trim() || 'San Antero',
+        url: newCatalogForm.url
+      });
+
+      setCatalogUploadSuccess('¡Foto publicada exitosamente en el catálogo público!');
+      setNewCatalogForm({
+        title: '',
+        category: 'Playas San Antero',
+        customCategory: '',
+        location: 'Playa Blanca, San Antero',
+        url: ''
+      });
+      loadAllAdminData();
+      if (onCatalogUpdated) onCatalogUpdated();
+      setTimeout(() => setCatalogUploadSuccess(''), 4000);
+    } catch (err) {
+      alert(err.message || 'Error al agregar foto al catálogo.');
+    }
+  };
+
+  const handleDeleteCatalogItem = async (id) => {
+    if (!confirm('¿Seguro que deseas eliminar esta foto del catálogo público?')) return;
+    try {
+      await deleteCatalogPhoto(id);
+      loadAllAdminData();
+      if (onCatalogUpdated) onCatalogUpdated();
+    } catch (err) {
+      alert('Error al eliminar foto');
+    }
+  };
+
+  // Manejador de Cambio de PIN dentro del Dashboard
+  const handleChangePinSubmit = async (e) => {
+    e.preventDefault();
+    setPinChangeMsg('');
+    setPinChangeError('');
+
+    if (pinChangeForm.newPin.length < 4) {
+      setPinChangeError('El nuevo PIN debe tener al menos 4 caracteres.');
+      return;
+    }
+
+    if (pinChangeForm.newPin !== pinChangeForm.confirmPin) {
+      setPinChangeError('El nuevo PIN y su confirmación no coinciden.');
+      return;
+    }
+
+    try {
+      await changeAdminPin(pinChangeForm.currentPin, pinChangeForm.newPin);
+      setPinChangeMsg('¡PIN de acceso actualizado con éxito!');
+      setPinChangeForm({ currentPin: '', newPin: '', confirmPin: '' });
+      setTimeout(() => setPinChangeMsg(''), 4000);
+    } catch (err) {
+      setPinChangeError(err.message || 'El PIN actual no es correcto.');
+    }
+  };
+
   const handleReopenSession = async (sessionId) => {
     if (!confirm('¿Deseas reabrir esta sesión y darle 3 días adicionales al cliente para elegir?')) return;
     try {
@@ -316,48 +508,156 @@ export default function AdminPanel({ onOpenGalleryToken }) {
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
-  // PANTALLA DE ACCESO CON PIN
+  // PANTALLA DE ACCESO CON PIN Y RECUPERACIÓN
   if (!isAuthenticated) {
     return (
-      <div className="min-h-[80vh] flex items-center justify-center p-4">
+      <div className="min-h-[85vh] flex items-center justify-center p-4">
         <div className="bg-stone-900 border border-stone-800 rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center">
-          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto mb-4">
-            <Lock className="w-7 h-7" />
+          
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-400 to-amber-200 border border-amber-300/40 flex items-center justify-center text-stone-950 mx-auto mb-4 shadow-lg shadow-amber-500/20">
+            <Lock className="w-8 h-8" />
           </div>
+
           <h3 className="text-2xl font-serif font-bold text-white mb-1">
             Panel Sebastian G
           </h3>
           <p className="text-xs text-stone-400 mb-6">
-            Ingresa tu PIN de seguridad para gestionar reservas y subir fotos para clientes
+            Ingreso seguro para gestionar reservas, catálogo y clientes
           </p>
 
-          <form onSubmit={handleLogin} className="space-y-4">
-            {authError && (
-              <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
-                {authError}
+          {!isRecoveringPin ? (
+            /* FORMULARIO DE LOGIN CON PIN */
+            <form onSubmit={handleLogin} className="space-y-4">
+              {authError && (
+                <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
+                  {authError}
+                </div>
+              )}
+
+              <input
+                type="password"
+                maxLength={8}
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="PIN de acceso (Predeterminado: 1234)"
+                autoFocus
+                className="w-full bg-stone-950 border border-stone-800 text-center tracking-widest text-lg font-mono rounded-xl py-3.5 text-white focus:outline-none focus:border-amber-500"
+              />
+
+              <button
+                type="submit"
+                className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold py-3.5 rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-300 transition-all"
+              >
+                Ingresar al Panel
+              </button>
+
+              <div className="pt-2 border-t border-stone-800/80">
+                <button
+                  type="button"
+                  onClick={handleStartRecovery}
+                  className="text-xs text-amber-400 hover:text-amber-300 hover:underline flex items-center justify-center gap-1 mx-auto font-medium"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>¿Olvidaste tu PIN? Recuperar aquí</span>
+                </button>
               </div>
-            )}
+            </form>
+          ) : (
+            /* FLUJO DE RECUPERACIÓN DE PIN */
+            <div className="space-y-4 text-left">
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200">
+                🔐 <strong>Recuperación de Seguridad:</strong> Escribe el número de WhatsApp registrado para verificar tu identidad y crear un nuevo PIN.
+              </div>
 
-            <input
-              type="password"
-              maxLength={6}
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              placeholder="PIN (Por defecto: 1234)"
-              autoFocus
-              className="w-full bg-stone-950 border border-stone-800 text-center tracking-widest text-lg font-mono rounded-xl py-3 text-white focus:outline-none focus:border-amber-500"
-            />
+              {recoveryError && (
+                <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
+                  {recoveryError}
+                </div>
+              )}
 
-            <button
-              type="submit"
-              className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl shadow-lg transition-colors"
-            >
-              Ingresar al Panel
-            </button>
-            <p className="text-[11px] text-stone-500">
-              PIN predeterminado: <strong>1234</strong>
-            </p>
-          </form>
+              {recoveryMsg && (
+                <div className="p-3 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-200 text-xs">
+                  {recoveryMsg}
+                </div>
+              )}
+
+              {recoveryStep === 1 ? (
+                <form onSubmit={handleVerifyPhoneForRecovery} className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                      Tu Número de WhatsApp *
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      value={recoveryPhone}
+                      onChange={(e) => setRecoveryPhone(e.target.value)}
+                      placeholder="Ej. 3244725167 o 3023696513"
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl text-xs"
+                  >
+                    Verificar Mi Identidad
+                  </button>
+                </form>
+              ) : (
+                <form onSubmit={handleResetPinSubmit} className="space-y-3">
+                  {recoveredPinDisplay && (
+                    <div className="p-2.5 bg-stone-950 rounded-xl border border-stone-800 text-[11px] text-stone-300">
+                      PIN anterior detectado: <strong className="text-amber-400 font-mono">{recoveredPinDisplay}</strong>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                      Escribe tu Nuevo PIN *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={recoveryNewPin}
+                      onChange={(e) => setRecoveryNewPin(e.target.value)}
+                      placeholder="Mínimo 4 dígitos"
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                      Confirma tu Nuevo PIN *
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={recoveryConfirmPin}
+                      onChange={(e) => setRecoveryConfirmPin(e.target.value)}
+                      placeholder="Repite el nuevo PIN"
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs"
+                  >
+                    Guardar Nuevo PIN y Entrar
+                  </button>
+                </form>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsRecoveringPin(false)}
+                className="w-full text-center text-xs text-stone-400 hover:text-white pt-1"
+              >
+                Volver a la pantalla de PIN
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -370,7 +670,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-stone-800 mb-8">
         <div>
           <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-            Administración del Fotógrafo
+            Administración Oficial
           </span>
           <h1 className="text-3xl font-serif font-bold text-white">
             Sebastian G • Panel de Control
@@ -399,7 +699,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
             }`}
           >
             <Plus className="w-4 h-4" />
-            <span>Subir Fotos & Crear Enlace</span>
+            <span>Subir Fotos Cliente (3 Días)</span>
           </button>
 
           <button
@@ -409,7 +709,17 @@ export default function AdminPanel({ onOpenGalleryToken }) {
             }`}
           >
             <ImageIcon className="w-4 h-4" />
-            <span>Sesiones & Selecciones ({sessions.length})</span>
+            <span>Selecciones ({sessions.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('catalog-manager')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+              activeTab === 'catalog-manager' ? 'bg-amber-500 text-stone-950 shadow-md' : 'text-stone-400 hover:text-white'
+            }`}
+          >
+            <FolderPlus className="w-4 h-4" />
+            <span>Gestionar Catálogo ({catalog.length})</span>
           </button>
 
           <button
@@ -419,7 +729,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
             }`}
           >
             <Settings className="w-4 h-4" />
-            <span>WhatsApp & Precios</span>
+            <span>WhatsApp & Seguridad</span>
           </button>
         </div>
       </div>
@@ -433,7 +743,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                 Reservas Recibidas desde la Página Web
               </h3>
               <p className="text-xs text-stone-400">
-                Llegan directamente con el lugar de la sesión, fecha, paquete y recargo si aplica.
+                Notificaciones directas con locación, fecha, paquete e impresiones si aplica.
               </p>
             </div>
             <button
@@ -490,7 +800,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                           className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />
-                          <span>{booking.clientWhatsApp} (Chatear en WhatsApp)</span>
+                          <span>{booking.clientWhatsApp} (Chatear)</span>
                         </a>
                       </div>
 
@@ -519,7 +829,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
 
                       {booking.description && (
                         <div className="mt-3 p-3 bg-stone-950/60 rounded-xl border border-stone-800 text-xs text-stone-300">
-                          <span className="text-[10px] uppercase font-bold text-stone-500 block mb-0.5">Detalles del cliente:</span>
+                          <span className="text-[10px] uppercase font-bold text-stone-500 block mb-0.5">Notas del cliente:</span>
                           "{booking.description}"
                         </div>
                       )}
@@ -543,7 +853,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                         className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Contactar</span>
+                        <span>WhatsApp</span>
                       </a>
                     </div>
                   </div>
@@ -554,22 +864,21 @@ export default function AdminPanel({ onOpenGalleryToken }) {
         </div>
       )}
 
-      {/* PESTAÑA 2: SUBIR FOTOS Y CREAR ENLACE PERSONALIZADO (3 DÍAS) */}
+      {/* PESTAÑA 2: SUBIR FOTOS PARA CLIENTE CON CALIDAD LIGHTROOM ULTRA HD */}
       {activeTab === 'create-session' && (
         <div className="max-w-3xl mx-auto space-y-6">
           <div>
             <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-              Uploader de Fotos para Clientes
+              Calidad Lightroom Ultra HD • 3 Días de Vigencia
             </span>
             <h3 className="text-2xl font-serif font-bold text-white">
-              Crear Galería de Selección con Vigencia de 3 Días
+              Crear Galería Privada para Selección del Cliente
             </h3>
             <p className="text-xs text-stone-400 mt-1">
-              Sube las fotos directamente desde la galería de tu celular o computador. El sistema las optimiza, les añade tu marca de agua gigante <strong>"Sebastian G"</strong> y genera el enlace para que el cliente elija sus fotos.
+              Sube tus fotos editadas desde tu celular o PC. Conservan la nitidez, rango dinámico y colorimetría de Lightroom, protegidas con tu marca de agua central gigante de <strong>Sebastian G</strong>.
             </p>
           </div>
 
-          {/* MENSAJE DE ÉXITO AL GENERAR ENLACE */}
           {createdSessionResult && (
             <div className="bg-emerald-950/90 border-2 border-emerald-500 rounded-3xl p-6 text-emerald-200 space-y-4 shadow-2xl">
               <div className="flex items-center gap-3 font-bold text-base text-white">
@@ -577,7 +886,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                   <CheckCircle2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h4 className="text-lg font-bold text-white">¡Enlace Seguro Generado con Éxito!</h4>
+                  <h4 className="text-lg font-bold text-white">¡Enlace Protegido Creado con Éxito!</h4>
                   <p className="text-xs text-emerald-300">
                     Cliente: <strong>{createdSessionResult.session.clientName}</strong> • Vigencia exacta de 3 días
                   </p>
@@ -596,7 +905,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                 </button>
               </div>
 
-              {/* Botones de acción directa */}
               <div className="flex flex-col sm:flex-row gap-3 pt-1">
                 <a
                   href={`https://wa.me/${createdSessionResult.session.clientWhatsApp.replace(/\D/g, '')}?text=${encodeURIComponent(
@@ -633,10 +941,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
             </div>
           )}
 
-          {/* FORMULARIO DE CARGA */}
           <form onSubmit={handleCreateSession} className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-6">
-            
-            {/* DATOS DEL CLIENTE */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
@@ -667,7 +972,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
               </div>
             </div>
 
-            {/* PAQUETE DE LA SESIÓN */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
@@ -701,7 +1005,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
               </div>
             </div>
 
-            {/* SELECCIÓN DE FOTOS (UPLOADER DESDE CELULAR / PC) */}
             <div className="pt-2 border-t border-stone-800">
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -720,7 +1023,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
 
               {!useUrlMode ? (
                 <div className="space-y-4">
-                  {/* CAJA DE CARGA / BOTÓN PRINCIPAL */}
                   <div
                     onClick={() => fileInputRef.current?.click()}
                     className="cursor-pointer border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-stone-950/80 hover:bg-stone-950 rounded-2xl p-6 sm:p-8 text-center transition-all group"
@@ -742,27 +1044,25 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                       Toca aquí para seleccionar las fotos desde tu Celular o PC
                     </h5>
                     <p className="text-xs text-stone-400 max-w-md mx-auto">
-                      Puedes seleccionar varias fotos a la vez. El sistema las optimizará automáticamente para que carguen rápido con tu marca de agua.
+                      Puedes seleccionar varias fotos a la vez. No te ocupan espacio adicional en tu equipo y se procesan con alta fidelidad para el cliente.
                     </p>
 
-                    <div className="mt-4 inline-flex items-center gap-2 bg-amber-500 text-stone-950 text-xs font-bold px-4 py-2 rounded-xl shadow-md">
+                    <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 text-xs font-bold px-5 py-2.5 rounded-xl shadow-md">
                       <FileImage className="w-4 h-4" />
                       <span>Abrir Galería de Fotos</span>
                     </div>
                   </div>
 
-                  {/* PROGRESO DE COMPRESIÓN */}
                   {isProcessingPhotos && (
                     <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-3">
                       <RefreshCw className="w-5 h-5 text-amber-400 animate-spin shrink-0" />
                       <div className="text-xs text-stone-200 flex-1">
-                        <span className="font-bold text-amber-400">Preparando fotos... </span>
-                        <span>Procesando {processProgress.current} de {processProgress.total}</span>
+                        <span className="font-bold text-amber-400">Procesando fotos en alta calidad... </span>
+                        <span>{processProgress.current} de {processProgress.total}</span>
                       </div>
                     </div>
                   )}
 
-                  {/* VISTA PREVIA DE LAS FOTOS SELECCIONADAS */}
                   {uploadedPhotos.length > 0 && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
@@ -792,7 +1092,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                         </div>
                       </div>
 
-                      {/* GRID DE MINIATURAS */}
                       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 max-h-80 overflow-y-auto p-2 bg-stone-950 rounded-2xl border border-stone-800">
                         {uploadedPhotos.map((photo, idx) => (
                           <div key={photo.id} className="relative group rounded-xl overflow-hidden aspect-square bg-stone-900 border border-stone-800">
@@ -824,7 +1123,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                   )}
                 </div>
               ) : (
-                /* MODO TEXTAREA URLs */
                 <div className="space-y-2">
                   <textarea
                     rows={5}
@@ -840,7 +1138,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
               )}
             </div>
 
-            {/* BOTÓN GENERAR ENLACE */}
             <button
               type="submit"
               disabled={isCreatingSession || isProcessingPhotos}
@@ -871,7 +1168,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                 Galerías de Clientes y Fotos Seleccionadas
               </h3>
               <p className="text-xs text-stone-400">
-                Aquí ves en tiempo real qué fotos ha elegido cada cliente y sus comentarios.
+                Visualiza qué fotos eligió cada cliente y qué retoques u observaciones solicitaron.
               </p>
             </div>
             <button
@@ -885,7 +1182,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
 
           {sessions.length === 0 ? (
             <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
-              No has creado sesiones de clientes todavía. Usa la pestaña "Subir Fotos & Crear Enlace".
+              No has creado sesiones de clientes todavía. Usa la pestaña "Subir Fotos Cliente".
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -942,7 +1239,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
                       </div>
                     </div>
 
-                    {/* Acciones */}
                     <div className="space-y-2.5 pt-2 border-t border-stone-800">
                       <div className="flex items-center gap-2">
                         <button
@@ -1004,111 +1300,351 @@ export default function AdminPanel({ onOpenGalleryToken }) {
         </div>
       )}
 
-      {/* PESTAÑA 4: CONFIGURACIÓN DE WHATSAPP Y PRECIOS */}
-      {activeTab === 'settings' && (
-        <div className="max-w-2xl mx-auto bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-6">
+      {/* PESTAÑA 4: GESTIONAR CATÁLOGO PÚBLICO (SUBIR FOTOS PROMOCIONALES) */}
+      {activeTab === 'catalog-manager' && (
+        <div className="space-y-8">
           <div>
             <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-              Configuración de Recepción
+              Portafolio & Promoción
             </span>
             <h3 className="text-2xl font-serif font-bold text-white">
-              Números de WhatsApp & Marca
+              Gestionar Catálogo Público
             </h3>
             <p className="text-xs text-stone-400 mt-1">
-              Aquí se configuran los números donde los clientes te envían las fotos elegidas y las solicitudes de reserva.
+              Sube tus mejores fotos para que aparezcan en la página principal, atraigan nuevos clientes y promocionen tus paquetes de fotos en San Antero.
             </p>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
-                Nombre de Marca / Fotógrafo
-              </label>
-              <input
-                type="text"
-                value={settings.photographerName || 'Sebastian G'}
-                onChange={(e) => setSettings({ ...settings, photographerName: e.target.value })}
-                className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500"
-              />
-            </div>
+          {/* FORMULARIO PARA SUBIR FOTO AL CATÁLOGO */}
+          <form onSubmit={handleAddCatalogPhotoSubmit} className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-5">
+            <h4 className="text-base font-bold text-white flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>Subir Nueva Foto al Catálogo</span>
+            </h4>
 
-            {/* LÍNEA 1 WHATSAPP */}
-            <div className="p-4 rounded-2xl bg-stone-950 border border-emerald-500/30 space-y-2">
-              <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                <MessageCircle className="w-4 h-4 text-emerald-400" />
-                <span>WhatsApp Principal (Línea 1) *</span>
-              </label>
-              <input
-                type="text"
-                value={settings.photographerWhatsApp || '+573244725167'}
-                onChange={(e) => setSettings({ ...settings, photographerWhatsApp: e.target.value })}
-                className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
-              />
-              <p className="text-[11px] text-stone-400">
-                Línea principal para notificaciones de reservas y elecciones de fotos.
-              </p>
-            </div>
-
-            {/* LÍNEA 2 WHATSAPP */}
-            <div className="p-4 rounded-2xl bg-stone-950 border border-emerald-500/30 space-y-2">
-              <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                <MessageCircle className="w-4 h-4 text-emerald-400" />
-                <span>WhatsApp Secundario (Línea 2) *</span>
-              </label>
-              <input
-                type="text"
-                value={settings.photographerWhatsApp2 || '+573023696513'}
-                onChange={(e) => setSettings({ ...settings, photographerWhatsApp2: e.target.value })}
-                className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
-              />
-              <p className="text-[11px] text-stone-400">
-                Línea de respaldo disponible para que los clientes también puedan enviarte sus mensajes.
-              </p>
-            </div>
-
-            {/* RECARGO SILENCIOSO */}
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
-              <label className="block text-xs font-bold text-amber-300 uppercase tracking-wider">
-                Recargo Fuera de San Antero (Silencioso)
-              </label>
-              <div className="flex items-center gap-3">
-                <span className="text-xl font-bold text-amber-400">$</span>
-                <input
-                  type="number"
-                  value={settings.outOfSanAnteroSurcharge || 10000}
-                  onChange={(e) => setSettings({ ...settings, outOfSanAnteroSurcharge: Number(e.target.value) })}
-                  className="w-36 bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm font-bold text-white text-center focus:outline-none focus:border-amber-500"
-                />
-                <span className="text-xs text-stone-300">COP agregados automáticamente</span>
+            {catalogUploadSuccess && (
+              <div className="p-3.5 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{catalogUploadSuccess}</span>
               </div>
-              <p className="text-[11px] text-amber-200/80">
-                El cliente nunca verá este recargo desglosado; el sistema ajusta el total automáticamente si eligen fuera de San Antero.
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
+                  Título de la Foto *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newCatalogForm.title}
+                  onChange={(e) => setNewCatalogForm({ ...newCatalogForm, title: e.target.value })}
+                  placeholder="Ej. Atardecer en Playa Blanca"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
+                  Categoría *
+                </label>
+                <select
+                  value={newCatalogForm.category}
+                  onChange={(e) => setNewCatalogForm({ ...newCatalogForm, category: e.target.value })}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                >
+                  <option value="Playas San Antero">Playas San Antero</option>
+                  <option value="Retratos">Retratos</option>
+                  <option value="Parejas & Bodas">Parejas & Bodas</option>
+                  <option value="Quinceañeras">Quinceañeras</option>
+                  <option value="custom">Otra categoría personalizada...</option>
+                </select>
+              </div>
+
+              {newCatalogForm.category === 'custom' && (
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
+                    Nombre de Nueva Categoría *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newCatalogForm.customCategory}
+                    onChange={(e) => setNewCatalogForm({ ...newCatalogForm, customCategory: e.target.value })}
+                    placeholder="Ej. Eventos Familiares"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
+                  Locación
+                </label>
+                <input
+                  type="text"
+                  value={newCatalogForm.location}
+                  onChange={(e) => setNewCatalogForm({ ...newCatalogForm, location: e.target.value })}
+                  placeholder="Ej. Playa Blanca, San Antero"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Selector de foto para catálogo */}
+            <div className="flex flex-col sm:flex-row items-center gap-4 pt-2">
+              <div
+                onClick={() => catalogFileInputRef.current?.click()}
+                className="w-full sm:w-auto cursor-pointer border border-dashed border-amber-500/50 hover:border-amber-400 bg-stone-950 rounded-xl p-4 flex items-center justify-center gap-3 transition-colors"
+              >
+                <input
+                  ref={catalogFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCatalogPhotoSelected}
+                  className="hidden"
+                />
+                <Upload className="w-5 h-5 text-amber-400" />
+                <span className="text-xs font-bold text-white">
+                  {isUploadingCatalogPhoto ? 'Cargando foto...' : 'Seleccionar Foto desde Celular / PC'}
+                </span>
+              </div>
+
+              {newCatalogForm.url && (
+                <div className="flex items-center gap-3 bg-stone-950 p-2 rounded-xl border border-stone-800">
+                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-black shrink-0">
+                    <img src={newCatalogForm.url} alt="Preview" className="w-full h-full object-cover" />
+                  </div>
+                  <span className="text-xs text-emerald-400 font-semibold">✓ Foto lista para publicar</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={!newCatalogForm.url}
+                className="w-full sm:w-auto ml-auto bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-extrabold text-xs py-3 px-6 rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+              >
+                <Sparkles className="w-4 h-4 fill-stone-950" />
+                <span>Publicar en Catálogo</span>
+              </button>
+            </div>
+          </form>
+
+          {/* LISTADO DE FOTOS ACTIVAS DEL CATÁLOGO */}
+          <div className="space-y-4">
+            <h4 className="text-lg font-serif font-bold text-white">
+              Fotos Publicadas Actualmente en el Catálogo ({catalog.length})
+            </h4>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {catalog.map((item) => (
+                <div key={item.id} className="group relative bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden shadow-md">
+                  <div className="aspect-[4/5] bg-stone-950">
+                    <img src={item.url} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                  </div>
+
+                  <div className="p-3 bg-stone-900 border-t border-stone-800/80">
+                    <span className="text-[10px] font-bold text-amber-400 uppercase block">{item.category}</span>
+                    <h5 className="text-xs font-bold text-white truncate">{item.title}</h5>
+                    <p className="text-[11px] text-stone-400 truncate">{item.location}</p>
+                  </div>
+
+                  {/* Botón eliminar de catálogo */}
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCatalogItem(item.id)}
+                    className="absolute top-2 right-2 p-2 bg-red-600/90 hover:bg-red-500 text-white rounded-xl shadow-lg transition-transform active:scale-95"
+                    title="Eliminar foto del catálogo"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PESTAÑA 5: CONFIGURACIÓN DE WHATSAPP Y SEGURIDAD / CAMBIO DE PIN */}
+      {activeTab === 'settings' && (
+        <div className="max-w-2xl mx-auto space-y-8">
+          
+          {/* SECCIÓN 1: LÍNEAS DE WHATSAPP Y MARCA */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-6">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
+                Canales de Atención
+              </span>
+              <h3 className="text-2xl font-serif font-bold text-white">
+                Números de WhatsApp de Sebastian G
+              </h3>
+              <p className="text-xs text-stone-400 mt-1">
+                A estas líneas te llegarán las solicitudes de reserva y las elecciones de fotos de tus clientes.
               </p>
             </div>
 
-            {/* MARCA DE AGUA */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
+                  Nombre de Marca
+                </label>
+                <input
+                  type="text"
+                  value={settings.photographerName || 'Sebastian G'}
+                  onChange={(e) => setSettings({ ...settings, photographerName: e.target.value })}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* LÍNEA 1 WHATSAPP */}
+              <div className="p-4 rounded-2xl bg-stone-950 border border-emerald-500/30 space-y-2">
+                <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <MessageCircle className="w-4 h-4 text-emerald-400" />
+                  <span>WhatsApp Principal (Línea 1: 324 472 5167) *</span>
+                </label>
+                <input
+                  type="text"
+                  value={settings.photographerWhatsApp || '+573244725167'}
+                  onChange={(e) => setSettings({ ...settings, photographerWhatsApp: e.target.value })}
+                  className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* LÍNEA 2 WHATSAPP */}
+              <div className="p-4 rounded-2xl bg-stone-950 border border-emerald-500/30 space-y-2">
+                <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <MessageCircle className="w-4 h-4 text-emerald-400" />
+                  <span>WhatsApp Secundario (Línea 2: 302 369 6513) *</span>
+                </label>
+                <input
+                  type="text"
+                  value={settings.photographerWhatsApp2 || '+573023696513'}
+                  onChange={(e) => setSettings({ ...settings, photographerWhatsApp2: e.target.value })}
+                  className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* RECARGO FUERA DE SAN ANTERO */}
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                <label className="block text-xs font-bold text-amber-300 uppercase tracking-wider">
+                  Recargo Fuera de San Antero (Silencioso)
+                </label>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-bold text-amber-400">$</span>
+                  <input
+                    type="number"
+                    value={settings.outOfSanAnteroSurcharge || 10000}
+                    onChange={(e) => setSettings({ ...settings, outOfSanAnteroSurcharge: Number(e.target.value) })}
+                    className="w-36 bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm font-bold text-white text-center focus:outline-none focus:border-amber-500"
+                  />
+                  <span className="text-xs text-stone-300">COP agregados automáticamente</span>
+                </div>
+              </div>
+
+              {/* MARCA DE AGUA */}
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
+                  Texto de la Marca de Agua
+                </label>
+                <input
+                  type="text"
+                  value={settings.watermarkText || 'SEBASTIAN G'}
+                  onChange={(e) => setSettings({ ...settings, watermarkText: e.target.value })}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  await updateAdminSettings(settings, packages);
+                  alert('Ajustes y números de WhatsApp actualizados con éxito.');
+                }}
+                className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-extrabold py-3.5 rounded-xl shadow-md transition-colors"
+              >
+                Guardar Ajustes de WhatsApp y Marca
+              </button>
+            </div>
+          </div>
+
+          {/* SECCIÓN 2: SEGURIDAD Y CAMBIO DE PIN */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-5">
             <div>
-              <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
-                Texto de la Marca de Agua (Centro)
-              </label>
-              <input
-                type="text"
-                value={settings.watermarkText || 'SEBASTIAN G'}
-                onChange={(e) => setSettings({ ...settings, watermarkText: e.target.value })}
-                className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
-              />
+              <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
+                Seguridad de Acceso
+              </span>
+              <h3 className="text-xl font-serif font-bold text-white">
+                Cambiar Contraseña / PIN del Panel
+              </h3>
+              <p className="text-xs text-stone-400 mt-0.5">
+                Modifica tu clave de acceso para mayor seguridad.
+              </p>
             </div>
 
-            <button
-              type="button"
-              onClick={async () => {
-                await updateAdminSettings(settings, packages);
-                alert('Ajustes y números de WhatsApp actualizados con éxito.');
-              }}
-              className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-extrabold py-3.5 rounded-xl shadow-md transition-colors"
-            >
-              Guardar Configuración
-            </button>
+            {pinChangeMsg && (
+              <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs">
+                {pinChangeMsg}
+              </div>
+            )}
+
+            {pinChangeError && (
+              <div className="p-3 bg-red-950/80 border border-red-500/50 rounded-xl text-red-200 text-xs">
+                {pinChangeError}
+              </div>
+            )}
+
+            <form onSubmit={handleChangePinSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
+                  PIN Actual *
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={pinChangeForm.currentPin}
+                  onChange={(e) => setPinChangeForm({ ...pinChangeForm, currentPin: e.target.value })}
+                  placeholder="Escribe tu PIN actual"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
+                    Nuevo PIN (Mínimo 4 dígitos) *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={pinChangeForm.newPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, newPin: e.target.value })}
+                    placeholder="Nuevo PIN"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
+                    Confirma tu Nuevo PIN *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={pinChangeForm.confirmPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, confirmPin: e.target.value })}
+                    placeholder="Repite el nuevo PIN"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-stone-800 hover:bg-stone-700 text-white font-bold py-3 rounded-xl text-xs transition-colors"
+              >
+                Actualizar PIN de Seguridad
+              </button>
+            </form>
           </div>
         </div>
       )}
@@ -1138,7 +1674,6 @@ export default function AdminPanel({ onOpenGalleryToken }) {
               </button>
             </div>
 
-            {/* Lista de fotos elegidas con sus notas */}
             <div className="space-y-4">
               {viewingSession.photos.filter(p => p.selected).length === 0 ? (
                 <div className="p-8 text-center bg-stone-950 rounded-2xl border border-stone-800 text-stone-400 text-xs">
@@ -1170,7 +1705,7 @@ export default function AdminPanel({ onOpenGalleryToken }) {
             <div className="flex gap-3 pt-2">
               <a
                 href={`https://wa.me/${viewingSession.clientWhatsApp.replace(/\D/g, '')}?text=${encodeURIComponent(
-                  `¡Hola ${viewingSession.clientName}! Ya recibí las fotos que seleccionaste de tu sesión. Están geniales, procedo con la edición final en alta resolución.`
+                  `¡Hola ${viewingSession.clientName}! Ya recibí las fotos que seleccionaste de tu sesión. Procedo con la edición final en alta resolución.`
                 )}`}
                 target="_blank"
                 rel="noopener noreferrer"

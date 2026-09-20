@@ -1,6 +1,8 @@
 const API_BASE = '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
 const LOCAL_BOOKINGS_KEY = 'sebastian_g_bookings_v1';
+const LOCAL_CATALOG_KEY = 'sebastian_g_catalog_v1';
+const LOCAL_PIN_KEY = 'sebastian_g_admin_pin';
 
 const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
@@ -15,6 +17,33 @@ const DEFAULT_SETTINGS = {
   adminPin: "1234",
   printedPhotoPrice: 7000
 };
+
+// Helpers de almacenamiento local de respaldo
+function getLocalCatalog() {
+  try {
+    const raw = localStorage.getItem(LOCAL_CATALOG_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveLocalCatalogItem(item) {
+  try {
+    const items = getLocalCatalog().filter(i => i.id !== item.id);
+    items.unshift(item);
+    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
+  } catch (e) {
+    console.warn('No se pudo guardar item de catálogo:', e);
+  }
+}
+
+function removeLocalCatalogItem(id) {
+  try {
+    const items = getLocalCatalog().filter(i => i.id !== id);
+    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
+  } catch (e) {}
+}
 
 // Helpers de almacenamiento local de respaldo
 function getLocalSessions() {
@@ -68,14 +97,20 @@ export async function getSettings() {
 }
 
 export async function getCatalog() {
+  let serverCatalog = [];
   try {
     const res = await fetch(`${API_BASE}/catalog`);
-    if (!res.ok) throw new Error('Error al obtener catálogo');
-    return await res.json();
+    if (res.ok) serverCatalog = await res.json();
   } catch (err) {
-    console.error(err);
-    return [];
+    console.warn('Error obteniendo catálogo de servidor:', err);
   }
+
+  const localItems = getLocalCatalog();
+  const map = new Map();
+  [...localItems, ...serverCatalog].forEach(item => {
+    if (item && item.id) map.set(item.id, item);
+  });
+  return Array.from(map.values());
 }
 
 export async function getPackages() {
@@ -248,6 +283,7 @@ export async function submitGallerySelection(token, selections) {
 }
 
 export async function verifyAdminPin(pin) {
+  const localSavedPin = localStorage.getItem(LOCAL_PIN_KEY);
   try {
     const res = await fetch(`${API_BASE}/admin/auth`, {
       method: 'POST',
@@ -259,10 +295,14 @@ export async function verifyAdminPin(pin) {
     console.warn('Verificando PIN en modo offline:', err);
   }
 
+  if (localSavedPin && pin === localSavedPin) {
+    return { success: true, token: 'admin-authorized-token' };
+  }
+
   if (pin === DEFAULT_SETTINGS.adminPin) {
     return { success: true, token: 'admin-authorized-token' };
   }
-  throw new Error('PIN incorrecto. El PIN por defecto es 1234.');
+  throw new Error('PIN incorrecto.');
 }
 
 export async function getAdminBookings() {
@@ -420,4 +460,98 @@ export async function updateAdminSettings(settings, packages) {
     console.warn(err);
   }
   return { success: true, settings, packages };
+}
+
+export async function addCatalogPhoto(photoData) {
+  try {
+    const res = await fetch(`${API_BASE}/admin/catalog`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(photoData)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      saveLocalCatalogItem(data.item);
+      return data;
+    }
+  } catch (err) {
+    console.warn('Fallback local para catálogo:', err);
+  }
+
+  const newItem = {
+    id: `cat-${Date.now()}`,
+    ...photoData
+  };
+  saveLocalCatalogItem(newItem);
+  return { success: true, item: newItem };
+}
+
+export async function deleteCatalogPhoto(id) {
+  try {
+    const res = await fetch(`${API_BASE}/admin/catalog/${id}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      removeLocalCatalogItem(id);
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Fallback local para eliminar de catálogo:', err);
+  }
+  removeLocalCatalogItem(id);
+  return { success: true, id };
+}
+
+export async function changeAdminPin(currentPin, newPin) {
+  try {
+    const res = await fetch(`${API_BASE}/admin/pin/change`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPin, newPin })
+    });
+    if (res.ok) {
+      localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
+      return await res.json();
+    }
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Error al cambiar PIN');
+  } catch (err) {
+    // Si falla el servidor, verificar localmente
+    const localPin = localStorage.getItem(LOCAL_PIN_KEY) || DEFAULT_SETTINGS.adminPin;
+    if (currentPin === localPin) {
+      localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
+      return { success: true, message: '¡PIN actualizado exitosamente!' };
+    }
+    throw err;
+  }
+}
+
+export async function recoverAdminPin(phone, newPin = null) {
+  try {
+    const res = await fetch(`${API_BASE}/admin/pin/recover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, newPin })
+    });
+    if (res.ok) {
+      if (newPin) {
+        localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
+      }
+      return await res.json();
+    }
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Número no reconocido.');
+  } catch (err) {
+    // Verificación offline por número
+    const clean = (phone || '').replace(/\D/g, '');
+    const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+    const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+    if ((clean.length >= 7 && p1.endsWith(clean)) || (clean.length >= 7 && p2.endsWith(clean))) {
+      if (newPin) {
+        localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
+      }
+      return { success: true, verified: true, currentPin: localStorage.getItem(LOCAL_PIN_KEY) || DEFAULT_SETTINGS.adminPin };
+    }
+    throw err;
+  }
 }

@@ -118,6 +118,7 @@ export default function App() {
         {currentView === 'admin' && (
           <AdminPanel
             onOpenGalleryToken={handleOpenGalleryToken}
+            onCatalogUpdated={loadInitialData}
           />
         )}
       </main>

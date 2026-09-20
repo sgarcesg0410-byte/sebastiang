@@ -400,6 +400,75 @@ app.post('/api/admin/settings', (req, res) => {
   res.json({ success: true, settings: db.settings, packages: db.packages });
 });
 
+// --- GESTIÓN DE CATÁLOGO (FOTOS PÚBLICAS) ---
+app.post('/api/admin/catalog', (req, res) => {
+  const { title, category, url, location } = req.body;
+  if (!title || !url) {
+    return res.status(400).json({ error: 'Faltan título o imagen de la foto.' });
+  }
+  const db = readDB();
+  const newItem = {
+    id: `cat-${Date.now()}`,
+    title: title.trim(),
+    category: (category || 'Retratos').trim(),
+    url: url.trim(),
+    location: (location || 'San Antero').trim()
+  };
+  if (!db.catalog) db.catalog = [];
+  db.catalog.unshift(newItem);
+  writeDB(db);
+  res.status(201).json({ success: true, item: newItem });
+});
+
+app.delete('/api/admin/catalog/:id', (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  db.catalog = (db.catalog || []).filter(c => c.id !== id);
+  writeDB(db);
+  res.json({ success: true, id });
+});
+
+// --- SEGURIDAD Y CAMBIO / RECUPERACIÓN DE PIN ---
+app.post('/api/admin/pin/change', (req, res) => {
+  const { currentPin, newPin } = req.body;
+  const db = readDB();
+  if (currentPin !== db.settings.adminPin) {
+    return res.status(401).json({ error: 'El PIN actual no coincide.' });
+  }
+  if (!newPin || String(newPin).length < 4) {
+    return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
+  }
+  db.settings.adminPin = String(newPin).trim();
+  writeDB(db);
+  res.json({ success: true, message: '¡PIN de acceso actualizado correctamente!' });
+});
+
+app.post('/api/admin/pin/recover', (req, res) => {
+  const { phone, newPin } = req.body;
+  const db = readDB();
+  const cleanPhone = (phone || '').replace(/\D/g, '');
+  const p1 = (db.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const p2 = (db.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+
+  const matchesP1 = cleanPhone.length >= 7 && (p1.endsWith(cleanPhone) || cleanPhone.endsWith(p1.slice(-10)));
+  const matchesP2 = cleanPhone.length >= 7 && (p2.endsWith(cleanPhone) || cleanPhone.endsWith(p2.slice(-10)));
+
+  if (!matchesP1 && !matchesP2) {
+    return res.status(403).json({ error: 'El número no coincide con las líneas de WhatsApp registradas de Sebastian G.' });
+  }
+
+  if (newPin) {
+    if (String(newPin).length < 4) {
+      return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
+    }
+    db.settings.adminPin = String(newPin).trim();
+    writeDB(db);
+    return res.json({ success: true, message: '¡PIN restablecido con éxito!' });
+  }
+
+  res.json({ success: true, verified: true, currentPin: db.settings.adminPin });
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Servidor de Foto Reservas corriendo en http://localhost:${PORT}`);
