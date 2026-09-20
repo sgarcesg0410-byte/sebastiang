@@ -59,3 +59,34 @@
 .animate-watermark {
   animation: softPulse 4s ease-in-out infinite;
 }
+
+/* Ocultar barras de desplazamiento nativas antiestéticas */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+/* Estilo general para que cualquier scrollbar del sistema sea discreto y oscuro, nunca blanco */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0c0a09;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #292524;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b;
+}

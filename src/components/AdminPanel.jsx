@@ -667,12 +667,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated }) {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       
       {/* CABECERA DEL PANEL */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-stone-800 mb-8">
+      <div className="flex flex-col gap-5 pb-6 border-b border-stone-800 mb-8">
         <div>
           <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
             Administración Oficial
           </span>
-          <h1 className="text-3xl font-serif font-bold text-white">
+          <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white">
             Sebastian G • Panel de Control
           </h1>
           <p className="text-xs text-stone-400 mt-0.5">
@@ -680,57 +680,84 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated }) {
           </p>
         </div>
 
-        {/* Pestañas de navegación */}
-        <div className="flex items-center gap-1.5 bg-stone-900 p-1.5 rounded-2xl border border-stone-800 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('bookings')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'bookings' ? 'bg-amber-500 text-stone-950 shadow-md' : 'text-stone-400 hover:text-white'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            <span>Reservas ({bookings.length})</span>
-          </button>
+        {/* Pestañas de navegación 100% responsive: Grid adaptable en móvil, sin scrollbar antiestético */}
+        <div className="w-full bg-stone-900/95 p-1.5 sm:p-2 rounded-2xl border border-stone-800/90 shadow-xl no-scrollbar">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 sm:gap-2">
+            <button
+              onClick={() => setActiveTab('bookings')}
+              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+                activeTab === 'bookings'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <Calendar className="w-4 h-4 shrink-0" />
+              <span>Reservas</span>
+              {bookings.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'bookings' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                  {bookings.length}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab('create-session')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'create-session' ? 'bg-amber-500 text-stone-950 shadow-md' : 'text-stone-400 hover:text-white'
-            }`}
-          >
-            <Plus className="w-4 h-4" />
-            <span>Subir Fotos Cliente (3 Días)</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('create-session')}
+              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+                activeTab === 'create-session'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              <span>Subir Fotos</span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('sessions')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'sessions' ? 'bg-amber-500 text-stone-950 shadow-md' : 'text-stone-400 hover:text-white'
-            }`}
-          >
-            <ImageIcon className="w-4 h-4" />
-            <span>Selecciones ({sessions.length})</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('sessions')}
+              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+                activeTab === 'sessions'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <ImageIcon className="w-4 h-4 shrink-0" />
+              <span>Selecciones</span>
+              {sessions.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                  {sessions.length}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab('catalog-manager')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'catalog-manager' ? 'bg-amber-500 text-stone-950 shadow-md' : 'text-stone-400 hover:text-white'
-            }`}
-          >
-            <FolderPlus className="w-4 h-4" />
-            <span>Gestionar Catálogo ({catalog.length})</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('catalog-manager')}
+              className={`px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+                activeTab === 'catalog-manager'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <FolderPlus className="w-4 h-4 shrink-0" />
+              <span>Catálogo</span>
+              {catalog.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold ${activeTab === 'catalog-manager' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                  {catalog.length}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === 'settings' ? 'bg-amber-500 text-stone-950 shadow-md' : 'text-stone-400 hover:text-white'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>WhatsApp & Seguridad</span>
-          </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`col-span-2 sm:col-span-1 px-3 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 touch-manipulation ${
+                activeTab === 'settings'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
+                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>Ajustes & PIN</span>
+            </button>
+          </div>
         </div>
       </div>
 
