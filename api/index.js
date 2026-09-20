@@ -26,7 +26,8 @@ function getDB() {
   return {
     settings: {
       photographerName: "Sebastian G",
-      photographerWhatsApp: "+573001234567",
+      photographerWhatsApp: "+573244725167",
+      photographerWhatsApp2: "+573023696513",
       outOfSanAnteroSurcharge: 10000,
       currencySymbol: "$",
       tagline: "Capturamos momentos, creamos recuerdos. ♡",
@@ -187,7 +188,8 @@ app.post('/api/bookings', (req, res) => {
 
   runtimeDB.bookings.unshift(newBooking);
 
-  const photogWhatsApp = (runtimeDB.settings.photographerWhatsApp || '+573001234567').replace(/\D/g, '');
+  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
   const msgText = encodeURIComponent(
     `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
     `👤 *Nombre:* ${newBooking.clientName}\n` +
@@ -201,7 +203,8 @@ app.post('/api/bookings', (req, res) => {
   res.status(201).json({
     success: true,
     booking: newBooking,
-    directWhatsAppUrl: `https://wa.me/${photogWhatsApp}?text=${msgText}`
+    directWhatsAppUrl: `https://wa.me/${photogWhatsApp1}?text=${msgText}`,
+    secondaryWhatsAppUrl: `https://wa.me/${photogWhatsApp2}?text=${msgText}`
   });
 });
 
@@ -274,24 +277,27 @@ app.post('/api/gallery/:token/submit', (req, res) => {
 
   summary += `\n\n_Quedo atento a la entrega final en alta resolución. ¡Muchas gracias!_`;
 
-  const photogWhatsApp = (runtimeDB.settings.photographerWhatsApp || '+573001234567').replace(/\D/g, '');
-  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp}?text=${encodeURIComponent(summary)}`;
+  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${encodeURIComponent(summary)}`;
+  const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${encodeURIComponent(summary)}`;
 
   res.json({
     success: true,
     message: '¡Selección guardada y bloqueada con éxito!',
     selectedCount: selectedPhotos.length,
     directWhatsAppUrl,
+    secondaryWhatsAppUrl,
     summary
   });
 });
 
 app.post('/api/admin/auth', (req, res) => {
   const { pin } = req.body;
-  if (pin === runtimeDB.settings.adminPin) {
-    res.json({ success: true });
+  if (pin === (runtimeDB.settings.adminPin || '1234')) {
+    res.json({ success: true, token: 'admin-authorized-token' });
   } else {
-    res.status(401).json({ error: 'PIN incorrecto.' });
+    res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
   }
 });
 
@@ -299,8 +305,105 @@ app.get('/api/admin/bookings', (req, res) => {
   res.json(runtimeDB.bookings || []);
 });
 
+app.patch('/api/admin/bookings/:id', (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  const booking = (runtimeDB.bookings || []).find(b => b.id === id);
+  if (!booking) return res.status(404).json({ error: 'Reserva no encontrada.' });
+
+  booking.status = status;
+  res.json({ success: true, booking });
+});
+
 app.get('/api/admin/sessions', (req, res) => {
-  res.json(runtimeDB.sessions || []);
+  const now = Date.now();
+  const enriched = (runtimeDB.sessions || []).map(s => {
+    const expiresTime = new Date(s.expiresAt).getTime();
+    const isExpired = now > expiresTime;
+    return {
+      ...s,
+      isExpired,
+      selectedCount: s.photos ? s.photos.filter(p => p.selected).length : 0,
+      totalPhotos: s.photos ? s.photos.length : 0
+    };
+  });
+  res.json(enriched);
+});
+
+app.post('/api/admin/sessions', (req, res) => {
+  const {
+    clientName,
+    clientWhatsApp,
+    packageTitle,
+    maxPhotosAllowed,
+    photos
+  } = req.body;
+
+  if (!clientName || !clientWhatsApp || !photos || photos.length === 0) {
+    return res.status(400).json({ error: 'Faltan datos del cliente o fotos para la sesión.' });
+  }
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const cleanName = clientName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
+  const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
+
+  const newSession = {
+    id: `sess-${Date.now()}`,
+    token,
+    clientName: clientName.trim(),
+    clientWhatsApp: clientWhatsApp.trim(),
+    packageTitle: packageTitle || 'Sesión Fotográfica',
+    maxPhotosAllowed: Number(maxPhotosAllowed) || photos.length,
+    createdAt: now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    status: 'pending',
+    submittedAt: null,
+    photos: photos.map((p, idx) => ({
+      id: `photo-${Date.now()}-${idx + 1}`,
+      title: p.title || `Foto #${idx + 1}`,
+      url: p.url,
+      selected: false,
+      clientComment: ''
+    }))
+  };
+
+  runtimeDB.sessions.unshift(newSession);
+
+  res.status(201).json({
+    success: true,
+    session: newSession,
+    link: `/galeria/${token}`
+  });
+});
+
+app.post('/api/admin/sessions/:id/reopen', (req, res) => {
+  const { id } = req.params;
+  const { additionalDays = 3, allowReSelection = true } = req.body;
+
+  const session = (runtimeDB.sessions || []).find(s => s.id === id);
+  if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
+
+  const newExpires = new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000);
+  session.expiresAt = newExpires.toISOString();
+
+  if (allowReSelection) {
+    session.status = 'pending';
+    session.submittedAt = null;
+  }
+
+  res.json({ success: true, session });
+});
+
+app.post('/api/admin/settings', (req, res) => {
+  const { settings, packages } = req.body;
+  if (settings) {
+    runtimeDB.settings = { ...runtimeDB.settings, ...settings };
+  }
+  if (packages && Array.isArray(packages)) {
+    runtimeDB.packages = packages;
+  }
+  res.json({ success: true, settings: runtimeDB.settings, packages: runtimeDB.packages });
 });
 
 export default app;

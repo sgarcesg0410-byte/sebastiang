@@ -107,24 +107,27 @@ app.post('/api/bookings', (req, res) => {
   writeDB(db);
 
   // Generar link de WhatsApp directo hacia el fotógrafo con el resumen
-  const photogWhatsApp = (db.settings.photographerWhatsApp || '').replace(/\D/g, '');
+  const photogWhatsApp1 = (db.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const photogWhatsApp2 = (db.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
   const msgText = encodeURIComponent(
-    `📸 *¡Hola! Acabo de hacer una reserva en tu sitio web:*\n\n` +
+    `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
-    `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice})\n` +
+    `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice.toLocaleString('es-CO')} COP)\n` +
     `📍 *Lugar:* ${newBooking.locationType === 'outside_san_antero' ? 'Fuera de San Antero (' + newBooking.specificLocation + ')' : 'En San Antero (' + newBooking.specificLocation + ')'}\n` +
     `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
     `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
     `_Quedo atento a tu confirmación para agendarla definitivamente._`
   );
 
-  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp}?text=${msgText}`;
+  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${msgText}`;
+  const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${msgText}`;
 
   res.status(201).json({
     success: true,
     booking: newBooking,
-    directWhatsAppUrl
+    directWhatsAppUrl,
+    secondaryWhatsAppUrl
   });
 });
 
@@ -243,14 +246,17 @@ app.post('/api/gallery/:token/submit', (req, res) => {
     }
   });
 
-  const photogWhatsApp = (db.settings.photographerWhatsApp || '').replace(/\D/g, '');
-  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp}?text=${encodeURIComponent(summaryText)}`;
+  const photogWhatsApp1 = (db.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const photogWhatsApp2 = (db.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${encodeURIComponent(summaryText)}`;
+  const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${encodeURIComponent(summaryText)}`;
 
   res.json({
     success: true,
     message: '¡Selección guardada y bloqueada con éxito!',
     selectedCount: selectedList.length,
     directWhatsAppUrl,
+    secondaryWhatsAppUrl,
     summaryText
   });
 });

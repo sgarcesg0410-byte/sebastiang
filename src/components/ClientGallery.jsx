@@ -245,31 +245,61 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
             </div>
           )}
 
-          {(galleryData.isSubmitted || submissionResult) && (
-            <div className="bg-emerald-950/80 border-2 border-emerald-500/60 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left">
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-8 h-8 text-emerald-400 shrink-0" />
-                <div>
-                  <h4 className="text-base font-bold text-emerald-200">¡Selección enviada y bloqueada con éxito!</h4>
-                  <p className="text-xs text-emerald-100/80 mt-0.5">
-                    Tus elecciones y notas han quedado registradas. Sebastian G ya tiene la lista y comenzará la edición final en alta calidad sin marcas de agua.
-                  </p>
+          {(galleryData.isSubmitted || submissionResult) && (() => {
+            const selectedList = (galleryData.photos || []).filter(p => selections[p.id]?.selected || p.selected);
+            let autoSummary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n\n`;
+            autoSummary += `👤 *Cliente:* ${galleryData.clientName}\n`;
+            autoSummary += `📦 *Sesión:* ${galleryData.packageTitle}\n`;
+            autoSummary += `🔢 *Total Elegidas:* ${selectedList.length} fotos\n\n`;
+            autoSummary += `*Lista de fotos seleccionadas:*\n`;
+            selectedList.forEach((p, idx) => {
+              const note = selections[p.id]?.comment || p.clientComment;
+              autoSummary += `\n${idx + 1}. *${p.title}*`;
+              if (note) autoSummary += `\n   💬 _Nota:_ "${note}"`;
+            });
+            autoSummary += `\n\n_Quedo atento(a) a la entrega final en alta calidad. ¡Muchas gracias!_`;
+
+            const primaryWaUrl = submissionResult?.directWhatsAppUrl || `https://wa.me/573244725167?text=${encodeURIComponent(autoSummary)}`;
+            const secondaryWaUrl = submissionResult?.secondaryWhatsAppUrl || `https://wa.me/573023696513?text=${encodeURIComponent(autoSummary)}`;
+
+            return (
+              <div className="bg-emerald-950/90 border-2 border-emerald-500/70 rounded-3xl p-6 flex flex-col gap-4 text-left shadow-2xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h4 className="text-lg font-bold text-white">¡Selección enviada y protegida con éxito!</h4>
+                    <p className="text-xs text-emerald-200/90 mt-0.5">
+                      Tus elecciones y notas quedaron registradas. Puedes enviar el detalle a Sebastian G por cualquiera de sus dos líneas de WhatsApp:
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                  <a
+                    href={primaryWaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs sm:text-sm py-3.5 px-5 rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
+                  >
+                    <Share2 className="w-4 h-4 fill-white shrink-0" />
+                    <span>Enviar a Sebastian (Línea 1: 324 472 5167) 📲</span>
+                  </a>
+
+                  <a
+                    href={secondaryWaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 font-bold text-xs sm:text-sm py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
+                  >
+                    <MessageSquare className="w-4 h-4 shrink-0" />
+                    <span>Enviar a Línea 2 (302 369 6513)</span>
+                  </a>
                 </div>
               </div>
-
-              {submissionResult?.directWhatsAppUrl && (
-                <a
-                  href={submissionResult.directWhatsAppUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full sm:w-auto bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-sm px-6 py-3.5 rounded-2xl shadow-xl shadow-emerald-600/30 shrink-0 flex items-center justify-center gap-2.5 active:scale-95 transition-all"
-                >
-                  <Share2 className="w-5 h-5 fill-white" />
-                  <span>Enviar Mis Fotos a Sebastian por WhatsApp 📲</span>
-                </a>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {/* CABECERA DE LA SESIÓN DEL CLIENTE */}
           <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">

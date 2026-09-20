@@ -110,7 +110,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
       setSubmittedBooking({
         ...result.booking,
-        directWhatsAppUrl: result.directWhatsAppUrl
+        directWhatsAppUrl: result.directWhatsAppUrl,
+        secondaryWhatsAppUrl: result.secondaryWhatsAppUrl
       });
     } catch (err) {
       console.error(err);
@@ -196,10 +197,22 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     href={submittedBooking.directWhatsAppUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 active:scale-98 transition-all"
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold py-3.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 active:scale-98 transition-all"
                   >
                     <MessageCircle className="w-5 h-5 fill-white" />
-                    <span>Confirmar por WhatsApp con Sebastian</span>
+                    <span>Confirmar con Sebastian (Línea 1: 324 472 5167) 📲</span>
+                  </a>
+                )}
+
+                {submittedBooking.secondaryWhatsAppUrl && (
+                  <a
+                    href={submittedBooking.secondaryWhatsAppUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 font-bold py-3 px-6 rounded-xl text-xs active:scale-98 transition-all"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Enviar a Línea 2 (302 369 6513)</span>
                   </a>
                 )}
 

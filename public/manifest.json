@@ -1,0 +1,28 @@
+{
+  "short_name": "Sebastian G",
+  "name": "Sebastian G • Reservas & Galería",
+  "description": "Portafolio y Galería Privada de Fotos en San Antero",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/app-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0c0a09",
+  "theme_color": "#0c0a09",
+  "display": "standalone",
+  "orientation": "portrait"
+}
