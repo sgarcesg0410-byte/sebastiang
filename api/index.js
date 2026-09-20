@@ -122,13 +122,6 @@ function getDB() {
         category: "Retratos",
         url: "/catalog/verano-salsero.jpg",
         location: "Playas de Coveñas"
-      },
-      {
-        id: "cat-atardecer-covenas",
-        title: "Atardecer",
-        category: "Retratos",
-        url: "/catalog/atardecer-covenas.jpg",
-        location: "Playas el Edén - Coveñas"
       }
     ],
     bookings: [],

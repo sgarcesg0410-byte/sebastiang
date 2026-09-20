@@ -279,6 +279,8 @@ export async function getCatalog() {
 
   for (const item of allCandidates) {
     if (!item || !item.id) continue;
+    // Si el item es la captura defectuosa de muestra, descartarla
+    if (item.id === 'cat-atardecer-covenas') continue;
     // Si el item fue eliminado por el usuario, descartarlo
     if (deletedIds.has(item.id)) continue;
     // Si las muestras demo fueron purgadas y es foto demo de Unsplash, descartarlo
