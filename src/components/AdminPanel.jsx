@@ -1330,7 +1330,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {bookings.map((booking) => {
                 const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
-                const clientPhoneClean = (booking.clientWhatsApp || '').replace(/\D/g, '');
+                let clientPhoneClean = (booking.clientWhatsApp || '').replace(/\D/g, '');
+                if (clientPhoneClean.length === 10 && !clientPhoneClean.startsWith('57')) {
+                  clientPhoneClean = '57' + clientPhoneClean;
+                }
 
                 return (
                   <div
