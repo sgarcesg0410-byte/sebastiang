@@ -101,13 +101,23 @@ function removeLocalCatalogItem(id) {
 function getLocalSessions() {
   try {
     const raw = localStorage.getItem(LOCAL_SESSIONS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const list = raw ? JSON.parse(raw) : [];
+    const filtered = (Array.isArray(list) ? list : []).filter(
+      s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
+    );
+    if (filtered.length !== list.length) {
+      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(filtered));
+    }
+    return filtered;
   } catch (e) {
     return [];
   }
 }
 
 function saveLocalSession(session) {
+  if (!session || session.clientName === 'Camila Rodríguez' || session.token === 'demo-cliente-2026' || session.id === 'sess-demo') {
+    return;
+  }
   try {
     const sessions = getLocalSessions().filter(s => s.id !== session.id && s.token !== session.token);
     sessions.unshift(session);
@@ -453,11 +463,45 @@ export async function getGalleryByToken(token) {
     const res = await fetch(`${API_BASE}/gallery/${token}`);
     if (res.ok) {
       const data = await res.json();
-      saveLocalSession(data);
+      if (data && data.clientName !== 'Camila Rodríguez' && token !== 'demo-cliente-2026') {
+        saveLocalSession(data);
+      }
       return data;
     }
   } catch (err) {
     console.warn('Error conectando con servidor para galería, consultando local:', err);
+  }
+
+  // Si es la demostración pública para visitantes, proveer datos limpios
+  if (token === 'demo-cliente-2026') {
+    return {
+      id: "sess-demo",
+      token: "demo-cliente-2026",
+      clientName: "Demostración de Selección",
+      clientWhatsApp: "+573244725167",
+      packageTitle: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+      maxPhotosAllowed: 10,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      status: "pending",
+      submittedAt: null,
+      isExpired: false,
+      isSubmitted: false,
+      timeRemainingMs: 30 * 24 * 60 * 60 * 1000,
+      photos: [
+        { id: "photo-1", title: "Foto 001 - Retrato Primer Plano", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-2", title: "Foto 002 - Mirada al Atardecer", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-3", title: "Foto 003 - Sonrisa en la Orilla", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-4", title: "Foto 004 - Movimiento y Brisa", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-5", title: "Foto 005 - Plano Entero en la Playa", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-6", title: "Foto 006 - Silueta en Contraluz", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
+      ],
+      watermarkSettings: {
+        watermarkText: DEFAULT_SETTINGS.watermarkText,
+        watermarkSubtext: DEFAULT_SETTINGS.watermarkSubtext,
+        watermarkLogoUrl: DEFAULT_SETTINGS.watermarkLogoUrl
+      }
+    };
   }
 
   // Buscar en fallback local
@@ -798,7 +842,7 @@ export async function getAdminSessions() {
   const localSessions = getLocalSessions();
   const map = new Map();
   [...serverSessions, ...localSessions].forEach(s => {
-    if (s && s.token) {
+    if (s && s.token && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026') {
       const now = Date.now();
       const expiresTime = new Date(s.expiresAt).getTime();
       map.set(s.token, {
@@ -811,6 +855,20 @@ export async function getAdminSessions() {
   });
 
   return Array.from(map.values());
+}
+
+export async function deleteAdminSession(id) {
+  try {
+    await fetch(`${API_BASE}/admin/sessions/${id}`, {
+      method: 'DELETE'
+    });
+  } catch (err) {
+    console.warn('Error al eliminar sesión en servidor:', err);
+  }
+
+  const sessions = getLocalSessions().filter(s => s.id !== id && s.token !== id);
+  localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
+  return { success: true };
 }
 
 export async function createAdminSession(data) {

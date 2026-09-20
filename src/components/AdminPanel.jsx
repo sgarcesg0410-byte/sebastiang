@@ -47,6 +47,7 @@ import {
   getAdminSessions, 
   createAdminSession, 
   reopenAdminSession, 
+  deleteAdminSession,
   updateAdminSettings,
   getSettings,
   getPackages,
@@ -291,7 +292,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         getAdminPayments()
       ]);
       setBookings(bData);
-      setSessions(sData);
+      const cleanSessions = Array.isArray(sData) 
+        ? sData.filter(s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026')
+        : [];
+      setSessions(cleanSessions);
       if (cData) setCatalog(cData);
       if (payData) setPayments(payData);
       setAnalyticsStats(getLocalAnalytics());
@@ -694,6 +698,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
+  const handleDeleteSession = async (sessionId, clientName) => {
+    if (!confirm(`¿Estás seguro de eliminar permanentemente la galería de "${clientName || 'este cliente'}"? Esta acción no se puede deshacer.`)) return;
+    try {
+      await deleteAdminSession(sessionId);
+      setSessions(prev => prev.filter(s => s.id !== sessionId && s.token !== sessionId));
+    } catch (err) {
+      alert('Error al eliminar galería');
+    }
+  };
+
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     setCopiedLink(true);
@@ -969,6 +983,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     );
   }
 
+  const safeSessions = (sessions || []).filter(
+    s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
+  );
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       
@@ -1174,9 +1192,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             >
               <ImageIcon className="w-3.5 h-3.5 shrink-0" />
               <span>Selecciones</span>
-              {sessions.length > 0 && (
+              {safeSessions.length > 0 && (
                 <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
-                  {sessions.length}
+                  {safeSessions.length}
                 </span>
               )}
             </button>
@@ -1740,7 +1758,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   required
                   value={newSessionForm.clientName}
                   onChange={(e) => setNewSessionForm({ ...newSessionForm, clientName: e.target.value })}
-                  placeholder="Ej. Camila Rodríguez"
+                  placeholder="Ej. Jennifer Vásquez"
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500 font-medium"
                 />
               </div>
@@ -1968,13 +1986,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </button>
           </div>
 
-          {sessions.length === 0 ? (
+          {safeSessions.length === 0 ? (
             <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
-              No has creado sesiones de clientes todavía. Usa la pestaña "Subir Fotos Cliente".
+              No has creado sesiones de clientes todavía. Usa la pestaña "Subir Fotos" para generar un nuevo enlace seguro para tus clientes.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {sessions.map((session) => {
+              {safeSessions.map((session) => {
                 const selectedPhotos = (session.photos || []).filter(p => p.selected);
                 const isSubmitted = session.status === 'submitted';
 
@@ -2076,7 +2094,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           className="text-amber-400 hover:underline flex items-center gap-1 font-semibold"
                         >
                           <RefreshCw className="w-3 h-3" />
-                          <span>Reabrir (+3 Días)</span>
+                          <span>Reabrir</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSession(session.id, session.clientName)}
+                          className="text-stone-500 hover:text-red-400 flex items-center gap-1 font-semibold transition-colors"
+                          title="Eliminar esta galería de cliente"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-red-400/80" />
+                          <span>Eliminar</span>
                         </button>
                       </div>
                     </div>

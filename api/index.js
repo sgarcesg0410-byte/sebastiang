@@ -142,28 +142,7 @@ function getDB() {
       }
     ],
     payments: [],
-    sessions: [
-      {
-        id: "sess-demo",
-        token: "demo-cliente-2026",
-        clientName: "Camila Rodríguez",
-        clientWhatsApp: "+573105551234",
-        packageTitle: "8 Fotos Digitales (+ 2 Fotos Gratis)",
-        maxPhotosAllowed: 10,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-        status: "pending",
-        submittedAt: null,
-        photos: [
-          { id: "photo-1", title: "Foto 001 - Retrato Primer Plano", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-          { id: "photo-2", title: "Foto 002 - Mirada al Atardecer", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-          { id: "photo-3", title: "Foto 003 - Sonrisa en la Orilla", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-          { id: "photo-4", title: "Foto 004 - Movimiento y Brisa", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-          { id: "photo-5", title: "Foto 005 - Plano Entero en la Playa", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-          { id: "photo-6", title: "Foto 006 - Silueta en Contraluz", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
-        ]
-      }
-    ]
+    sessions: []
   };
 }
 
@@ -271,7 +250,32 @@ app.post('/api/bookings', (req, res) => {
 
 app.get('/api/gallery/:token', (req, res) => {
   const { token } = req.params;
-  const session = runtimeDB.sessions.find(s => s.token === token);
+  let session = (runtimeDB.sessions || []).find(s => s.token === token);
+
+  // Soporte para demostración pública sin ensuciar la base de datos de clientes reales
+  if (!session && token === 'demo-cliente-2026') {
+    session = {
+      id: "sess-demo",
+      token: "demo-cliente-2026",
+      clientName: "Demostración de Selección",
+      clientWhatsApp: "+573244725167",
+      packageTitle: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+      maxPhotosAllowed: 10,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      status: "pending",
+      submittedAt: null,
+      photos: [
+        { id: "photo-1", title: "Foto 001 - Retrato Primer Plano", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-2", title: "Foto 002 - Mirada al Atardecer", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-3", title: "Foto 003 - Sonrisa en la Orilla", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-4", title: "Foto 004 - Movimiento y Brisa", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-5", title: "Foto 005 - Plano Entero en la Playa", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-6", title: "Foto 006 - Silueta en Contraluz", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
+      ]
+    };
+  }
+
   if (!session) return res.status(404).json({ error: 'Galería no encontrada.' });
 
   const now = Date.now();
@@ -472,7 +476,8 @@ app.patch('/api/admin/payments/:id', (req, res) => {
 
 app.get('/api/admin/sessions', (req, res) => {
   const now = Date.now();
-  const enriched = (runtimeDB.sessions || []).map(s => {
+  const sessions = (runtimeDB.sessions || []).filter(s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026');
+  const enriched = sessions.map(s => {
     const expiresTime = new Date(s.expiresAt).getTime();
     const isExpired = now > expiresTime;
     return {
@@ -483,6 +488,22 @@ app.get('/api/admin/sessions', (req, res) => {
     };
   });
   res.json(enriched);
+});
+
+app.delete('/api/admin/sessions/:id', (req, res) => {
+  const { id } = req.params;
+  runtimeDB.sessions = (runtimeDB.sessions || []).filter(s => s.id !== id && s.token !== id);
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.sessions = runtimeDB.sessions;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
+  res.json({ success: true });
 });
 
 app.post('/api/admin/sessions', (req, res) => {
