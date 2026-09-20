@@ -237,12 +237,52 @@ app.post('/api/gallery/:token/submit', (req, res) => {
     return res.status(403).json({ error: 'Esta selección ya fue enviada previamente y se encuentra bloqueada.' });
   }
 
+  // Actualizar fotos elegidas y comentarios
+  const selMap = new Map();
+  (selections || []).forEach(item => {
+    selMap.set(item.id, {
+      selected: Boolean(item.selected),
+      comment: (item.clientComment || '').trim()
+    });
+  });
+
+  session.photos = session.photos.map(p => {
+    const update = selMap.get(p.id);
+    if (update) {
+      return { ...p, selected: update.selected, clientComment: update.comment };
+    }
+    return p;
+  });
+
   session.status = 'submitted';
   session.submittedAt = new Date().toISOString();
 
+  // Armar lista detallada de fotos seleccionadas con sus notas
+  const selectedPhotos = session.photos.filter(p => p.selected);
+  let summary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n\n`;
+  summary += `👤 *Cliente:* ${session.clientName}\n`;
+  summary += `📦 *Sesión:* ${session.packageTitle}\n`;
+  summary += `🔢 *Total Elegidas:* ${selectedPhotos.length} fotos\n\n`;
+  summary += `*Lista de fotos seleccionadas:*\n`;
+
+  selectedPhotos.forEach((p, idx) => {
+    summary += `\n${idx + 1}. *${p.title}*`;
+    if (p.clientComment) {
+      summary += `\n   💬 _Nota:_ "${p.clientComment}"`;
+    }
+  });
+
+  summary += `\n\n_Quedo atento a la entrega final en alta resolución. ¡Muchas gracias!_`;
+
+  const photogWhatsApp = (runtimeDB.settings.photographerWhatsApp || '+573001234567').replace(/\D/g, '');
+  const directWhatsAppUrl = `https://wa.me/${photogWhatsApp}?text=${encodeURIComponent(summary)}`;
+
   res.json({
     success: true,
-    message: '¡Selección guardada con éxito!'
+    message: '¡Selección guardada y bloqueada con éxito!',
+    selectedCount: selectedPhotos.length,
+    directWhatsAppUrl,
+    summary
   });
 });
 

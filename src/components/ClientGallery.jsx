@@ -140,6 +140,11 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
       setSubmissionResult(res);
       setConfirmModalOpen(false);
       setGalleryData(prev => ({ ...prev, isSubmitted: true }));
+
+      // Abrir WhatsApp automáticamente con el listado detallado
+      if (res.directWhatsAppUrl) {
+        window.open(res.directWhatsAppUrl, '_blank');
+      }
     } catch (err) {
       alert(err.message || 'Error al enviar selección.');
     } finally {
@@ -252,15 +257,15 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 </div>
               </div>
 
-              {(submissionResult?.directWhatsAppUrl || galleryData.clientWhatsApp) && (
+              {submissionResult?.directWhatsAppUrl && (
                 <a
-                  href={submissionResult?.directWhatsAppUrl || `https://wa.me/?text=Hola%20Sebastian%20ya%20elegí%20mis%20fotos`}
+                  href={submissionResult.directWhatsAppUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shrink-0 flex items-center gap-2"
+                  className="w-full sm:w-auto bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-sm px-6 py-3.5 rounded-2xl shadow-xl shadow-emerald-600/30 shrink-0 flex items-center justify-center gap-2.5 active:scale-95 transition-all"
                 >
-                  <Share2 className="w-4 h-4" />
-                  <span>Notificar a Sebastian por WhatsApp</span>
+                  <Share2 className="w-5 h-5 fill-white" />
+                  <span>Enviar Mis Fotos a Sebastian por WhatsApp 📲</span>
                 </a>
               )}
             </div>
