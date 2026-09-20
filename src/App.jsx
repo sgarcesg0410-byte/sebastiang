@@ -9,6 +9,7 @@ import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import { getSettings, getCatalog, getPackages } from './services/api';
 import { supabase } from './services/supabase';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
+import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('home'); // 'home' | 'packages' | 'gallery' | 'admin'
@@ -192,6 +193,30 @@ export default function App() {
                   San Antero • Córdoba
                 </span>
               </div>
+            </div>
+
+            {/* Redes Sociales en Footer */}
+            <div className="flex items-center gap-3">
+              <a
+                href={SOCIAL_LINKS.instagram.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-300 hover:text-pink-400 hover:border-pink-500/40 text-xs font-semibold transition-all hover:scale-105"
+                title="Instagram: @sgarces01"
+              >
+                <InstagramIcon className="w-4 h-4 text-pink-400" />
+                <span>Instagram</span>
+              </a>
+              <a
+                href={SOCIAL_LINKS.facebook.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-300 hover:text-blue-400 hover:border-blue-500/40 text-xs font-semibold transition-all hover:scale-105"
+                title="Facebook: /Sgarces01"
+              >
+                <FacebookIcon className="w-4 h-4 text-blue-400" />
+                <span>Facebook</span>
+              </a>
             </div>
 
             <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-stone-400">
