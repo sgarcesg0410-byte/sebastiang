@@ -10,7 +10,7 @@ const LOCAL_PIN_KEY = 'sebastian_g_admin_pin';
 const LOCAL_PACKAGES_KEY = 'sebastian_g_packages_v1';
 const LOCAL_SETTINGS_KEY = 'sebastian_g_settings_v1';
 
-const SAMPLE_PHOTO_IDS = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'];
+const SAMPLE_PHOTO_IDS = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8', 'cat-atardecer-covenas'];
 
 export const DEFAULT_REAL_CATALOG = [
   {
@@ -19,13 +19,6 @@ export const DEFAULT_REAL_CATALOG = [
     category: "Retratos",
     url: "/catalog/verano-salsero.jpg",
     location: "Playas de Coveñas"
-  },
-  {
-    id: "cat-atardecer-covenas",
-    title: "Atardecer",
-    category: "Retratos",
-    url: "/catalog/atardecer-covenas.jpg",
-    location: "Playas el Edén - Coveñas"
   }
 ];
 
@@ -271,8 +264,14 @@ export async function getCatalog() {
   // 1. Fotos en la nube Supabase (sincronizadas entre todos los dispositivos)
   // 2. Fotos locales en este dispositivo
   // 3. Fotos del servidor
-  // 4. Catálogo base predeterminado
-  const allCandidates = [...supabaseCatalog, ...localItems, ...serverCatalog, ...DEFAULT_REAL_CATALOG];
+  // 4. Catálogo base predeterminado (solo si no hay fotos reales cargadas en Supabase o local)
+  const hasRealPhotos = supabaseCatalog.length > 0 || localItems.length > 0;
+  const allCandidates = [
+    ...supabaseCatalog, 
+    ...localItems, 
+    ...serverCatalog, 
+    ...(hasRealPhotos ? [] : DEFAULT_REAL_CATALOG)
+  ];
 
   const result = [];
   const seenIds = new Set();
