@@ -134,8 +134,8 @@ function getDB() {
         totalPrice: 75000,
         locationType: "san_antero",
         specificLocation: "Playa Blanca, sector Las Cabañas",
-        dateTime: "24/09/2026 a las 4:30 p. m.",
-        description: "Fotos para mi cumpleaños, con vestido al atardecer.",
+        dateTime: "30/09/2026 a las 3:00 p. m.",
+        description: "Sesión de fotos de juramento de bandera de su hijo",
         createdAt: "2026-09-19T10:00:00.000Z",
         status: "confirmed",
         isReal: true
@@ -372,11 +372,11 @@ app.get('/api/admin/bookings', (req, res) => {
 
 app.patch('/api/admin/bookings/:id', (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const updates = req.body;
   const booking = (runtimeDB.bookings || []).find(b => b.id === id);
   if (!booking) return res.status(404).json({ error: 'Reserva no encontrada.' });
 
-  booking.status = status;
+  Object.assign(booking, updates);
 
   try {
     const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
@@ -388,6 +388,22 @@ app.patch('/api/admin/bookings/:id', (req, res) => {
   } catch (e) {}
 
   res.json({ success: true, booking });
+});
+
+app.delete('/api/admin/bookings/:id', (req, res) => {
+  const { id } = req.params;
+  runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id);
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.bookings = runtimeDB.bookings;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
+  res.json({ success: true });
 });
 
 // --- PASARELAS DE PAGO DIRECTO (NEQUI, DAVIPLATA, DALE) ---

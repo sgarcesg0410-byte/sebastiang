@@ -38,12 +38,16 @@ import {
   Crown,
   Bell,
   Volume2,
-  Users
+  Users,
+  Edit3,
+  X
 } from 'lucide-react';
 import { 
   verifyAdminPin, 
   getAdminBookings, 
   updateBookingStatus, 
+  updateAdminBooking,
+  deleteAdminBooking,
   getAdminSessions, 
   createAdminSession, 
   reopenAdminSession, 
@@ -164,6 +168,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   // Datos del sistema
   const [bookings, setBookings] = useState([]);
+  const [editingBooking, setEditingBooking] = useState(null);
+  const [isSavingBooking, setIsSavingBooking] = useState(false);
   const [payments, setPayments] = useState([]);
   const [analyticsStats, setAnalyticsStats] = useState(getLocalAnalytics());
   const [realtimeAlert, setRealtimeAlert] = useState(null);
@@ -453,6 +459,32 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
     } catch (err) {
       alert('Error al actualizar estado');
+    }
+  };
+
+  const handleSaveBookingEdit = async (e) => {
+    if (e) e.preventDefault();
+    if (!editingBooking) return;
+    try {
+      setIsSavingBooking(true);
+      await updateAdminBooking(editingBooking.id, editingBooking);
+      setBookings(prev => prev.map(b => b.id === editingBooking.id ? { ...editingBooking } : b));
+      setEditingBooking(null);
+    } catch (err) {
+      alert('Error al guardar cambios de la reserva: ' + err.message);
+    } finally {
+      setIsSavingBooking(false);
+    }
+  };
+
+  const handleDeleteBooking = async (bookingId, clientName) => {
+    if (confirm(`¿Estás seguro de que deseas eliminar la reserva de "${clientName}"? Esta acción no se puede deshacer.`)) {
+      try {
+        await deleteAdminBooking(bookingId);
+        setBookings(prev => prev.filter(b => b.id !== bookingId));
+      } catch (err) {
+        alert('Error al eliminar reserva: ' + err.message);
+      }
     }
   };
 
@@ -1370,22 +1402,43 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       )}
                     </div>
 
-                    <div className="pt-2 border-t border-stone-800 flex items-center justify-between gap-2">
-                      <select
-                        value={booking.status}
-                        onChange={(e) => handleStatusChange(booking.id, e.target.value)}
-                        className="bg-stone-950 border border-stone-700 text-xs rounded-lg px-2.5 py-1.5 text-stone-300"
-                      >
-                        <option value="pending">Pendiente</option>
-                        <option value="confirmed">Confirmar</option>
-                        <option value="completed">Sesión Realizada</option>
-                      </select>
+                    <div className="pt-3 border-t border-stone-800 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={booking.status}
+                          onChange={(e) => handleStatusChange(booking.id, e.target.value)}
+                          className="bg-stone-950 border border-stone-700 text-xs rounded-lg px-2 py-1.5 text-stone-300"
+                        >
+                          <option value="pending">Pendiente</option>
+                          <option value="confirmed">Confirmar</option>
+                          <option value="completed">Sesión Realizada</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => setEditingBooking({ ...booking })}
+                          className="px-2 py-1.5 bg-stone-800 hover:bg-stone-700 text-amber-400 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                          title="Editar detalles de la reserva"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span className="text-[11px]">Editar</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBooking(booking.id, booking.clientName)}
+                          className="p-1.5 bg-stone-800/80 hover:bg-red-950 text-stone-400 hover:text-red-400 rounded-lg text-xs transition-colors"
+                          title="Eliminar reserva"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
 
                       <a
                         href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`)}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg"
+                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
                         <span>WhatsApp</span>
@@ -1396,6 +1449,131 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* MODAL PARA EDITAR DETALLES DE CUALQUIER RESERVA EN TIEMPO REAL */}
+      {editingBooking && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md p-4 flex items-center justify-center">
+          <div className="relative w-full max-w-lg bg-stone-900 border border-stone-700 rounded-3xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-serif font-bold text-white">
+                  Editar Reserva de {editingBooking.clientName}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingBooking(null)}
+                className="p-1.5 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveBookingEdit} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-stone-300 mb-1">Nombre del Cliente</label>
+                <input
+                  type="text"
+                  value={editingBooking.clientName || ''}
+                  onChange={(e) => setEditingBooking(prev => ({ ...prev, clientName: e.target.value }))}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">WhatsApp del Cliente</label>
+                  <input
+                    type="text"
+                    value={editingBooking.clientWhatsApp || ''}
+                    onChange={(e) => setEditingBooking(prev => ({ ...prev, clientWhatsApp: e.target.value }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Valor Cobrado ($ COP)</label>
+                  <input
+                    type="number"
+                    value={editingBooking.totalPrice || 0}
+                    onChange={(e) => setEditingBooking(prev => ({ ...prev, totalPrice: Number(e.target.value) }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-300 mb-1">Ubicación / Lugar de la Sesión</label>
+                <input
+                  type="text"
+                  value={editingBooking.specificLocation || ''}
+                  onChange={(e) => setEditingBooking(prev => ({ ...prev, specificLocation: e.target.value }))}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white"
+                  placeholder="Ej: Playa Blanca, sector Las Cabañas"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Fecha y Hora (12 Horas)</label>
+                  <input
+                    type="text"
+                    value={editingBooking.dateTime || ''}
+                    onChange={(e) => setEditingBooking(prev => ({ ...prev, dateTime: e.target.value }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white"
+                    placeholder="Ej: 30/09/2026 a las 3:00 p. m."
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Estado de la Reserva</label>
+                  <select
+                    value={editingBooking.status || 'pending'}
+                    onChange={(e) => setEditingBooking(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white"
+                  >
+                    <option value="pending">Pendiente</option>
+                    <option value="confirmed">Confirmada</option>
+                    <option value="completed">Sesión Realizada</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-300 mb-1">Notas del Cliente / Descripción</label>
+                <textarea
+                  value={editingBooking.description || ''}
+                  onChange={(e) => setEditingBooking(prev => ({ ...prev, description: e.target.value }))}
+                  rows={2}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white"
+                  placeholder="Descripción de la sesión, ocasión, etc."
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingBooking(null)}
+                  className="px-4 py-2 rounded-xl text-stone-400 hover:text-white bg-stone-800 text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingBooking}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs hover:from-amber-400 hover:to-amber-300 disabled:opacity-50"
+                >
+                  {isSavingBooking ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

@@ -137,8 +137,8 @@ export const REAL_DEFAULT_BOOKINGS = [
     totalPrice: 75000,
     locationType: "san_antero",
     specificLocation: "Playa Blanca, sector Las Cabañas",
-    dateTime: "24/09/2026 a las 4:30 p. m.",
-    description: "Fotos para mi cumpleaños, con vestido al atardecer.",
+    dateTime: "30/09/2026 a las 3:00 p. m.",
+    description: "Sesión de fotos de juramento de bandera de su hijo",
     createdAt: "2026-09-19T10:00:00.000Z",
     status: "confirmed",
     isReal: true
@@ -200,7 +200,7 @@ function getLocalBookings() {
     // Filtrar cualquier reserva de muestra o demo que haya quedado guardada
     list = (Array.isArray(list) ? list : []).filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
     
-    // Asegurar que Jennifer Vásquez esté siempre presente con sus datos reales restaurados
+    // Asegurar que Jennifer Vásquez esté siempre presente con sus datos reales del 30 de septiembre
     let found = false;
     list = list.map(b => {
       if (b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez') {
@@ -215,9 +215,9 @@ function getLocalBookings() {
           totalPrice: 75000,
           locationType: "san_antero",
           specificLocation: "Playa Blanca, sector Las Cabañas",
-          dateTime: "24/09/2026 a las 4:30 p. m.",
-          description: "Fotos para mi cumpleaños, con vestido al atardecer.",
-          status: "confirmed",
+          dateTime: "30/09/2026 a las 3:00 p. m.",
+          description: "Sesión de fotos de juramento de bandera de su hijo",
+          status: b.status || "confirmed",
           isReal: true
         };
       }
@@ -730,9 +730,9 @@ export async function getAdminBookings() {
           totalPrice: 75000,
           locationType: "san_antero",
           specificLocation: "Playa Blanca, sector Las Cabañas",
-          dateTime: "24/09/2026 a las 4:30 p. m.",
-          description: "Fotos para mi cumpleaños, con vestido al atardecer.",
-          status: "confirmed",
+          dateTime: "30/09/2026 a las 3:00 p. m.",
+          description: "Sesión de fotos de juramento de bandera de su hijo",
+          status: b.status || "confirmed",
           isReal: true
         };
       }
@@ -748,20 +748,46 @@ export async function getAdminBookings() {
   return combined.filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
 }
 
-export async function updateBookingStatus(id, status) {
+export async function updateAdminBooking(id, updates) {
   try {
     const res = await fetch(`${API_BASE}/admin/bookings/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
+      body: JSON.stringify(updates)
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.booking) {
+        saveLocalBooking(data.booking);
+        return data;
+      }
+    }
   } catch (err) {
-    console.warn(err);
+    console.warn('Error al actualizar reserva en servidor, guardando localmente:', err);
   }
 
-  const local = getLocalBookings().map(b => b.id === id ? { ...b, status } : b);
-  localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(local));
+  const list = getLocalBookings().map(b => b.id === id ? { ...b, ...updates } : b);
+  try {
+    localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
+  } catch (e) {}
+  return { success: true, booking: list.find(b => b.id === id) };
+}
+
+export async function updateBookingStatus(id, status) {
+  return updateAdminBooking(id, { status });
+}
+
+export async function deleteAdminBooking(id) {
+  try {
+    await fetch(`${API_BASE}/admin/bookings/${id}`, { method: 'DELETE' });
+  } catch (err) {
+    console.warn('Error al eliminar reserva en servidor:', err);
+  }
+
+  const list = getLocalBookings().filter(b => b.id !== id);
+  try {
+    localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
+  } catch (e) {}
   return { success: true };
 }
 

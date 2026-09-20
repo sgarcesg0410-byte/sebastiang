@@ -304,17 +304,26 @@ app.get('/api/admin/bookings', (req, res) => {
   res.json(db.bookings || []);
 });
 
-// Cambiar estado de una reserva
+// Actualizar datos de una reserva (estado, fecha, notas, etc.)
 app.patch('/api/admin/bookings/:id', (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const updates = req.body;
   const db = readDB();
   const booking = db.bookings.find(b => b.id === id);
   if (!booking) return res.status(404).json({ error: 'Reserva no encontrada.' });
 
-  booking.status = status;
+  Object.assign(booking, updates);
   writeDB(db);
   res.json({ success: true, booking });
+});
+
+// Eliminar una reserva del sistema
+app.delete('/api/admin/bookings/:id', (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  db.bookings = (db.bookings || []).filter(b => b.id !== id);
+  writeDB(db);
+  res.json({ success: true });
 });
 
 // Obtener todas las sesiones de clientes creadas
