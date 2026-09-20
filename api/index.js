@@ -131,7 +131,7 @@ function getDB() {
         clientWhatsApp: "+573244725167",
         packageId: "pkg-8fotos",
         packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
-        totalPrice: 75000,
+        totalPrice: 85000,
         locationType: "outside_san_antero",
         specificLocation: "Coveñas",
         dateTime: "30/09/2026 a las 3:00 p. m.",
