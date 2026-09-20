@@ -24,6 +24,7 @@ import {
   Link as LinkIcon,
   Check,
   Key,
+  Camera,
   HelpCircle,
   FolderPlus,
   Compass,
