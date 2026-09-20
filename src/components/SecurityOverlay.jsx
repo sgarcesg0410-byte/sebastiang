@@ -36,17 +36,21 @@ export default function SecurityOverlay({ children, enabled = true }) {
         reasonEl.textContent = reason;
       }
 
-      // Vaciar portapapeles en cualquier intento de captura
+      // Vaciar portapapeles sin emitir errores no controlados si el foco se perdió
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba');
+        if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+          navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba').catch(() => {});
         }
       } catch (err) {}
 
+      // Limpiar consola si abren inspección
+      try {
+        if (window.console && window.console.clear) {
+          window.console.clear();
+        }
+      } catch (e) {}
+
       // CRÍTICO: NUNCA colocar un temporizador de auto-desbloqueo mientras la ventana no tenga foco.
-      // Cuando el usuario baja la cortina de notificaciones de Xiaomi/Android o cambia de ventana,
-      // la ventana está desenfocada. Si se pone un timer que expira en 2s, el escudo se apagaría
-      // mientras la cortina sigue abierta, permitiendo la captura!
       if (releaseTimeoutRef.current) {
         clearTimeout(releaseTimeoutRef.current);
         releaseTimeoutRef.current = null;
@@ -54,8 +58,9 @@ export default function SecurityOverlay({ children, enabled = true }) {
     };
 
     const releaseInstantBlackout = () => {
-      // Protección: NUNCA desbloquear si la ventana sigue desenfocada, oculta o en blur
-      if (!document.hasFocus() || document.hidden || isBlurredRef.current) {
+      // Protección: NUNCA desbloquear si la ventana sigue desenfocada, oculta o con DevTools
+      const isDevToolsOpen = (window.outerWidth - window.innerWidth > 160) || (window.outerHeight - window.innerHeight > 160);
+      if (!document.hasFocus() || document.hidden || isBlurredRef.current || isDevToolsOpen) {
         return;
       }
       isBlackoutActiveRef.current = false;
@@ -152,24 +157,76 @@ export default function SecurityOverlay({ children, enabled = true }) {
       }
     };
 
-    // 4. BUCLE DE ALTA FRECUENCIA (RAF: 60-120fps)
-    // Monitorea continuamente si el sistema o alguna herramienta en segundo plano tomó el foco
+    // 4. BUCLE DE ALTA FRECUENCIA (RAF: 60-120fps) Y DETECCIÓN DE DEVTOOLS
     let animationFrameId;
+    const checkDevTools = () => {
+      const widthDiff = window.outerWidth - window.innerWidth;
+      const heightDiff = window.outerHeight - window.innerHeight;
+      return widthDiff > 160 || heightDiff > 160;
+    };
+
     const continuousFocusCheck = () => {
-      if (!document.hasFocus() || document.hidden) {
+      const devToolsOpen = checkDevTools();
+      if (!document.hasFocus() || document.hidden || devToolsOpen) {
         if (!isBlackoutActiveRef.current) {
           isBlurredRef.current = true;
-          triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');
+          triggerInstantBlackout(
+            devToolsOpen
+              ? 'Herramientas de inspección o desarrollador detectadas'
+              : 'Captura de pantalla o panel del sistema detectado'
+          );
         }
       }
       animationFrameId = requestAnimationFrame(continuousFocusCheck);
     };
     animationFrameId = requestAnimationFrame(continuousFocusCheck);
 
+    // BUCLE ANTI-DEBUGGING: Congela y neutraliza la consola si se abre DevTools
+    const debugInterval = setInterval(() => {
+      try {
+        const t0 = performance.now();
+        (function() {
+          Function("debugger")();
+        })();
+        if (performance.now() - t0 > 100) {
+          triggerInstantBlackout('Herramientas de desarrollador detectadas');
+        }
+      } catch (e) {}
+    }, 400);
+
+    // ANTI-EXTRACCIÓN DE CANVAS: Bloquea toDataURL y toBlob desde la consola
+    try {
+      if (typeof window !== 'undefined' && window.HTMLCanvasElement) {
+        const dummyPixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+        window.HTMLCanvasElement.prototype.toDataURL = function() {
+          return dummyPixel;
+        };
+        window.HTMLCanvasElement.prototype.toBlob = function(cb) {
+          if (typeof cb === 'function') cb(null);
+        };
+      }
+    } catch (e) {}
+
+    // MUTATION OBSERVER ANTI-MANIPULACIÓN: Si borran el escudo o la clase blackout en DevTools, recargar
+    const domTamperObserver = new MutationObserver(() => {
+      if (isBlackoutActiveRef.current) {
+        if (!document.documentElement.classList.contains('security-blackout')) {
+          document.documentElement.classList.add('security-blackout');
+        }
+        const shield = document.getElementById('anti-screenshot-shield');
+        if (!shield || shield.style.display === 'none') {
+          window.location.reload();
+        }
+      }
+    });
+    domTamperObserver.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
+
     // 5. BLOQUEO DE CLIC DERECHO Y PULSACIÓN PROLONGADA
     const handleContextMenu = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       triggerWarningToast('Las opciones de descarga y clic derecho están deshabilitadas.');
+      return false;
     };
 
     // 6. BLOQUEO DE TECLAS DE CAPTURA EN PC / TABLETS
@@ -181,8 +238,8 @@ export default function SecurityOverlay({ children, enabled = true }) {
         triggerInstantBlackout('Captura con PrintScreen bloqueada.');
         triggerWarningToast('🚫 Captura de pantalla bloqueada.');
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba');
+          if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba').catch(() => {});
           }
         } catch (err) {}
         return false;
@@ -199,6 +256,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
       if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'i' || e.key === 'I' || e.key === 'j' || e.key === 'J' || e.key === 'c' || e.key === 'C'))) {
         e.preventDefault();
         e.stopPropagation();
+        triggerInstantBlackout('Herramientas de inspección deshabilitadas');
         triggerWarningToast('El modo inspección está deshabilitado.');
         return false;
       }
@@ -218,8 +276,8 @@ export default function SecurityOverlay({ children, enabled = true }) {
         triggerInstantBlackout('Captura con Impr Pant bloqueada.');
         triggerWarningToast('🚫 Captura con Impr Pant bloqueada.');
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba');
+          if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
+            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba').catch(() => {});
           }
         } catch (err) {}
       }
@@ -231,7 +289,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     // 7. BLOQUEO DE COPIA Y ARRASTRE DE IMÁGENES
     const handleDragStart = (e) => {
-      if (e.target.tagName === 'IMG') {
+      if (e.target.tagName === 'IMG' || e.target.tagName === 'CANVAS') {
         e.preventDefault();
       }
     };
@@ -260,6 +318,8 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      clearInterval(debugInterval);
+      domTamperObserver.disconnect();
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       window.removeEventListener('touchstart', handleTouchStart);

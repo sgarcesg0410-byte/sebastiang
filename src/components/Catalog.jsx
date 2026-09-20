@@ -1,12 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X, Share2, Check } from 'lucide-react';
 import { trackLinkShare } from '../services/analytics';
+import ProtectedCanvasImage from './ProtectedCanvasImage';
 
 export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin, packages = [] }) {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [likes, setLikes] = useState({});
   const [previewPhoto, setPreviewPhoto] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+
+  // Si la ventana pierde foco, se minimiza o detecta captura/DevTools, cerrar vista previa de inmediato
+  useEffect(() => {
+    const handleBlackoutOrBlur = () => {
+      if (previewPhoto) {
+        setPreviewPhoto(null);
+      }
+    };
+    window.addEventListener('blur', handleBlackoutOrBlur);
+    document.addEventListener('visibilitychange', handleBlackoutOrBlur);
+    return () => {
+      window.removeEventListener('blur', handleBlackoutOrBlur);
+      document.removeEventListener('visibilitychange', handleBlackoutOrBlur);
+    };
+  }, [previewPhoto]);
 
   const categories = ['Todas', 'Retratos', 'Playas & Atardeceres', 'Campo & Naturaleza', 'Parejas & Bodas', 'Quinceañeras & Eventos'];
 
@@ -178,19 +194,14 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 onClick={() => setPreviewPhoto(photo)}
                 className="group relative rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-lg hover:border-amber-500/50 transition-all duration-300 cursor-pointer"
               >
-              {/* Contenedor de Imagen con Protección Anti-Descarga */}
+              {/* Contenedor de Imagen con Protección Canvas Anti-Descarga y Anti-Inspección */}
               <div className="relative aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
-                <img
+                <ProtectedCanvasImage
                   src={photo.url}
                   alt={photo.title}
-                  data-protected="true"
-                  className="w-full h-full object-cover pointer-events-none select-none group-hover:scale-105 transition-transform duration-500 protected-image"
-                  loading="lazy"
-                  draggable={false}
+                  objectFit="cover"
+                  className="group-hover:scale-105 transition-transform duration-500"
                 />
-
-                {/* Capa transparente anti-toque y anti-descarga */}
-                <div className="absolute inset-0 z-10 bg-transparent select-none" />
               </div>
 
               {/* Degradado oscuro inferior */}
@@ -277,18 +288,14 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               </button>
             </div>
 
-            {/* Contenedor de Imagen Protegida con Marcas de Agua */}
-            <div className="relative w-full bg-black flex items-center justify-center min-h-[300px] max-h-[66vh] overflow-hidden select-none">
-              <img
+            {/* Contenedor de Imagen Protegida con Canvas Anti-Inspección */}
+            <div className="relative w-full bg-black flex items-center justify-center min-h-[320px] max-h-[66vh] overflow-hidden select-none">
+              <ProtectedCanvasImage
                 src={previewPhoto.url}
                 alt={previewPhoto.title}
-                data-protected="true"
-                className="max-h-[64vh] w-auto max-w-full object-contain pointer-events-none select-none protected-image"
-                draggable={false}
+                objectFit="contain"
+                className="max-h-[64vh]"
               />
-
-              {/* Capa transparente anti-guardado y anti-arrastre */}
-              <div className="absolute inset-0 z-10 bg-transparent select-none" />
             </div>
 
             <div className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-stone-900 border-t border-stone-800">

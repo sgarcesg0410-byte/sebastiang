@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getGalleryByToken, submitGallerySelection, createPayment } from '../services/api';
+import ProtectedCanvasImage from './ProtectedCanvasImage';
 
 export default function ClientGallery({ token = "demo-cliente-2026", onBackToHome }) {
   const [galleryData, setGalleryData] = useState(null);
@@ -449,18 +450,14 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                   className="relative aspect-[4/5] w-full overflow-hidden bg-black select-none cursor-pointer"
                   onClick={() => togglePhotoSelection(photo.id)}
                 >
-                  {/* FOTO */}
-                  <img
+                  {/* FOTO RENDERIZADA EN CANVAS (INMUNE A INSPECCIÓN Y DESCARGA) */}
+                  <ProtectedCanvasImage
                     src={photo.url}
                     alt={photo.title}
-                    data-protected="true"
-                    className="w-full h-full object-cover pointer-events-none select-none protected-image"
-                    loading="lazy"
-                    draggable={false}
+                    objectFit="cover"
+                    watermark={true}
+                    watermarkText="SEBASTIAN G • PROTEGIDO"
                   />
-
-                  {/* CAPA TRANSPARENTE ANTI-DESCARGA */}
-                  <div className="absolute inset-0 z-10 bg-transparent select-none" />
 
                   {/* MALLA DE MARCA DE AGUA REPETIDA EN TODA LA FOTO */}
                   <div className="absolute inset-0 z-15 pointer-events-none overflow-hidden opacity-30 select-none flex flex-wrap gap-6 items-center justify-around -rotate-12 scale-125">

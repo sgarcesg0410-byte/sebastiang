@@ -1,0 +1,227 @@
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+
+/**
+ * ProtectedCanvasImage
+ * Renderiza fotografías exclusivamente sobre un elemento <canvas> de HTML5.
+ * Elimina las etiquetas <img> del DOM para que las fotos no puedan ser inspeccionadas,
+ * descargadas, extraídas del árbol de elementos ni capturadas mediante DevTools.
+ */
+export default function ProtectedCanvasImage({
+  src,
+  alt = 'Fotografía protegida',
+  className = '',
+  objectFit = 'cover', // 'cover' | 'contain'
+  watermark = false,
+  watermarkText = 'Sebastian G • San Antero'
+}) {
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const imgRef = useRef(null);
+
+  const drawToCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    const img = imgRef.current;
+
+    if (!canvas || !container) return;
+
+    const rect = container.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const targetWidth = Math.floor(rect.width * dpr);
+    const targetHeight = Math.floor(rect.height * dpr);
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Si el escudo de seguridad está activo o no hay foco, pintar negro absoluto
+    if (
+      document.documentElement.classList.contains('security-blackout') ||
+      !document.hasFocus() ||
+      document.hidden
+    ) {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, targetWidth, targetHeight);
+      return;
+    }
+
+    if (!img || !img.complete || img.naturalWidth === 0) {
+      ctx.fillStyle = '#0c0a09';
+      ctx.fillRect(0, 0, targetWidth, targetHeight);
+      return;
+    }
+
+    const imgWidth = img.naturalWidth;
+    const imgHeight = img.naturalHeight;
+    const imgRatio = imgWidth / imgHeight;
+    const canvasRatio = targetWidth / targetHeight;
+
+    let drawWidth, drawHeight, offsetX, offsetY;
+
+    if (objectFit === 'contain') {
+      if (imgRatio > canvasRatio) {
+        drawWidth = targetWidth;
+        drawHeight = targetWidth / imgRatio;
+        offsetX = 0;
+        offsetY = (targetHeight - drawHeight) / 2;
+      } else {
+        drawHeight = targetHeight;
+        drawWidth = targetHeight * imgRatio;
+        offsetX = (targetWidth - drawWidth) / 2;
+        offsetY = 0;
+      }
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, targetWidth, targetHeight);
+    } else {
+      // cover
+      if (imgRatio > canvasRatio) {
+        drawHeight = targetHeight;
+        drawWidth = targetHeight * imgRatio;
+        offsetX = (targetWidth - drawWidth) / 2;
+        offsetY = 0;
+      } else {
+        drawWidth = targetWidth;
+        drawHeight = targetWidth / imgRatio;
+        offsetX = 0;
+        offsetY = (targetHeight - drawHeight) / 2;
+      }
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+
+    // Marca de agua digital en pixeles (imposible de retirar con CSS o DevTools)
+    if (watermark) {
+      ctx.save();
+      const fontSize = Math.max(12, Math.floor(targetWidth * 0.025));
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+      ctx.shadowBlur = 4;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(watermarkText, targetWidth - 16, targetHeight - 14);
+      ctx.restore();
+    }
+  }, [objectFit, watermark, watermarkText]);
+
+  useEffect(() => {
+    if (!src) return;
+
+    let isMounted = true;
+    setIsLoaded(false);
+    setHasError(false);
+
+    const img = new Image();
+    // Intenta con anonymous para compatibilidad CORS
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+      if (!isMounted) return;
+      imgRef.current = img;
+      setIsLoaded(true);
+      drawToCanvas();
+    };
+
+    img.onerror = () => {
+      // Si falla por CORS, reintentar sin crossOrigin
+      const fallbackImg = new Image();
+      fallbackImg.onload = () => {
+        if (!isMounted) return;
+        imgRef.current = fallbackImg;
+        setIsLoaded(true);
+        drawToCanvas();
+      };
+      fallbackImg.onerror = () => {
+        if (!isMounted) return;
+        setHasError(true);
+      };
+      fallbackImg.src = src;
+    };
+
+    img.src = src;
+
+    return () => {
+      isMounted = false;
+      img.onload = null;
+      img.onerror = null;
+      imgRef.current = null;
+    };
+  }, [src, drawToCanvas]);
+
+  // Redibujar en resize del contenedor o ventana
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        drawToCanvas();
+      });
+      resizeObserver.observe(container);
+    }
+
+    const handleWindowEvents = () => {
+      drawToCanvas();
+    };
+
+    window.addEventListener('resize', handleWindowEvents);
+    window.addEventListener('focus', handleWindowEvents);
+    window.addEventListener('blur', handleWindowEvents);
+    document.addEventListener('visibilitychange', handleWindowEvents);
+
+    // Observar cambios de clase en html (como security-blackout)
+    const mutationObserver = new MutationObserver(() => {
+      drawToCanvas();
+    });
+    mutationObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+    return () => {
+      if (resizeObserver) resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener('resize', handleWindowEvents);
+      window.removeEventListener('focus', handleWindowEvents);
+      window.removeEventListener('blur', handleWindowEvents);
+      document.removeEventListener('visibilitychange', handleWindowEvents);
+    };
+  }, [drawToCanvas]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative w-full h-full overflow-hidden select-none pointer-events-none bg-stone-950 ${className}`}
+      onContextMenu={(e) => e.preventDefault()}
+      onDragStart={(e) => e.preventDefault()}
+    >
+      <canvas
+        ref={canvasRef}
+        aria-label={alt}
+        className="w-full h-full block select-none pointer-events-none transition-transform duration-500"
+        onContextMenu={(e) => e.preventDefault()}
+      />
+
+      {/* Spinner de carga inicial */}
+      {!isLoaded && !hasError && (
+        <div className="absolute inset-0 bg-stone-900/80 flex items-center justify-center pointer-events-none">
+          <div className="w-7 h-7 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin" />
+        </div>
+      )}
+
+      {/* Capa de protección física transparente */}
+      <div 
+        className="absolute inset-0 z-10 bg-transparent select-none pointer-events-none" 
+        onContextMenu={(e) => e.preventDefault()} 
+      />
+    </div>
+  );
+}
