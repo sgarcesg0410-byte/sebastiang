@@ -478,7 +478,15 @@ app.post('/api/admin/catalog', (req, res) => {
 
 app.delete('/api/admin/catalog/:id', (req, res) => {
   const { id } = req.params;
-  runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => c.id !== id);
+  const bodyTitle = req.body && req.body.title ? req.body.title.trim().toLowerCase() : null;
+  const target = (runtimeDB.catalog || []).find(c => c.id === id);
+  const targetTitle = bodyTitle || (target?.title ? target.title.trim().toLowerCase() : null);
+
+  runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => {
+    if (c.id === id) return false;
+    if (targetTitle && c.title && c.title.trim().toLowerCase() === targetTitle) return false;
+    return true;
+  });
 
   try {
     const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');

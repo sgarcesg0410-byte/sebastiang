@@ -38,8 +38,7 @@ export function getDeletedCatalogIds() {
   try {
     const raw = localStorage.getItem(LOCAL_DELETED_CATALOG_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    const arr = Array.isArray(parsed) ? parsed : [];
-    return arr.filter(id => id !== 'cat-verano-salsero' && id !== 'cat-atardecer-covenas');
+    return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
     return [];
   }
@@ -226,21 +225,52 @@ export async function getCatalog() {
   const deletedIds = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
 
-  const map = new Map();
-  // Primero incluir las fotos reales de Sebastian G
-  DEFAULT_REAL_CATALOG.forEach(item => {
-    if (!deletedIds.has(item.id)) {
-      map.set(item.id, item);
-    }
-  });
+  // Fuentes en orden de prioridad:
+  // 1. Fotos subidas localmente en este dispositivo
+  // 2. Fotos sincronizadas desde el servidor
+  // 3. Catálogo base predeterminado
+  const allCandidates = [...localItems, ...serverCatalog, ...DEFAULT_REAL_CATALOG];
 
-  [...localItems, ...serverCatalog].forEach(item => {
-    if (!item || !item.id) return;
-    if (deletedIds.has(item.id)) return;
-    if (samplesPurged && isSampleItem(item)) return;
-    map.set(item.id, item);
-  });
-  return Array.from(map.values());
+  const result = [];
+  const seenIds = new Set();
+  const seenTitles = new Set();
+
+  for (const item of allCandidates) {
+    if (!item || !item.id) continue;
+    // Si el item fue eliminado por el usuario, descartarlo
+    if (deletedIds.has(item.id)) continue;
+    // Si las muestras demo fueron purgadas y es foto demo de Unsplash, descartarlo
+    if (samplesPurged && isSampleItem(item)) continue;
+
+    // Normalizar título para deduplicar fotos con el mismo nombre
+    const normTitle = (item.title || '').trim().toLowerCase();
+    
+    // Si ya existe por ID o por título exacto, es duplicada: descartar
+    if (seenIds.has(item.id)) continue;
+    if (normTitle && seenTitles.has(normTitle)) continue;
+
+    seenIds.add(item.id);
+    if (normTitle) seenTitles.add(normTitle);
+    result.push(item);
+  }
+
+  // Saneamiento automático en localStorage del celular para eliminar duplicados residuales
+  try {
+    const cleanLocal = [];
+    const localTitles = new Set();
+    localItems.forEach(i => {
+      if (!i || !i.id || deletedIds.has(i.id)) return;
+      const t = (i.title || '').trim().toLowerCase();
+      if (t && localTitles.has(t)) return;
+      if (t) localTitles.add(t);
+      cleanLocal.push(i);
+    });
+    if (cleanLocal.length !== localItems.length) {
+      localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(cleanLocal));
+    }
+  } catch (e) {}
+
+  return result;
 }
 
 export async function getPackages() {
@@ -640,12 +670,44 @@ export async function addCatalogPhoto(photoData) {
   return { success: true, item: newItem };
 }
 
-export async function deleteCatalogPhoto(id) {
+export async function deleteCatalogPhoto(id, title = null) {
   addDeletedCatalogId(id);
-  removeLocalCatalogItem(id);
+
+  const local = getLocalCatalog();
+  if (!title) {
+    const found = local.find(i => i.id === id) || DEFAULT_REAL_CATALOG.find(i => i.id === id);
+    if (found && found.title) title = found.title;
+  }
+
+  const normTitle = title ? title.trim().toLowerCase() : null;
+
+  if (normTitle) {
+    // Marcar como eliminados todos los IDs con ese título
+    local.forEach(i => {
+      if (i.title && i.title.trim().toLowerCase() === normTitle) {
+        addDeletedCatalogId(i.id);
+      }
+    });
+    DEFAULT_REAL_CATALOG.forEach(d => {
+      if (d.title && d.title.trim().toLowerCase() === normTitle) {
+        addDeletedCatalogId(d.id);
+      }
+    });
+    const filteredLocal = local.filter(i => {
+      if (i.id === id) return false;
+      if (i.title && i.title.trim().toLowerCase() === normTitle) return false;
+      return true;
+    });
+    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(filteredLocal));
+  } else {
+    removeLocalCatalogItem(id);
+  }
+
   try {
     const res = await fetch(`${API_BASE}/admin/catalog/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: normTitle })
     });
     if (res.ok) {
       return await res.json();

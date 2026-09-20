@@ -532,12 +532,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const handleDeleteCatalogItem = async (id) => {
+  const handleDeleteCatalogItem = async (item) => {
+    const id = typeof item === 'object' && item ? item.id : item;
+    const title = typeof item === 'object' && item ? item.title : null;
     if (!confirm('¿Seguro que deseas eliminar esta foto del catálogo público?')) return;
-    // Eliminación optimista instantánea
-    setCatalog(prev => prev.filter(c => c.id !== id));
+    
+    // Eliminación optimista instantánea (por ID y por título)
+    setCatalog(prev => prev.filter(c => {
+      if (c.id === id) return false;
+      if (title && c.title && c.title.trim().toLowerCase() === title.trim().toLowerCase()) return false;
+      return true;
+    }));
+
     try {
-      await deleteCatalogPhoto(id);
+      await deleteCatalogPhoto(id, title);
       const updatedCatalog = await getCatalog();
       setCatalog(updatedCatalog);
       if (onCatalogUpdated) onCatalogUpdated();
@@ -1814,7 +1822,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         {/* Botón eliminar de catálogo */}
                         <button
                           type="button"
-                          onClick={() => handleDeleteCatalogItem(item.id)}
+                          onClick={() => handleDeleteCatalogItem(item)}
                           className="absolute top-2 right-2 p-2 bg-red-600/90 hover:bg-red-500 text-white rounded-xl shadow-lg transition-transform active:scale-95"
                           title="Eliminar foto del catálogo"
                         >
