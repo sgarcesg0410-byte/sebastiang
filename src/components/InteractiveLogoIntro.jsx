@@ -42,13 +42,13 @@ export default function InteractiveLogoIntro({ onComplete }) {
       navigator.vibrate([35, 20, 45]);
     }
 
-    // Ráfaga de confeti dorado de lujo
+    // Ráfaga de confeti con los colores oficiales de Instagram y destellos blancos
     try {
       confetti({
-        particleCount: 35,
-        spread: 70,
+        particleCount: 45,
+        spread: 75,
         origin: { y: 0.5 },
-        colors: ['#f59e0b', '#fbbf24', '#fef08a', '#d97706', '#ffffff'],
+        colors: ['#EE0979', '#FF6A00', '#FFD600', '#9B51E0', '#405DE6', '#FFFFFF'],
         disableForReducedMotion: true
       });
     } catch (err) {
@@ -76,9 +76,9 @@ export default function InteractiveLogoIntro({ onComplete }) {
     >
       {/* FONDO AMBIENTAL CON DESTELLOS Y MALLA */}
       <div className="absolute inset-0 pointer-events-none">
-        {/* Halo dorado dinámico que sigue la inclinación */}
+        {/* Halo dinámico con gradiente atardecer que sigue la inclinación */}
         <div 
-          className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(245,158,11,0.22)_0%,transparent_65%)] transition-transform duration-300 ease-out"
+          className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(225,48,108,0.22)_0%,rgba(64,93,230,0.12)_45%,transparent_70%)] transition-transform duration-300 ease-out"
           style={{
             transform: `translate(${tilt.y * 3}px, ${-tilt.x * 3}px) scale(1.1)`
           }}
@@ -94,9 +94,9 @@ export default function InteractiveLogoIntro({ onComplete }) {
             e.stopPropagation();
             handleEnter();
           }}
-          className="px-4 py-2 rounded-full bg-stone-900/80 border border-stone-800 text-stone-400 hover:text-white hover:border-amber-500/40 text-xs font-semibold flex items-center gap-1.5 backdrop-blur-md transition-all active:scale-95"
+          className="text-stone-400 hover:text-white text-xs px-3 py-1.5 rounded-full bg-stone-900/80 border border-stone-800 flex items-center gap-1.5 transition-colors"
         >
-          <span>Entrar directo</span>
+          <span>Saltar</span>
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -115,31 +115,38 @@ export default function InteractiveLogoIntro({ onComplete }) {
               transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg) scale(${isInteracting ? 1.05 : 1})`,
               transition: isInteracting ? 'transform 0.1s ease-out' : 'transform 0.5s ease-out'
             }}
-            className="relative group p-8 sm:p-12 rounded-3xl bg-gradient-to-b from-stone-900/90 via-stone-900/80 to-stone-950/90 border border-amber-500/30 shadow-[0_20px_60px_rgba(245,158,11,0.2)] backdrop-blur-xl flex flex-col items-center cursor-pointer hover:border-amber-400/60 transition-colors"
+            className="relative group p-8 sm:p-10 rounded-3xl bg-gradient-to-b from-stone-900/95 via-stone-900/85 to-stone-950/95 border border-pink-500/30 shadow-[0_20px_60px_rgba(225,48,108,0.25)] backdrop-blur-xl flex flex-col items-center cursor-pointer hover:border-pink-400/60 transition-colors"
           >
             {/* Destello de luz diagonal automático y en interacción */}
             <div className="absolute inset-0 rounded-3xl overflow-hidden pointer-events-none">
-              <div className="absolute -inset-full bg-gradient-to-r from-transparent via-amber-300/15 to-transparent -translate-x-full animate-[shimmer_3.5s_infinite]" />
+              <div className="absolute -inset-full bg-gradient-to-r from-transparent via-pink-400/20 to-transparent -translate-x-full animate-[shimmer_3.5s_infinite]" />
             </div>
 
-            {/* Aura dorada flotante detrás del logo */}
-            <div className="absolute inset-0 bg-amber-500/15 rounded-3xl blur-2xl -z-10 group-hover:bg-amber-500/30 transition-all duration-300" />
+            {/* Aura atardecer flotante detrás del logo */}
+            <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/20 via-pink-500/25 to-purple-600/25 rounded-3xl blur-2xl -z-10 group-hover:opacity-100 transition-all duration-300" />
 
-            {/* Imagen del logo con drop-shadow dorado de alta definición */}
+            {/* Imagen del nuevo logo SG estilo Instagram */}
             <img
-              src="/logo-white.png"
+              src="/app-icon.png"
               alt="Sebastian G"
-              className="h-28 sm:h-36 md:h-44 w-auto object-contain filter drop-shadow-[0_4px_25px_rgba(245,158,11,0.6)] transform transition-transform duration-300 group-hover:scale-105 active:scale-95"
+              className="h-32 w-32 sm:h-40 sm:w-40 md:h-44 md:w-44 rounded-3xl object-contain shadow-2xl shadow-pink-500/40 transform transition-transform duration-300 group-hover:scale-105 active:scale-95 border border-white/20"
             />
 
+            <span className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide mt-4">
+              Sebastian G
+            </span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-pink-400 to-purple-400 mt-1">
+              Fotografía • Edición
+            </span>
+
             {/* Subtítulo dinámico con indicación táctil */}
-            <div className="mt-5 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-bold uppercase tracking-widest shadow-sm">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-              <span>{isInteracting ? '✨ ¡Toca para destellos de oro!' : 'Toca el logo con tu dedo'}</span>
+            <div className="mt-4 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-purple-500/15 via-pink-500/20 to-amber-500/15 border border-pink-500/35 text-pink-200 text-[11px] font-bold uppercase tracking-widest shadow-sm">
+              <Sparkles className="w-3.5 h-3.5 text-pink-400 animate-pulse" />
+              <span>{isInteracting ? '✨ ¡Toca para destellos de color!' : 'Toca el logo con tu dedo'}</span>
             </div>
 
             {particlesCount > 0 && (
-              <span className="text-[10px] text-stone-400 mt-2">
+              <span className="text-[10px] text-pink-300/80 mt-2 font-medium">
                 Efectos interactivos activados: {particlesCount}
               </span>
             )}
@@ -147,8 +154,8 @@ export default function InteractiveLogoIntro({ onComplete }) {
         </div>
 
         {/* Leyenda de ubicación y marca */}
-        <div className="text-center mt-8 space-y-1">
-          <p className="text-xs uppercase tracking-[0.25em] text-amber-400/90 font-bold">
+        <div className="text-center mt-6 space-y-1">
+          <p className="text-xs uppercase tracking-[0.25em] text-pink-400/90 font-bold">
             San Antero • Córdoba
           </p>
           <p className="text-stone-300 font-serif italic text-base sm:text-lg font-light">

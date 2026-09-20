@@ -897,9 +897,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       <div className="w-full bg-stone-900/90 border border-stone-800 rounded-3xl p-4 sm:p-5 mb-8 flex flex-wrap items-center justify-between gap-4 shadow-2xl backdrop-blur-xl">
         <div className="flex items-center gap-3.5">
           <img
-            src="/logo-white.png"
+            src="/app-icon.png"
             alt="Sebastian G"
-            className="h-10 sm:h-12 w-auto object-contain filter drop-shadow-[0_2px_8px_rgba(255,255,255,0.3)]"
+            className="h-10 w-10 sm:h-12 sm:w-12 rounded-2xl object-cover shadow-lg shadow-pink-500/25 border border-white/20"
           />
           <div className="border-l border-stone-800 pl-3">
             <span className="text-[11px] font-black uppercase tracking-widest text-amber-400 block">

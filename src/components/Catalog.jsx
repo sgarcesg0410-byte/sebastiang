@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera } from 'lucide-react';
-import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './SocialIcons';
 
 export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin, packages = [] }) {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
@@ -56,29 +55,6 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             <p className="text-xs text-stone-400 sm:hidden">
               ⚡ Sin registro previo • Respuesta rápida por WhatsApp
             </p>
-          </div>
-
-          {/* Redes Sociales en Hero */}
-          <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
-            <span className="text-xs font-semibold text-stone-400">Sígueme en redes:</span>
-            <a
-              href={SOCIAL_LINKS.instagram.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-stone-900/90 border border-stone-800 text-stone-300 hover:text-pink-400 hover:border-pink-500/40 text-xs font-semibold transition-all hover:scale-105 shadow-md shadow-black/40"
-            >
-              <InstagramIcon className="w-4 h-4 text-pink-400" />
-              <span>Instagram: {SOCIAL_LINKS.instagram.handle}</span>
-            </a>
-            <a
-              href={SOCIAL_LINKS.facebook.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-stone-900/90 border border-stone-800 text-stone-300 hover:text-blue-400 hover:border-blue-500/40 text-xs font-semibold transition-all hover:scale-105 shadow-md shadow-black/40"
-            >
-              <FacebookIcon className="w-4 h-4 text-blue-400" />
-              <span>Facebook: {SOCIAL_LINKS.facebook.handle}</span>
-            </a>
           </div>
         </div>
       </section>
@@ -205,36 +181,22 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         </div>
       )}
 
-        {/* Banner informativo de cierre con redes sociales */}
+        {/* Banner informativo de cierre */}
         <div className="mt-16 bg-gradient-to-r from-amber-950/30 via-stone-900 to-amber-950/30 border border-amber-500/20 rounded-3xl p-6 sm:p-10 text-center">
           <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-1">
             Sebastian G • San Antero
           </span>
           <p className="text-sm text-stone-300 font-light max-w-xl mx-auto mb-6">
-            "Capturamos momentos, creamos recuerdos. ♡" • Explora nuestros paquetes más abajo para ver precios y agendar tu fecha.
+            "Capturamos momentos, creamos recuerdos. ♡" • Explora nuestros paquetes para ver precios y agendar tu fecha.
           </p>
 
-          <div className="inline-flex items-center justify-center gap-3 flex-wrap pt-4 border-t border-stone-800/60">
-            <span className="text-xs font-medium text-stone-400">Sígueme en redes:</span>
-            <a
-              href={SOCIAL_LINKS.instagram.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 border border-pink-500/30 text-xs font-semibold transition-all hover:scale-105 shadow-md"
-            >
-              <InstagramIcon className="w-4 h-4 text-pink-400" />
-              <span>Instagram: {SOCIAL_LINKS.instagram.handle}</span>
-            </a>
-            <a
-              href={SOCIAL_LINKS.facebook.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-semibold transition-all hover:scale-105 shadow-md"
-            >
-              <FacebookIcon className="w-4 h-4 text-blue-400" />
-              <span>Facebook: {SOCIAL_LINKS.facebook.handle}</span>
-            </a>
-          </div>
+          <button
+            onClick={onOpenBooking}
+            className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-sm px-6 py-3 rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-300 transition-all active:scale-95"
+          >
+            <Sparkles className="w-4 h-4 fill-stone-950" />
+            <span>Agendar Mi Sesión</span>
+          </button>
         </div>
       </section>
 

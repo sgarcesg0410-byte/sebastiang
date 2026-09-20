@@ -58,7 +58,7 @@ const DEFAULT_SETTINGS = {
   tagline: "Capturamos momentos, creamos recuerdos. ♡",
   watermarkText: "SEBASTIAN G",
   watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
-  watermarkLogoUrl: "/logo-white.png",
+  watermarkLogoUrl: "/app-icon.png",
   adminPin: "0493",
   printedPhotoPrice: 7000
 };

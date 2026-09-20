@@ -378,9 +378,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                   <div className="watermark-overlay z-20">
                     <div className="watermark-content animate-watermark flex flex-col items-center justify-center text-center">
                       <img
-                        src="/logo-white.png"
+                        src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
                         alt="Sebastian G"
-                        className="h-16 sm:h-24 w-auto object-contain drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)] opacity-95 mb-1"
+                        className="h-14 w-14 sm:h-20 sm:w-20 rounded-2xl object-cover shadow-2xl border border-white/30 drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)] opacity-95 mb-2"
                       />
                       <p className="text-[10px] sm:text-[11px] font-black tracking-widest text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] uppercase">
                         {watermarkSubtext}

@@ -179,23 +179,23 @@ export default function App() {
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-3">
               <img
-                src="/logo-white.png"
+                src="/app-icon.png"
                 alt="Sebastian G"
-                className="h-12 w-auto object-contain filter drop-shadow-[0_2px_8px_rgba(255,255,255,0.3)] cursor-pointer"
+                className="h-12 w-12 rounded-2xl object-cover shadow-lg shadow-pink-500/25 border border-white/20 cursor-pointer hover:scale-105 transition-all"
                 onClick={() => setShowIntro(true)}
                 title="Toca para ver el logo interactivo"
               />
               <div className="border-l border-stone-800 pl-3">
-                <span className="text-xs font-bold text-white block font-serif">
+                <span className="text-sm font-bold text-white block font-serif">
                   {settings.photographerName || 'Sebastian G'}
                 </span>
-                <span className="text-[11px] text-amber-400 block">
+                <span className="text-[11px] font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-pink-400 to-purple-400 block uppercase">
                   San Antero • Córdoba
                 </span>
               </div>
             </div>
 
-            {/* Redes Sociales en Footer */}
+            {/* Redes Sociales Oficiales en Footer (Único Lugar de la App) */}
             <div className="flex items-center gap-3">
               <a
                 href={SOCIAL_LINKS.instagram.url}
@@ -247,7 +247,8 @@ export default function App() {
               </button>
             </div>
 
-            <div className="text-xs text-stone-500 font-medium tracking-wide">
+            {/* Créditos del Desarrollador en Negrilla y Mayor Tamaño */}
+            <div className="text-sm sm:text-base font-bold text-white tracking-wide">
               SG Software Solutions
             </div>
           </div>

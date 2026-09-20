@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { ShieldCheck, Menu, X, Sparkles } from 'lucide-react';
-import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './SocialIcons';
 
 export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setCurrentView, photographerName = "Sebastian G" }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -13,20 +12,23 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
 
   return (
     <header className="sticky top-0 z-40 bg-stone-950/90 backdrop-blur-md border-b border-stone-800/80">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-24 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 sm:h-24 flex items-center justify-between">
         
-        {/* Logotipo / Firma Real en Blanco Brillante */}
+        {/* Logotipo Oficial SG */}
         <div 
           onClick={() => navigateTo('home')}
           className="flex items-center gap-3 cursor-pointer group py-1"
         >
           <img 
-            src="/logo-white.png" 
-            alt="Sebastian G - Fotografía / Edición" 
-            className="h-16 sm:h-20 w-auto object-contain filter drop-shadow-[0_2px_12px_rgba(255,255,255,0.4)] group-hover:scale-105 transition-all" 
+            src="/app-icon.png" 
+            alt="Sebastian G" 
+            className="h-11 w-11 sm:h-14 sm:w-14 rounded-2xl object-cover shadow-lg shadow-pink-500/25 border border-white/20 group-hover:scale-105 transition-all" 
           />
-          <div className="hidden sm:block border-l border-stone-800 pl-3">
-            <span className="text-[11px] font-bold tracking-widest uppercase text-amber-400 block">
+          <div className="flex flex-col">
+            <span className="text-lg sm:text-xl font-serif font-bold text-white tracking-wide leading-tight group-hover:text-amber-300 transition-colors">
+              {photographerName}
+            </span>
+            <span className="text-[10px] sm:text-[11px] font-bold tracking-widest uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-pink-400 to-purple-400 block">
               San Antero • Córdoba
             </span>
           </div>
@@ -86,31 +88,8 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           )}
         </nav>
 
-        {/* Botón Acción Principal y Redes Sociales Desktop */}
+        {/* Botón Acción Principal Desktop */}
         <div className="hidden md:flex items-center gap-4">
-          <div className="flex items-center gap-1.5 border-r border-stone-800/80 pr-4">
-            <a
-              href={SOCIAL_LINKS.instagram.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-2 text-stone-400 hover:text-pink-400 hover:bg-stone-900 rounded-xl transition-all border border-transparent hover:border-pink-500/30 group"
-              title="Sígueme en Instagram (@sgarces01)"
-              aria-label="Instagram de Sebastian G"
-            >
-              <InstagramIcon className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            </a>
-            <a
-              href={SOCIAL_LINKS.facebook.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-2 text-stone-400 hover:text-blue-400 hover:bg-stone-900 rounded-xl transition-all border border-transparent hover:border-blue-500/30 group"
-              title="Sígueme en Facebook (/Sgarces01)"
-              aria-label="Facebook de Sebastian G"
-            >
-              <FacebookIcon className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            </a>
-          </div>
-
           <button
             onClick={onOpenBooking}
             className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-sm px-5 py-2.5 rounded-xl shadow-lg shadow-amber-500/25 hover:from-amber-400 hover:to-amber-300 active:scale-95 transition-all"
@@ -120,31 +99,18 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           </button>
         </div>
 
-        {/* Acciones Móviles: Redes Rápidas y Hamburguesa */}
+        {/* Acciones Móviles: Reservar Rápido y Menú */}
         <div className="flex md:hidden items-center gap-2">
-          <a
-            href={SOCIAL_LINKS.instagram.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-2 text-pink-400 hover:text-pink-300 bg-stone-900/90 border border-stone-800 rounded-xl active:scale-95 transition-transform"
-            aria-label="Instagram de Sebastian G"
-            title="Instagram (@sgarces01)"
+          <button
+            onClick={onOpenBooking}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs px-3.5 py-2 rounded-xl shadow-md shadow-amber-500/20 active:scale-95 transition-all"
           >
-            <InstagramIcon className="w-4 h-4" />
-          </a>
-          <a
-            href={SOCIAL_LINKS.facebook.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-2 text-blue-400 hover:text-blue-300 bg-stone-900/90 border border-stone-800 rounded-xl active:scale-95 transition-transform"
-            aria-label="Facebook de Sebastian G"
-            title="Facebook (/Sgarces01)"
-          >
-            <FacebookIcon className="w-4 h-4" />
-          </a>
+            <Sparkles className="w-3.5 h-3.5 fill-stone-950" />
+            <span>Reservar</span>
+          </button>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2.5 text-stone-300 hover:text-white rounded-xl bg-stone-900 border border-stone-800"
+            className="p-2 text-stone-300 hover:text-white rounded-xl bg-stone-900 border border-stone-800"
             aria-label="Abrir menú"
           >
             {mobileMenuOpen ? <X className="w-6 h-6 text-amber-400" /> : <Menu className="w-6 h-6" />}
@@ -191,31 +157,6 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
               <span>✨ Ver Animación de Entrada del Logo</span>
             </button>
           )}
-
-          {/* Redes Sociales en Menú Móvil */}
-          <div className="pt-3 border-t border-stone-800">
-            <span className="text-xs text-stone-400 font-medium block mb-2">Sígueme en redes sociales:</span>
-            <div className="grid grid-cols-2 gap-2">
-              <a
-                href={SOCIAL_LINKS.instagram.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 border border-pink-500/30 text-xs font-semibold transition-all"
-              >
-                <InstagramIcon className="w-4 h-4" />
-                <span>Instagram</span>
-              </a>
-              <a
-                href={SOCIAL_LINKS.facebook.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-semibold transition-all"
-              >
-                <FacebookIcon className="w-4 h-4" />
-                <span>Facebook</span>
-              </a>
-            </div>
-          </div>
 
           <div className="pt-3 border-t border-stone-800">
             <button
