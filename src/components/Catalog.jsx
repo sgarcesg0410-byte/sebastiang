@@ -200,13 +200,13 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="bg-stone-900 border border-stone-700 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl cursor-default"
+            className="bg-stone-900 border border-stone-700 rounded-2xl max-w-xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[90vh]"
           >
-            <div className="relative aspect-[4/5] sm:aspect-video w-full bg-black">
+            <div className="relative w-full bg-black/90 flex items-center justify-center p-2 min-h-[300px] max-h-[70vh] overflow-hidden">
               <img
                 src={previewPhoto.url}
                 alt={previewPhoto.title}
-                className="w-full h-full object-contain"
+                className="max-h-[68vh] w-auto max-w-full object-contain rounded-lg"
               />
             </div>
             <div className="p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
