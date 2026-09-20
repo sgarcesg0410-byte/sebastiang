@@ -75,7 +75,7 @@ export default function Catalog({ catalog = [], onOpenBooking, packages = [] }) 
           </div>
 
           {/* Filtros de Categoría */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar scrollbar-none">
             {categories.map(cat => (
               <button
                 key={cat}
