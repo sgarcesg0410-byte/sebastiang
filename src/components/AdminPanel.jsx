@@ -65,8 +65,10 @@ import {
   recoverAdminPin,
   getAdminPayments,
   updatePaymentStatus,
-  formatDateTime12Hour
+  formatDateTime12Hour,
+  formatPhotoUrl
 } from '../services/api';
+import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
 
 // Función para enviar notificaciones de escritorio / móvil en segundo plano
@@ -208,7 +210,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   const fileInputRef = useRef(null);
 
-  // Formulario Agregar Foto al Catálogo Público
+  // Formulario Agregar Foto al Catálogo Público (Soporte Dual: Archivo local y Enlace URL)
+  const [catalogUploadMode, setCatalogUploadMode] = useState('file'); // 'file' | 'link'
+  const [catalogLinkInput, setCatalogLinkInput] = useState('');
   const [newCatalogForm, setNewCatalogForm] = useState({
     title: '',
     category: 'Playas San Antero',
@@ -395,6 +399,47 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       loadAllAdminData();
     }, 4000);
     return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
+  // Sincronización simultánea de catálogo en tiempo real (Celular <-> PC y entre pestañas)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const channel = supabase
+      .channel('admin_catalog_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
+        getCatalog().then(data => {
+          if (Array.isArray(data)) setCatalog(data);
+        });
+      })
+      .subscribe();
+
+    let bc;
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        bc = new BroadcastChannel('catalog_realtime_sync');
+        bc.onmessage = () => {
+          getCatalog().then(data => {
+            if (Array.isArray(data)) setCatalog(data);
+          });
+        };
+      }
+    } catch (e) {}
+
+    const handleStorage = (e) => {
+      if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
+        getCatalog().then(data => {
+          if (Array.isArray(data)) setCatalog(data);
+        });
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      supabase.removeChannel(channel);
+      if (bc) bc.close();
+      window.removeEventListener('storage', handleStorage);
+    };
   }, [isAuthenticated]);
 
   // Handlers para edición de precios y fotos
@@ -613,7 +658,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Manejador de subida para el Catálogo Público
+  // Manejador de enlace directo / link de foto para el Catálogo Público
+  const handleCatalogLinkChange = (e) => {
+    const raw = e.target.value;
+    setCatalogLinkInput(raw);
+
+    if (!raw.trim()) {
+      setNewCatalogForm(prev => ({ ...prev, url: '' }));
+      return;
+    }
+
+    const cleanUrl = formatPhotoUrl(raw);
+    setNewCatalogForm(prev => ({
+      ...prev,
+      url: cleanUrl,
+      title: prev.title || 'Foto de Sesión'
+    }));
+  };
+
+  // Manejador de subida para el Catálogo Público desde Celular / PC
   const handleCatalogPhotoSelected = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -641,23 +704,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       return;
     }
     if (!newCatalogForm.url) {
-      alert('Por favor selecciona una foto para subir al catálogo.');
+      alert(catalogUploadMode === 'link' 
+        ? 'Por favor ingresa un enlace o link válido de la foto.' 
+        : 'Por favor selecciona una foto para subir al catálogo.'
+      );
       return;
     }
 
     try {
+      setIsUploadingCatalogPhoto(true);
       const categoryFinal = newCatalogForm.category === 'custom'
         ? (newCatalogForm.customCategory.trim() || 'General')
         : newCatalogForm.category;
+
+      const cleanUrl = formatPhotoUrl(newCatalogForm.url);
 
       const result = await addCatalogPhoto({
         title: newCatalogForm.title.trim(),
         category: categoryFinal,
         location: newCatalogForm.location.trim() || 'San Antero',
-        url: newCatalogForm.url
+        url: cleanUrl
       });
 
-      setCatalogUploadSuccess('¡Foto publicada exitosamente en el catálogo público!');
+      // Actualización optimista simultánea inmediata en el panel
+      if (result && result.item) {
+        setCatalog(prev => [result.item, ...prev.filter(p => p.id !== result.item.id)]);
+      }
+
+      setCatalogUploadSuccess('¡Foto publicada exitosamente y sincronizada en tiempo real!');
       setNewCatalogForm({
         title: '',
         category: 'Playas San Antero',
@@ -665,11 +739,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         location: 'Playa Blanca, San Antero',
         url: ''
       });
+      setCatalogLinkInput('');
       loadAllAdminData();
       if (onCatalogUpdated) onCatalogUpdated();
-      setTimeout(() => setCatalogUploadSuccess(''), 4000);
+      setTimeout(() => setCatalogUploadSuccess(''), 5000);
     } catch (err) {
       alert(err.message || 'Error al agregar foto al catálogo.');
+    } finally {
+      setIsUploadingCatalogPhoto(false);
     }
   };
 
@@ -2414,41 +2491,134 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
-            {/* Selector de foto para catálogo */}
-            <div className="flex flex-col sm:flex-row items-center gap-4 pt-2">
-              <div
-                onClick={() => catalogFileInputRef.current?.click()}
-                className="w-full sm:w-auto cursor-pointer border border-dashed border-amber-500/50 hover:border-amber-400 bg-stone-950 rounded-xl p-4 flex items-center justify-center gap-3 transition-colors"
-              >
-                <input
-                  ref={catalogFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleCatalogPhotoSelected}
-                  className="hidden"
-                />
-                <Upload className="w-5 h-5 text-amber-400" />
-                <span className="text-xs font-bold text-white">
-                  {isUploadingCatalogPhoto ? 'Cargando foto...' : 'Seleccionar Foto desde Celular / PC'}
-                </span>
+            {/* Selector de Método de Subida: Archivo vs Link */}
+            <div className="pt-1 space-y-3">
+              <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider">
+                Método para Cargar la Foto *
+              </label>
+              <div className="flex flex-wrap items-center gap-2 p-1 bg-stone-950 rounded-2xl border border-stone-800 w-fit">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCatalogUploadMode('file');
+                    setNewCatalogForm(prev => ({ ...prev, url: '' }));
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    catalogUploadMode === 'file'
+                      ? 'bg-amber-500 text-stone-950 shadow-md shadow-amber-500/20'
+                      : 'text-stone-400 hover:text-white'
+                  }`}
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Subir Archivo (Celular / PC)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCatalogUploadMode('link');
+                    setNewCatalogForm(prev => ({ ...prev, url: '' }));
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                    catalogUploadMode === 'link'
+                      ? 'bg-amber-500 text-stone-950 shadow-md shadow-amber-500/20'
+                      : 'text-stone-400 hover:text-white'
+                  }`}
+                >
+                  <LinkIcon className="w-4 h-4" />
+                  <span>Pegar Enlace / Link de Foto</span>
+                </button>
               </div>
+            </div>
 
-              {newCatalogForm.url && (
-                <div className="flex items-center gap-3 bg-stone-950 p-2 rounded-xl border border-stone-800">
-                  <div className="w-12 h-12 rounded-lg overflow-hidden bg-black shrink-0">
-                    <img src={newCatalogForm.url} alt="Preview" className="w-full h-full object-cover" />
+            {/* OPCIÓN 1: SUBIR DESDE DISPOSITIVO (CELULAR / PC) */}
+            {catalogUploadMode === 'file' && (
+              <div className="space-y-2">
+                <div
+                  onClick={() => catalogFileInputRef.current?.click()}
+                  className="w-full cursor-pointer border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-stone-950/80 hover:bg-stone-950 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 transition-all group"
+                >
+                  <input
+                    ref={catalogFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleCatalogPhotoSelected}
+                    className="hidden"
+                  />
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Upload className="w-6 h-6" />
                   </div>
-                  <span className="text-xs text-emerald-400 font-semibold">✓ Foto lista para publicar</span>
+                  <span className="text-sm font-bold text-white">
+                    {isUploadingCatalogPhoto ? 'Procesando foto en alta fidelidad...' : 'Toca para seleccionar foto desde tu galería o computador'}
+                  </span>
+                  <p className="text-[11px] text-stone-400">
+                    JPG, PNG o WEBP • Mantiene el revelado y colores de Adobe Lightroom
+                  </p>
                 </div>
+              </div>
+            )}
+
+            {/* OPCIÓN 2: PEGAR ENLACE DIRECTO O LINK DE NUBE */}
+            {catalogUploadMode === 'link' && (
+              <div className="space-y-2 bg-stone-950 p-4 rounded-2xl border border-stone-800">
+                <label className="block text-xs font-semibold text-stone-200">
+                  🔗 Enlace o Link de la Foto (Google Drive, Dropbox, Lightroom, Unsplash, Imgur, etc.)
+                </label>
+                <div className="relative">
+                  <input
+                    type="url"
+                    value={catalogLinkInput}
+                    onChange={handleCatalogLinkChange}
+                    placeholder="Pega aquí el link: https://drive.google.com/file/d/... o link directo"
+                    className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-10 pr-4 py-3 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                  />
+                  <LinkIcon className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] text-stone-400">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>
+                    <strong>Autoconversión inteligente:</strong> Si pegas un enlace compartido de Google Drive o Dropbox, el sistema lo transforma automáticamente en enlace directo para que cargue al instante.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* VISTA PREVIA Y BOTÓN DE PUBLICACIÓN SIMULTÁNEA */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-stone-800/80">
+              {newCatalogForm.url ? (
+                <div className="flex items-center gap-3 bg-stone-950 p-2.5 rounded-2xl border border-stone-800 w-full sm:w-auto">
+                  <div className="w-14 h-14 rounded-xl overflow-hidden bg-black shrink-0 border border-amber-500/30">
+                    <img 
+                      src={newCatalogForm.url} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <span className="text-xs text-emerald-400 font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Foto lista para publicar
+                    </span>
+                    <span className="text-[11px] text-stone-400 block truncate max-w-[220px]">
+                      {catalogUploadMode === 'link' ? 'Cargada desde enlace web' : 'Archivo de dispositivo'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <span className="text-xs text-stone-500 italic">
+                  * Selecciona un archivo o pega un enlace para habilitar la publicación
+                </span>
               )}
 
               <button
                 type="submit"
-                disabled={!newCatalogForm.url}
-                className="w-full sm:w-auto ml-auto bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-extrabold text-xs py-3 px-6 rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-300 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                disabled={!newCatalogForm.url || isUploadingCatalogPhoto}
+                className="w-full sm:w-auto ml-auto bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-black text-xs py-3.5 px-8 rounded-xl shadow-lg shadow-amber-500/25 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-4 h-4 fill-stone-950" />
-                <span>Publicar en Catálogo</span>
+                <span>{isUploadingCatalogPhoto ? 'Publicando en tiempo real...' : '+ Publicar en Catálogo'}</span>
               </button>
             </div>
           </form>

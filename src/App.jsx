@@ -49,7 +49,7 @@ export default function App() {
 
     loadInitialData();
 
-    // Sincronización en tiempo real: lo que se haga en el celular se refleja de inmediato en el computador
+    // 1. Sincronización en la nube en tiempo real (Celular <-> Computador)
     const channel = supabase
       .channel('catalog_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
@@ -59,8 +59,32 @@ export default function App() {
       })
       .subscribe();
 
+    // 2. Sincronización instantánea simultánea en 0ms entre pestañas / ventanas
+    let bc;
+    try {
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        bc = new BroadcastChannel('catalog_realtime_sync');
+        bc.onmessage = () => {
+          getCatalog().then(data => {
+            if (Array.isArray(data)) setCatalog(data);
+          });
+        };
+      }
+    } catch (e) {}
+
+    const handleStorageSync = (e) => {
+      if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
+        getCatalog().then(data => {
+          if (Array.isArray(data)) setCatalog(data);
+        });
+      }
+    };
+    window.addEventListener('storage', handleStorageSync);
+
     return () => {
       supabase.removeChannel(channel);
+      if (bc) bc.close();
+      window.removeEventListener('storage', handleStorageSync);
     };
   }, []);
 

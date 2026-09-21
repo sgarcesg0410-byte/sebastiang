@@ -1065,13 +1065,51 @@ export async function updateAdminSettings(settings, packages) {
   return { success: true, settings, packages };
 }
 
+export function formatPhotoUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  let url = rawUrl.trim();
+
+  // Google Drive enlaces compartidos (ej: drive.google.com/file/d/ID/view o drive.google.com/open?id=ID)
+  const gdriveMatch = url.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/);
+  if (gdriveMatch && gdriveMatch[1]) {
+    return `https://lh3.googleusercontent.com/d/${gdriveMatch[1]}`;
+  }
+
+  // Dropbox enlaces compartidos (dl=0 -> raw=1)
+  if (url.includes('dropbox.com')) {
+    return url.replace('?dl=0', '?raw=1').replace('&dl=0', '&raw=1');
+  }
+
+  // Imgur enlaces directos
+  const imgurMatch = url.match(/imgur\.com\/(?!gallery\/|a\/)([a-zA-Z0-9]+)$/);
+  if (imgurMatch && imgurMatch[1]) {
+    return `https://i.imgur.com/${imgurMatch[1]}.jpg`;
+  }
+
+  return url;
+}
+
+export function broadcastCatalogUpdate() {
+  try {
+    if (typeof window !== 'undefined') {
+      if (window.BroadcastChannel) {
+        const bc = new BroadcastChannel('catalog_realtime_sync');
+        bc.postMessage({ type: 'CATALOG_UPDATED', timestamp: Date.now() });
+        setTimeout(() => bc.close(), 200);
+      }
+      localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
+    }
+  } catch (e) {}
+}
+
 export async function addCatalogPhoto(photoData) {
+  const cleanUrl = formatPhotoUrl(photoData.url);
   const newItem = {
     id: `cat-${Date.now()}`,
     title: (photoData.title || '').trim(),
     category: (photoData.category || 'Retratos').trim(),
     location: (photoData.location || 'San Antero').trim(),
-    url: photoData.url
+    url: cleanUrl
   };
 
   // 1. Guardar primero en Supabase en la nube
@@ -1079,6 +1117,7 @@ export async function addCatalogPhoto(photoData) {
     const { data, error } = await supabase.from('catalog').insert(newItem).select();
     if (!error && data && data.length > 0) {
       saveLocalCatalogItem(data[0]);
+      broadcastCatalogUpdate();
       return { success: true, item: data[0] };
     }
     if (error) console.warn('Supabase insert error:', error);
@@ -1091,11 +1130,12 @@ export async function addCatalogPhoto(photoData) {
     const res = await fetch(`${API_BASE}/admin/catalog`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(photoData)
+      body: JSON.stringify({ ...photoData, url: cleanUrl })
     });
     if (res.ok) {
       const data = await res.json();
       saveLocalCatalogItem(data.item);
+      broadcastCatalogUpdate();
       return data;
     }
   } catch (err) {
@@ -1104,6 +1144,7 @@ export async function addCatalogPhoto(photoData) {
 
   // 3. Fallback a almacenamiento local
   saveLocalCatalogItem(newItem);
+  broadcastCatalogUpdate();
   return { success: true, item: newItem };
 }
 
@@ -1157,10 +1198,12 @@ export async function deleteCatalogPhoto(id, title = null) {
       body: JSON.stringify({ title: normTitle })
     });
     if (res.ok) {
+      broadcastCatalogUpdate();
       return await res.json();
     }
   } catch (err) {}
 
+  broadcastCatalogUpdate();
   return { success: true };
 }
 
