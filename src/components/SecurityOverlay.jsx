@@ -58,9 +58,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
     };
 
     const releaseInstantBlackout = () => {
-      // Protección: NUNCA desbloquear si la ventana sigue desenfocada, oculta o con DevTools
-      const isDevToolsOpen = (window.outerWidth - window.innerWidth > 160) || (window.outerHeight - window.innerHeight > 160);
-      if (!document.hasFocus() || document.hidden || isBlurredRef.current || isDevToolsOpen) {
+      if (!document.hasFocus() || document.hidden || isBlurredRef.current) {
         return;
       }
       isBlackoutActiveRef.current = false;
@@ -76,6 +74,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
     };
 
     // 1. BLOQUEO DE GESTOS MULTI-TÁCTILES Y DESPLIEGUE DE BARRA DE NOTIFICACIONES
+    let touchStartY = 0;
     const handleTouchStart = (e) => {
       if (!e.touches || e.touches.length === 0) return;
 
@@ -90,10 +89,9 @@ export default function SecurityOverlay({ children, enabled = true }) {
         return;
       }
 
-      // Detección de arrastre desde el borde superior (Barra de notificaciones / Quick Settings)
-      const touch = e.touches[0];
-      if (touch.clientY <= 65 || touch.screenY <= 75) {
-        // El dedo inició en el borde superior: está por bajar la barra de notificaciones
+      touchStartY = e.touches[0].clientY;
+      // Solo si el toque se originó en la extrema parte superior del panel del sistema (0 a 15px)
+      if (touchStartY <= 15) {
         triggerInstantBlackout('Panel de notificaciones del sistema detectado');
       }
     };
@@ -110,9 +108,9 @@ export default function SecurityOverlay({ children, enabled = true }) {
         return;
       }
 
-      const touch = e.touches[0];
-      // Si el movimiento táctil está cerca del borde superior
-      if (touch.clientY <= 75 || touch.screenY <= 85) {
+      // Si el movimiento comenzó en el borde superior (<= 25px) y arrastra hacia abajo (> 40px)
+      const currentY = e.touches[0].clientY;
+      if (touchStartY <= 25 && currentY - touchStartY > 40) {
         if (!isBlackoutActiveRef.current) {
           triggerInstantBlackout('Panel de notificaciones del sistema detectado');
         }
@@ -131,14 +129,14 @@ export default function SecurityOverlay({ children, enabled = true }) {
       lastFocusTimeRef.current = Date.now();
 
       // Cuando Android presiona "Captura", retrae la barra de notificaciones y le devuelve foco a la web
-      // unos 150ms ANTES de tomar la foto. Por eso el escudo DEBE mantenerse activo al menos 3.5 segundos
+      // unos 150ms ANTES de tomar la foto. Por eso el escudo DEBE mantenerse activo unos segundos
       // para que el snapshot del sistema capture la pantalla 100% NEGRA.
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       releaseTimeoutRef.current = setTimeout(() => {
         if (document.hasFocus() && !document.hidden && !isBlurredRef.current) {
           releaseInstantBlackout();
         }
-      }, 3500);
+      }, 2500);
     };
 
     const handleVisibilityChange = () => {
@@ -153,69 +151,32 @@ export default function SecurityOverlay({ children, enabled = true }) {
           if (document.hasFocus() && !document.hidden && !isBlurredRef.current) {
             releaseInstantBlackout();
           }
-        }, 3500);
+        }, 2500);
       }
     };
 
-    // 4. BUCLE DE ALTA FRECUENCIA (RAF: 60-120fps) Y DETECCIÓN DE DEVTOOLS
+    // 4. BUCLE DE ALTA FRECUENCIA (RAF: 60-120fps) Y PROTECCIÓN DE FOCO
     let animationFrameId;
-    const checkDevTools = () => {
-      const widthDiff = window.outerWidth - window.innerWidth;
-      const heightDiff = window.outerHeight - window.innerHeight;
-      return widthDiff > 160 || heightDiff > 160;
-    };
-
     const continuousFocusCheck = () => {
-      const devToolsOpen = checkDevTools();
-      if (!document.hasFocus() || document.hidden || devToolsOpen) {
+      if (!document.hasFocus() || document.hidden) {
         if (!isBlackoutActiveRef.current) {
           isBlurredRef.current = true;
-          triggerInstantBlackout(
-            devToolsOpen
-              ? 'Herramientas de inspección o desarrollador detectadas'
-              : 'Captura de pantalla o panel del sistema detectado'
-          );
+          triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');
         }
       }
       animationFrameId = requestAnimationFrame(continuousFocusCheck);
     };
     animationFrameId = requestAnimationFrame(continuousFocusCheck);
 
-    // BUCLE ANTI-DEBUGGING: Congela y neutraliza la consola si se abre DevTools
-    const debugInterval = setInterval(() => {
-      try {
-        const t0 = performance.now();
-        (function() {
-          Function("debugger")();
-        })();
-        if (performance.now() - t0 > 100) {
-          triggerInstantBlackout('Herramientas de desarrollador detectadas');
-        }
-      } catch (e) {}
-    }, 400);
-
-    // ANTI-EXTRACCIÓN DE CANVAS: Bloquea toDataURL y toBlob desde la consola
-    try {
-      if (typeof window !== 'undefined' && window.HTMLCanvasElement) {
-        const dummyPixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
-        window.HTMLCanvasElement.prototype.toDataURL = function() {
-          return dummyPixel;
-        };
-        window.HTMLCanvasElement.prototype.toBlob = function(cb) {
-          if (typeof cb === 'function') cb(null);
-        };
-      }
-    } catch (e) {}
-
-    // MUTATION OBSERVER ANTI-MANIPULACIÓN: Si borran el escudo o la clase blackout en DevTools, recargar
+    // MUTATION OBSERVER ANTI-MANIPULACIÓN: Si borran el escudo o la clase blackout en DevTools, restaurar escudo (sin recargar la página)
     const domTamperObserver = new MutationObserver(() => {
       if (isBlackoutActiveRef.current) {
         if (!document.documentElement.classList.contains('security-blackout')) {
           document.documentElement.classList.add('security-blackout');
         }
         const shield = document.getElementById('anti-screenshot-shield');
-        if (!shield || shield.style.display === 'none') {
-          window.location.reload();
+        if (shield && shield.style.display !== 'flex') {
+          shield.style.display = 'flex';
         }
       }
     });
@@ -318,7 +279,6 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      clearInterval(debugInterval);
       domTamperObserver.disconnect();
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
