@@ -14,15 +14,29 @@ import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react'
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState('home'); // 'home' | 'packages' | 'gallery' | 'admin'
+  const [currentView, setCurrentView] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+      if (urlParams.get('mode') === 'admin' || (isStandalone && !window.location.pathname.startsWith('/galeria/'))) {
+        return 'admin';
+      }
+    }
+    return 'home';
+  }); // 'home' | 'packages' | 'gallery' | 'admin'
+
   const [activeGalleryToken, setActiveGalleryToken] = useState('demo-cliente-2026');
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
 
-  // Bienvenida e intro con logo 3D interactivo (activo al entrar)
+  // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin)
   const [showIntro, setShowIntro] = useState(() => {
     if (typeof window !== 'undefined') {
-      if (window.location.pathname.startsWith('/galeria/')) return false;
+      const urlParams = new URLSearchParams(window.location.search);
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+      if (window.location.pathname.startsWith('/galeria/') || isStandalone || urlParams.get('mode') === 'admin') {
+        return false;
+      }
     }
     return true;
   });

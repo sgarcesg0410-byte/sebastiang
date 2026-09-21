@@ -1,7 +1,14 @@
 {
   "short_name": "Sebastian G",
-  "name": "Sebastian G • Reservas & Galería",
-  "description": "Portafolio y Galería Privada de Fotos en San Antero",
+  "name": "Sebastian G • Fotografía",
+  "description": "Panel de Fotógrafo y Portafolio Profesional de Sebastian G",
+  "id": "/",
+  "start_url": "/?mode=standalone",
+  "scope": "/",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "display": "standalone",
+  "orientation": "portrait",
   "icons": [
     {
       "src": "/favicon-32x32.png",
@@ -31,9 +38,20 @@
       "purpose": "maskable"
     }
   ],
-  "start_url": "/",
-  "background_color": "#09090b",
-  "theme_color": "#09090b",
-  "display": "standalone",
-  "orientation": "portrait"
+  "shortcuts": [
+    {
+      "name": "Panel del Fotógrafo",
+      "short_name": "Panel",
+      "description": "Gestionar reservas y entregar fotos Full HD",
+      "url": "/?mode=admin",
+      "icons": [{ "src": "/app-icon.png", "sizes": "512x512" }]
+    },
+    {
+      "name": "Portafolio Web",
+      "short_name": "Portafolio",
+      "description": "Ver catálogo público",
+      "url": "/",
+      "icons": [{ "src": "/app-icon.png", "sizes": "512x512" }]
+    }
+  ]
 }

@@ -253,6 +253,35 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
   const [deliverySuccessMsg, setDeliverySuccessMsg] = useState('');
 
+  // Instalación nativa PWA en Android exclusiva para el fotógrafo
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [canInstallPwa, setCanInstallPwa] = useState(false);
+  const isStandalone = typeof window !== 'undefined' && (
+    window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  );
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.deferredInstallPrompt) {
+      setCanInstallPwa(true);
+    }
+    const handleInstallable = () => setCanInstallPwa(true);
+    window.addEventListener('pwa-installable', handleInstallable);
+    return () => window.removeEventListener('pwa-installable', handleInstallable);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (typeof window !== 'undefined' && window.deferredInstallPrompt) {
+      window.deferredInstallPrompt.prompt();
+      const choice = await window.deferredInstallPrompt.userChoice;
+      if (choice && choice.outcome === 'accepted') {
+        window.deferredInstallPrompt = null;
+        setCanInstallPwa(false);
+      }
+    } else {
+      setShowInstallModal(true);
+    }
+  };
+
   const detectDeliveryService = (url) => {
     if (!url) return 'wetransfer';
     const lower = url.toLowerCase();
@@ -1267,8 +1296,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </div>
         </div>
 
-        {/* Acciones Rápidas: Ver Portafolio y Cerrar Sesión */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
+        {/* Acciones Rápidas: Instalar en Android, Ver Portafolio y Cerrar Sesión */}
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {!isStandalone && (
+            <button
+              type="button"
+              onClick={handleInstallClick}
+              className="px-3.5 py-2.5 rounded-xl bg-purple-950/80 border border-purple-500/50 hover:bg-purple-900 text-purple-200 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md active:scale-95 shadow-purple-950/40"
+              title="Instalar la aplicación nativa en tu teléfono Android"
+            >
+              <DownloadCloud className="w-3.5 h-3.5 text-purple-400" />
+              <span>📲 Instalar App en Android</span>
+            </button>
+          )}
+
           {onBackToHome && (
             <button
               onClick={onBackToHome}
@@ -3637,6 +3678,66 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="max-h-[75vh] overflow-auto rounded-2xl bg-black p-2 flex items-center justify-center">
               <img src={viewingVoucherModal} alt="Comprobante de Pago" className="max-w-full max-h-[70vh] object-contain rounded-xl" />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE INSTRUCCIONES DE INSTALACIÓN NATIVA EN ANDROID */}
+      {showInstallModal && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative max-w-md w-full bg-stone-900 border border-purple-500/40 rounded-3xl p-6 shadow-2xl space-y-4 my-8 text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                  <DownloadCloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Instalar App en tu Android</h3>
+                  <p className="text-[11px] text-stone-400">Exclusiva para ti • Sin Play Store</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowInstallModal(false)}
+                className="p-1.5 rounded-xl bg-stone-800 text-stone-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-stone-300">
+              <p className="leading-relaxed">
+                Tus clientes seguirán usando la versión web normal en sus navegadores sin tener que instalar nada. Esta app es <strong className="text-amber-300">100% exclusiva para ti</strong> como fotógrafo.
+              </p>
+
+              <div className="p-3.5 bg-stone-950 rounded-2xl border border-stone-800 space-y-2.5">
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center shrink-0 text-xs">1</span>
+                  <p>Abre <strong className="text-white">Google Chrome</strong> en tu teléfono Android y entra a tu panel.</p>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center shrink-0 text-xs">2</span>
+                  <p>Toca los <strong className="text-white">tres puntos (⋮)</strong> en la esquina superior derecha del navegador.</p>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center shrink-0 text-xs">3</span>
+                  <p>Selecciona <strong className="text-purple-300 font-bold">"Instalar aplicación"</strong> (o <em>"Agregar a la pantalla principal"</em>).</p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-emerald-950/60 border border-emerald-500/30 rounded-xl text-emerald-300 text-[11px] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>¡Y listo! Se creará el icono de Sebastian G en tu celular y se abrirá siempre en tu panel en pantalla completa.</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowInstallModal(false)}
+              className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-white font-bold text-xs rounded-xl"
+            >
+              Entendido
+            </button>
           </div>
         </div>
       )}
