@@ -7,7 +7,7 @@ import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
-import { getSettings, getCatalog, getPackages } from './services/api';
+import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG } from './services/api';
 import { trackPageVisit } from './services/analytics';
 import { supabase } from './services/supabase';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
@@ -41,11 +41,11 @@ export default function App() {
     return true;
   });
 
-  // Datos globales
+  // Datos globales con inicio instantáneo sin pantalla en blanco
   const [settings, setSettings] = useState({});
-  const [catalog, setCatalog] = useState([]);
-  const [packages, setPackages] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [catalog, setCatalog] = useState(DEFAULT_REAL_CATALOG);
+  const [packages, setPackages] = useState(DEFAULT_PACKAGES);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     // Registrar visita en analítica en tiempo real
@@ -68,7 +68,7 @@ export default function App() {
       .channel('catalog_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
         getCatalog().then(data => {
-          if (Array.isArray(data)) setCatalog(data);
+          if (Array.isArray(data) && data.length > 0) setCatalog(data);
         });
       })
       .subscribe();
@@ -80,7 +80,7 @@ export default function App() {
         bc = new BroadcastChannel('catalog_realtime_sync');
         bc.onmessage = () => {
           getCatalog().then(data => {
-            if (Array.isArray(data)) setCatalog(data);
+            if (Array.isArray(data) && data.length > 0) setCatalog(data);
           });
         };
       }
@@ -89,7 +89,7 @@ export default function App() {
     const handleStorageSync = (e) => {
       if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
         getCatalog().then(data => {
-          if (Array.isArray(data)) setCatalog(data);
+          if (Array.isArray(data) && data.length > 0) setCatalog(data);
         });
       }
     };
@@ -105,16 +105,22 @@ export default function App() {
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      const [sData, cData, pData] = await Promise.all([
+      const [sRes, cRes, pRes] = await Promise.allSettled([
         getSettings(),
         getCatalog(),
         getPackages()
       ]);
-      setSettings(sData || {});
-      setCatalog(Array.isArray(cData) ? cData : []);
-      setPackages(Array.isArray(pData) ? pData : []);
+      if (sRes.status === 'fulfilled' && sRes.value) {
+        setSettings(sRes.value);
+      }
+      if (cRes.status === 'fulfilled' && Array.isArray(cRes.value) && cRes.value.length > 0) {
+        setCatalog(cRes.value);
+      }
+      if (pRes.status === 'fulfilled' && Array.isArray(pRes.value) && pRes.value.length > 0) {
+        setPackages(pRes.value);
+      }
     } catch (err) {
-      console.error(err);
+      console.error('Error cargando datos iniciales:', err);
     } finally {
       setLoading(false);
     }

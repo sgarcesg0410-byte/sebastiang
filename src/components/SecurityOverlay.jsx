@@ -57,8 +57,11 @@ export default function SecurityOverlay({ children, enabled = true }) {
       }
     };
 
+    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
+
     const releaseInstantBlackout = () => {
-      if (!document.hasFocus() || document.hidden || isBlurredRef.current) {
+      const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
+      if (!hasFocusOrActive || isBlurredRef.current) {
         return;
       }
       isBlackoutActiveRef.current = false;
@@ -119,6 +122,11 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     // 2. APAGÓN POR PÉRDIDA DE FOCO (Panel de notificaciones, cambio de app, botones físicos)
     const handleBlur = () => {
+      // En dispositivos móviles y táctiles, el evento blur ocurre comúnmente al tocar la pantalla fuera de un input.
+      // Solo consideramos pérdida de foco real en móviles si el documento está oculto.
+      if (isTouchDevice && !document.hidden) {
+        return;
+      }
       isBlurredRef.current = true;
       triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');
     };
@@ -128,15 +136,13 @@ export default function SecurityOverlay({ children, enabled = true }) {
       isBlurredRef.current = false;
       lastFocusTimeRef.current = Date.now();
 
-      // Cuando Android presiona "Captura", retrae la barra de notificaciones y le devuelve foco a la web
-      // unos 150ms ANTES de tomar la foto. Por eso el escudo DEBE mantenerse activo unos segundos
-      // para que el snapshot del sistema capture la pantalla 100% NEGRA.
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       releaseTimeoutRef.current = setTimeout(() => {
-        if (document.hasFocus() && !document.hidden && !isBlurredRef.current) {
+        const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
+        if (hasFocusOrActive && !isBlurredRef.current) {
           releaseInstantBlackout();
         }
-      }, 2500);
+      }, isTouchDevice ? 300 : 2500);
     };
 
     const handleVisibilityChange = () => {
@@ -148,16 +154,18 @@ export default function SecurityOverlay({ children, enabled = true }) {
         lastFocusTimeRef.current = Date.now();
         if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
         releaseTimeoutRef.current = setTimeout(() => {
-          if (document.hasFocus() && !document.hidden && !isBlurredRef.current) {
+          const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
+          if (hasFocusOrActive && !isBlurredRef.current) {
             releaseInstantBlackout();
           }
-        }, 2500);
+        }, isTouchDevice ? 300 : 2500);
       }
     };
 
     // 4. MONITOR DE SEGURIDAD Y PROTECCIÓN DE FOCO (Cero consumo de batería y máxima respuesta)
     const focusCheckInterval = setInterval(() => {
-      if (!document.hasFocus() || document.hidden) {
+      const shouldTrigger = isTouchDevice ? document.hidden : (!document.hasFocus() || document.hidden);
+      if (shouldTrigger) {
         if (!isBlackoutActiveRef.current) {
           isBlurredRef.current = true;
           triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');

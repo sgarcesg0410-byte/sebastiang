@@ -42,11 +42,13 @@ export default function ProtectedCanvasImage({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Si el escudo de seguridad está activo o no hay foco, pintar negro absoluto
+    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
+    const isLosingFocus = isTouchDevice ? document.hidden : (!document.hasFocus() || document.hidden);
+
+    // Si el escudo de seguridad está activo o se perdió el foco, pintar negro absoluto
     if (
       document.documentElement.classList.contains('security-blackout') ||
-      !document.hasFocus() ||
-      document.hidden
+      isLosingFocus
     ) {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, targetWidth, targetHeight);
@@ -171,13 +173,20 @@ export default function ProtectedCanvasImage({
       resizeObserver.observe(container);
     }
 
+    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
+
     const handleWindowEvents = () => {
+      drawToCanvas();
+    };
+
+    const handleWindowBlur = () => {
+      if (isTouchDevice && !document.hidden) return;
       drawToCanvas();
     };
 
     window.addEventListener('resize', handleWindowEvents);
     window.addEventListener('focus', handleWindowEvents);
-    window.addEventListener('blur', handleWindowEvents);
+    window.addEventListener('blur', handleWindowBlur);
     document.addEventListener('visibilitychange', handleWindowEvents);
 
     // Observar cambios de clase en html (como security-blackout)
@@ -191,7 +200,7 @@ export default function ProtectedCanvasImage({
       mutationObserver.disconnect();
       window.removeEventListener('resize', handleWindowEvents);
       window.removeEventListener('focus', handleWindowEvents);
-      window.removeEventListener('blur', handleWindowEvents);
+      window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('visibilitychange', handleWindowEvents);
     };
   }, [drawToCanvas]);
