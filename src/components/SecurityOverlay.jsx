@@ -155,18 +155,15 @@ export default function SecurityOverlay({ children, enabled = true }) {
       }
     };
 
-    // 4. BUCLE DE ALTA FRECUENCIA (RAF: 60-120fps) Y PROTECCIÓN DE FOCO
-    let animationFrameId;
-    const continuousFocusCheck = () => {
+    // 4. MONITOR DE SEGURIDAD Y PROTECCIÓN DE FOCO (Cero consumo de batería y máxima respuesta)
+    const focusCheckInterval = setInterval(() => {
       if (!document.hasFocus() || document.hidden) {
         if (!isBlackoutActiveRef.current) {
           isBlurredRef.current = true;
           triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');
         }
       }
-      animationFrameId = requestAnimationFrame(continuousFocusCheck);
-    };
-    animationFrameId = requestAnimationFrame(continuousFocusCheck);
+    }, 250);
 
     // MUTATION OBSERVER ANTI-MANIPULACIÓN: Si borran el escudo o la clase blackout en DevTools, restaurar escudo (sin recargar la página)
     const domTamperObserver = new MutationObserver(() => {
@@ -278,7 +275,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
     document.addEventListener('copy', handleCopy);
 
     return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      clearInterval(focusCheckInterval);
       domTamperObserver.disconnect();
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);

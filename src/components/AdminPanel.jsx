@@ -392,13 +392,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Monitoreo en vivo cada 4 segundos para avisar instantáneamente cuando hagan reservas o pagos
+  // Monitoreo inteligente para avisar instantáneamente sobre reservas y pagos sin saturar el servidor
   useEffect(() => {
     if (!isAuthenticated) return;
-    const interval = setInterval(() => {
-      loadAllAdminData();
-    }, 4000);
-    return () => clearInterval(interval);
+
+    const poll = () => {
+      if (!document.hidden) {
+        loadAllAdminData();
+      }
+    };
+
+    const interval = setInterval(poll, 12000);
+    const handleVisibility = () => {
+      if (!document.hidden) loadAllAdminData();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [isAuthenticated]);
 
   // Sincronización simultánea de catálogo en tiempo real (Celular <-> PC y entre pestañas)

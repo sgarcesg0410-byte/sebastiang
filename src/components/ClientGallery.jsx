@@ -135,7 +135,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [galleryData]);
+  }, [galleryData?.expiresAt]);
 
   // Manejar selección de foto
   const togglePhotoSelection = (photoId) => {
