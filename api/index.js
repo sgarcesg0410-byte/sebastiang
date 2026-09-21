@@ -154,38 +154,7 @@ function getDB() {
     ],
     payments: [],
     sessions: [],
-    reviews: [
-      {
-        id: "rev-jennifer-vasquez",
-        clientName: "Jennifer Vásquez",
-        sessionTitle: "Coveñas • Juramento de Bandera",
-        rating: 5,
-        recommend: true,
-        comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
-        date: "30/09/2026",
-        verified: true
-      },
-      {
-        id: "rev-ayda-luz",
-        clientName: "Ayda Luz",
-        sessionTitle: "San Antero • Cumpleaños",
-        rating: 5,
-        recommend: true,
-        comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
-        date: "Reciente",
-        verified: true
-      },
-      {
-        id: "rev-shamara",
-        clientName: "Familia Shamara",
-        sessionTitle: "San Antero • Primer Cumpleaños",
-        rating: 5,
-        recommend: true,
-        comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
-        date: "Reciente",
-        verified: true
-      }
-    ],
+    reviews: [],
     walletBalances: {
       nequi: 0,
       daviplata: 0,

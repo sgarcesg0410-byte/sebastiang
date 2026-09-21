@@ -3,11 +3,11 @@ import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote } from 'lucide
 import { getReviews, REAL_DEFAULT_REVIEWS } from '../services/api';
 
 export default function TestimonialsSection({ onOpenBooking }) {
-  const [reviews, setReviews] = useState(REAL_DEFAULT_REVIEWS);
+  const [reviews, setReviews] = useState([]);
 
   useEffect(() => {
     getReviews().then(data => {
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setReviews(data);
       }
     });
@@ -28,7 +28,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
     const handleStorage = (e) => {
       if (e.key === 'sebastian_g_reviews_last_sync' || e.key === 'sebastian_g_reviews_v1') {
         getReviews().then(data => {
-          if (Array.isArray(data) && data.length > 0) setReviews(data);
+          if (Array.isArray(data)) setReviews(data);
         });
       }
     };
@@ -39,6 +39,11 @@ export default function TestimonialsSection({ onOpenBooking }) {
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
+
+  // Si aún no existen comentarios reales de clientes, ocultar la sección para no mostrar datos ficticios
+  if (!reviews || reviews.length === 0) {
+    return null;
+  }
 
   return (
     <section className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">

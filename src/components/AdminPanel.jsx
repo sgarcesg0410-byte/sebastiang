@@ -1497,8 +1497,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <span className="font-semibold">Opiniones</span>
             <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
           </div>
-          <span className="text-2xl font-black text-white font-mono">5.0 ⭐</span>
-          <span className="text-[10px] text-amber-400 block mt-0.5 font-bold">{reviewsList.length} reseñas web</span>
+          <span className="text-2xl font-black text-white font-mono">
+            {reviewsList.length > 0 ? '5.0 ⭐' : '0'}
+          </span>
+          <span className="text-[10px] text-amber-400 block mt-0.5 font-bold">
+            {reviewsList.length > 0 ? `${reviewsList.length} reseñas web` : 'Sin reseñas aún'}
+          </span>
         </div>
 
         <div 
@@ -2490,23 +2494,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
               <span className="text-xs text-stone-400 font-semibold block mb-1">Calificación Promedio</span>
               <div className="flex items-center gap-2">
-                <span className="text-3xl font-black text-white font-mono">5.0</span>
+                <span className="text-3xl font-black text-white font-mono">
+                  {reviewsList.length > 0 ? '5.0' : '0.0'}
+                </span>
                 <div className="flex items-center gap-0.5 text-amber-400">
                   {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="w-4 h-4 fill-amber-400" />
+                    <Star key={i} className={`w-4 h-4 ${reviewsList.length > 0 ? 'fill-amber-400' : 'text-stone-700'}`} />
                   ))}
                 </div>
               </div>
-              <span className="text-[10px] text-emerald-400 font-bold block mt-1">100% Calificaciones 5 estrellas</span>
+              <span className="text-[10px] text-emerald-400 font-bold block mt-1">
+                {reviewsList.length > 0 ? '100% Calificaciones 5 estrellas' : 'Sin calificaciones aún'}
+              </span>
             </div>
 
             <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
               <span className="text-xs text-stone-400 font-semibold block mb-1">Recomendación</span>
               <div className="flex items-center gap-2">
-                <span className="text-3xl font-black text-white font-mono">100%</span>
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <span className="text-3xl font-black text-white font-mono">
+                  {reviewsList.length > 0 ? '100%' : '0%'}
+                </span>
+                <CheckCircle2 className={`w-5 h-5 ${reviewsList.length > 0 ? 'text-emerald-400' : 'text-stone-600'}`} />
               </div>
-              <span className="text-[10px] text-stone-400 block mt-1">Todos los clientes recomiendan tu trabajo</span>
+              <span className="text-[10px] text-stone-400 block mt-1">
+                {reviewsList.length > 0 ? 'Todos los clientes recomiendan tu trabajo' : 'Pendiente de opiniones reales'}
+              </span>
             </div>
 
             <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
@@ -2515,19 +2527,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <span className="text-3xl font-black text-white font-mono">{reviewsList.length}</span>
                 <Users className="w-5 h-5 text-amber-400" />
               </div>
-              <span className="text-[10px] text-amber-400 block mt-1">Visibles en la página central</span>
+              <span className="text-[10px] text-amber-400 block mt-1">
+                {reviewsList.length > 0 ? 'Visibles en la página central' : 'Se mostrarán en la portada al recibirlas'}
+              </span>
             </div>
           </div>
 
           {/* LISTA DE OPINIONES */}
           {reviewsList.length === 0 ? (
             <div className="p-8 sm:p-12 text-center bg-stone-900/60 border border-stone-800 rounded-3xl text-stone-400 space-y-3">
-              <Star className="w-10 h-10 text-amber-400/50 mx-auto stroke-[1.5]" />
+              <Star className="w-10 h-10 text-amber-400/30 mx-auto stroke-[1.5]" />
               <h4 className="text-base font-bold text-stone-200">
-                Aún no hay opiniones adicionales registradas
+                Aún no hay opiniones de clientes registradas
               </h4>
               <p className="text-xs max-w-lg mx-auto text-stone-400 leading-relaxed">
-                Cuando tus clientes reciban la entrega de sus fotos en su galería digital, se les habilitará automáticamente la opción de calificar tu servicio con estrellas, comentario y recomendación.
+                Cuando tus clientes reciban la entrega de sus fotos en su galería digital, se les habilitará automáticamente la opción de calificar tu servicio con estrellas, comentario y recomendación, y aparecerán aquí y en la página central.
               </p>
             </div>
           ) : (

@@ -266,46 +266,22 @@ const LOCAL_PAYMENTS_KEY = 'sebastian_g_payments_v1';
 const LOCAL_REVIEWS_KEY = 'sebastian_g_reviews_v1';
 const LOCAL_WALLET_BASE_BALANCES_KEY = 'sebastian_g_wallet_base_balances_v1';
 
-export const REAL_DEFAULT_REVIEWS = [
-  {
-    id: "rev-jennifer-vasquez",
-    clientName: "Jennifer Vásquez",
-    sessionTitle: "Coveñas • Juramento de Bandera",
-    rating: 5,
-    recommend: true,
-    comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
-    date: "30/09/2026",
-    verified: true
-  },
-  {
-    id: "rev-ayda-luz",
-    clientName: "Ayda Luz",
-    sessionTitle: "San Antero • Cumpleaños",
-    rating: 5,
-    recommend: true,
-    comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
-    date: "Reciente",
-    verified: true
-  },
-  {
-    id: "rev-shamara",
-    clientName: "Familia Shamara",
-    sessionTitle: "San Antero • Primer Cumpleaños",
-    rating: 5,
-    recommend: true,
-    comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
-    date: "Reciente",
-    verified: true
-  }
-];
+export const REAL_DEFAULT_REVIEWS = [];
 
 export function getLocalReviews() {
   try {
     const raw = localStorage.getItem(LOCAL_REVIEWS_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    if (Array.isArray(list) && list.length > 0) return list;
+    if (Array.isArray(list)) {
+      // Filtrar y eliminar de inmediato cualquier comentario de muestra no real
+      const clean = list.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+      if (clean.length !== list.length) {
+        localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(clean));
+      }
+      return clean;
+    }
   } catch (e) {}
-  return REAL_DEFAULT_REVIEWS;
+  return [];
 }
 
 export function saveLocalReview(review) {
@@ -1110,23 +1086,16 @@ export async function getReviews() {
     const res = await fetch(`${API_BASE}/reviews`);
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+      if (Array.isArray(data)) {
+        const clean = data.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+        return clean;
       }
     }
   } catch (err) {
     console.warn('Consultando reseñas locales:', err);
   }
 
-  const local = getLocalReviews();
-  if (local && local.length > 0) {
-    const map = new Map();
-    [...REAL_DEFAULT_REVIEWS, ...local].forEach(r => {
-      if (r && r.id) map.set(r.id, r);
-    });
-    return Array.from(map.values());
-  }
-  return REAL_DEFAULT_REVIEWS;
+  return getLocalReviews();
 }
 
 export async function submitGalleryReview(token, reviewData) {
