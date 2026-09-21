@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Menu, X, Sparkles } from 'lucide-react';
+import { ShieldCheck, Menu, X, Sparkles, Lock } from 'lucide-react';
 
 export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setCurrentView, photographerName = "Sebastian G" }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -99,11 +99,18 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           </button>
         </div>
 
-        {/* Acciones Móviles: Reservar Rápido y Menú */}
+        {/* Acciones Móviles: Reservar Rápido, Acceso Admin y Menú */}
         <div className="flex md:hidden items-center gap-2">
           <button
+            onClick={() => navigateTo('admin')}
+            className="p-2 text-amber-400 hover:text-amber-300 rounded-xl bg-stone-900 border border-amber-500/40 active:scale-95 transition-all shadow-sm"
+            title="Panel de Fotógrafo"
+          >
+            <Lock className="w-4 h-4" />
+          </button>
+          <button
             onClick={onOpenBooking}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs px-3.5 py-2 rounded-xl shadow-md shadow-amber-500/20 active:scale-95 transition-all"
+            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs px-3 py-2 rounded-xl shadow-md shadow-amber-500/20 active:scale-95 transition-all"
           >
             <Sparkles className="w-3.5 h-3.5 fill-stone-950" />
             <span>Reservar</span>

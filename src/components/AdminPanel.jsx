@@ -280,11 +280,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setIsSubmittingDelivery(true);
     setDeliverySuccessMsg('');
     try {
-      await deliverSession(deliveringSession.id || deliveringSession.token, {
-        finalDeliveryUrl: deliveryForm.finalDeliveryUrl,
-        deliveryService: deliveryForm.deliveryService,
-        deliveryNotes: deliveryForm.deliveryNotes
-      });
+      if (String(deliveringSession.id).startsWith('book-')) {
+        const bookingId = String(deliveringSession.id).replace('book-', '');
+        await updateAdminBooking(bookingId, {
+          finalDeliveryUrl: deliveryForm.finalDeliveryUrl,
+          deliveryService: deliveryForm.deliveryService,
+          deliveryNotes: deliveryForm.deliveryNotes,
+          status: 'completed'
+        });
+      } else {
+        await deliverSession(deliveringSession.id || deliveringSession.token, {
+          finalDeliveryUrl: deliveryForm.finalDeliveryUrl,
+          deliveryService: deliveryForm.deliveryService,
+          deliveryNotes: deliveryForm.deliveryNotes
+        });
+      }
       setDeliveringSession(prev => ({
         ...prev,
         status: 'delivered',
@@ -1424,14 +1434,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               onClick={() => setActiveTab('sessions')}
               className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
                 activeTab === 'sessions'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
+                  ? 'bg-gradient-to-r from-purple-600 via-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-purple-950/40 scale-[1.02] font-black'
+                  : 'text-purple-300 hover:text-white bg-purple-950/30 hover:bg-purple-900/50 border border-purple-500/30 font-semibold'
               }`}
             >
-              <ImageIcon className="w-3.5 h-3.5 shrink-0" />
-              <span>Selecciones</span>
+              <PackageCheck className="w-3.5 h-3.5 shrink-0 text-purple-400" />
+              <span>Galerías & Entrega</span>
               {safeSessions.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-purple-900 text-purple-200 border border-purple-500/40'}`}>
                   {safeSessions.length}
                 </span>
               )}
@@ -1626,6 +1636,60 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         <MessageCircle className="w-3.5 h-3.5" />
                         <span>WhatsApp</span>
                       </a>
+                    </div>
+
+                    {/* BOTÓN DIRECTO DE ENTREGA FULL HD PARA ESTA RESERVA */}
+                    <div className="pt-2.5 border-t border-stone-800 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const matchingSession = safeSessions.find(
+                            s => (s.clientWhatsApp && s.clientWhatsApp.replace(/\D/g, '') === clientPhoneClean) ||
+                                 (s.clientName && s.clientName.toLowerCase().trim() === booking.clientName?.toLowerCase().trim())
+                          );
+                          handleOpenDelivery(matchingSession || {
+                            id: `book-${booking.id}`,
+                            token: booking.id,
+                            clientName: booking.clientName,
+                            clientWhatsApp: booking.clientWhatsApp,
+                            packageType: booking.packageName,
+                            status: booking.finalDeliveryUrl ? 'delivered' : 'pending',
+                            finalDeliveryUrl: booking.finalDeliveryUrl || '',
+                            deliveryService: booking.deliveryService || 'wetransfer',
+                            deliveryNotes: booking.deliveryNotes || ''
+                          });
+                        }}
+                        className={`w-full font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                          booking.finalDeliveryUrl
+                            ? 'bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/40'
+                            : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:opacity-95 text-white shadow-md shadow-purple-950/40 font-extrabold'
+                        }`}
+                      >
+                        <PackageCheck className="w-4 h-4" />
+                        <span>
+                          {booking.finalDeliveryUrl
+                            ? '✓ Editar / Re-enviar Entrega Full HD'
+                            : '📦 Entregar Fotos en Calidad Original (Full HD)'}
+                        </span>
+                      </button>
+
+                      {booking.finalDeliveryUrl && (
+                        <a
+                          href={getDeliveryWhatsAppUrl({
+                            clientName: booking.clientName,
+                            clientWhatsApp: booking.clientWhatsApp,
+                            finalDeliveryUrl: booking.finalDeliveryUrl,
+                            deliveryService: booking.deliveryService,
+                            deliveryNotes: booking.deliveryNotes
+                          })}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full font-bold text-xs py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1.5 shadow transition-colors"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>📲 Enviar Enlace Full HD al WhatsApp</span>
+                        </a>
+                      )}
                     </div>
                   </div>
                 );
