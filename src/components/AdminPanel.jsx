@@ -77,6 +77,7 @@ import {
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
+import { NequiLogo, DaviPlataLogo, DaleLogo, WalletAccountCard } from './PaymentLogos';
 
 // Función para enviar notificaciones de escritorio / móvil en segundo plano
 function sendBrowserNotification(title, body) {
@@ -193,6 +194,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [editingBooking, setEditingBooking] = useState(null);
   const [isSavingBooking, setIsSavingBooking] = useState(false);
   const [payments, setPayments] = useState([]);
+  const [copiedWalletKey, setCopiedWalletKey] = useState(null);
+  const handleCopyWalletKey = (val, keyName) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(val);
+    }
+    setCopiedWalletKey(keyName);
+    setTimeout(() => setCopiedWalletKey(null), 2500);
+  };
   const [analyticsStats, setAnalyticsStats] = useState(getLocalAnalytics());
   const [realtimeAlert, setRealtimeAlert] = useState(null);
   const [viewingVoucherModal, setViewingVoucherModal] = useState(null);
@@ -575,7 +584,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
     };
 
-    const interval = setInterval(poll, 12000);
+    const interval = setInterval(poll, 6000);
     const handleVisibility = () => {
       if (!document.hidden) loadAllAdminData();
     };
@@ -587,27 +596,43 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     };
   }, [isAuthenticated]);
 
-  // Sincronización simultánea de catálogo en tiempo real (Celular <-> PC y entre pestañas)
+  // Sincronización simultánea de catálogo, reservas y pagos en tiempo real (Celular <-> PC y entre pestañas)
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const channel = supabase
-      .channel('admin_catalog_realtime')
+      .channel('admin_all_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
         getCatalog().then(data => {
           if (Array.isArray(data)) setCatalog(data);
         });
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        loadAllAdminData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
+        loadAllAdminData();
+      })
       .subscribe();
 
-    let bc;
+    let bcCatalog, bcBookings, bcPayments;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
-        bc = new BroadcastChannel('catalog_realtime_sync');
-        bc.onmessage = () => {
+        bcCatalog = new BroadcastChannel('catalog_realtime_sync');
+        bcCatalog.onmessage = () => {
           getCatalog().then(data => {
             if (Array.isArray(data)) setCatalog(data);
           });
+        };
+
+        bcBookings = new BroadcastChannel('bookings_realtime_sync');
+        bcBookings.onmessage = () => {
+          loadAllAdminData();
+        };
+
+        bcPayments = new BroadcastChannel('payments_realtime_sync');
+        bcPayments.onmessage = () => {
+          loadAllAdminData();
         };
       }
     } catch (e) {}
@@ -618,12 +643,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           if (Array.isArray(data)) setCatalog(data);
         });
       }
+      if (e.key === 'sebastian_g_bookings_last_sync' || e.key === 'sebastian_g_bookings_v1') {
+        loadAllAdminData();
+      }
+      if (e.key === 'sebastian_g_payments_last_sync' || e.key === 'sebastian_g_payments_v1') {
+        loadAllAdminData();
+      }
     };
     window.addEventListener('storage', handleStorage);
 
     return () => {
       supabase.removeChannel(channel);
-      if (bc) bc.close();
+      if (bcCatalog) bcCatalog.close();
+      if (bcBookings) bcBookings.close();
+      if (bcPayments) bcPayments.close();
       window.removeEventListener('storage', handleStorage);
     };
   }, [isAuthenticated]);
@@ -1405,14 +1438,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
         <div 
           onClick={() => setActiveTab('payments')}
-          className="bg-stone-900/80 border border-stone-800 hover:border-emerald-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
+          className="bg-stone-900/80 border border-stone-800 hover:border-emerald-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg group"
         >
           <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
             <span className="font-semibold">Pagos en Vivo</span>
-            <CreditCard className="w-4 h-4 text-emerald-400" />
+            <div className="flex items-center gap-1.5 bg-stone-950 px-2 py-0.5 rounded-lg border border-stone-800">
+              <NequiLogo className="w-3.5 h-3.5" showText={false} />
+              <DaviPlataLogo className="w-3.5 h-3.5" showText={false} />
+              <DaleLogo className="w-3.5 h-3.5" showText={false} />
+            </div>
           </div>
           <span className="text-2xl font-black text-white font-mono">{payments.length}</span>
-          <span className="text-[10px] text-emerald-400 block mt-0.5 font-bold">Nequi, DaviPlata & Dale</span>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="text-[10px] text-purple-400 font-bold">Nequi</span>
+            <span className="text-[10px] text-stone-600">•</span>
+            <span className="text-[10px] text-red-400 font-bold">DaviPlata</span>
+            <span className="text-[10px] text-stone-600">•</span>
+            <span className="text-[10px] text-amber-400 font-bold">Dale!</span>
+          </div>
         </div>
 
         <div 
@@ -1914,11 +1957,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-xl font-serif font-bold text-white">
-                Registro de Pagos en Tiempo Real
+              <h3 className="text-xl font-serif font-bold text-white flex items-center gap-2.5">
+                <span>Registro de Pagos en Tiempo Real</span>
               </h3>
               <p className="text-xs text-stone-400">
-                Pagos recibidos directamente vía Nequi, DaviPlata y Dale! con comprobantes y detalles.
+                Tus pasarelas oficiales de cobro digital conectadas a Nequi, DaviPlata y Dale! con comprobantes en vivo.
               </p>
             </div>
             <button
@@ -1930,12 +1973,56 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </button>
           </div>
 
+          {/* SECCIÓN OFICIAL DE BILLETERAS DIGITALES CON LOGOS VECTORIALES */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-amber-400" />
+                <span>Tus Cuentas Oficiales para Recibir Pagos y Anticipos</span>
+              </span>
+              <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>En Línea</span>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <WalletAccountCard
+                walletType="nequi"
+                number="324 472 5167"
+                holderName="Sebastian Garcés"
+                copiedKey={copiedWalletKey}
+                onCopy={handleCopyWalletKey}
+              />
+              <WalletAccountCard
+                walletType="daviplata"
+                number="@PLATA3244725167"
+                holderName="Sebastian Garcés"
+                copiedKey={copiedWalletKey}
+                onCopy={handleCopyWalletKey}
+              />
+              <WalletAccountCard
+                walletType="dale"
+                number="@SGG04"
+                holderName="Sebastian Garcés"
+                copiedKey={copiedWalletKey}
+                onCopy={handleCopyWalletKey}
+              />
+            </div>
+          </div>
+
           {payments.length === 0 ? (
-            <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
-              <CreditCard className="w-12 h-12 text-stone-600 mx-auto mb-3" />
-              <h4 className="text-base font-bold text-stone-300 mb-1">Aún no hay pagos registrados</h4>
-              <p className="text-xs max-w-md mx-auto text-stone-500">
-                Cuando tus clientes seleccionen fotos adicionales o impresiones en su galería y paguen por Nequi (3244725167), DaviPlata (@PLATA3244725167) o Dale! (@SGG04), aparecerán aquí automáticamente en tiempo real.
+            <div className="p-8 sm:p-12 text-center bg-stone-900/60 border border-stone-800 rounded-3xl text-stone-400 space-y-3">
+              <div className="flex items-center justify-center gap-3">
+                <NequiLogo className="w-8 h-8" showText={false} />
+                <DaviPlataLogo className="w-8 h-8" showText={false} />
+                <DaleLogo className="w-8 h-8" showText={false} />
+              </div>
+              <h4 className="text-base font-bold text-stone-200">
+                Billeteras Digitales Listas para Recibir Pagos
+              </h4>
+              <p className="text-xs max-w-lg mx-auto text-stone-400 leading-relaxed">
+                Cuando tus clientes elijan fotos adicionales o impresiones en su galería y paguen por <strong>Nequi (3244725167)</strong>, <strong>DaviPlata (@PLATA3244725167)</strong> o <strong>Dale! (@SGG04)</strong>, sus comprobantes y detalles aparecerán aquí con alerta sonora y notificación automática en tu aplicación.
               </p>
             </div>
           ) : (
@@ -1943,10 +2030,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               {payments.map((payment) => {
                 const clientPhoneClean = (payment.clientWhatsApp || '').replace(/\D/g, '');
                 const methodBadge = {
-                  nequi: { name: 'Nequi', key: '3244725167', color: 'bg-purple-900/60 text-purple-200 border-purple-500/40' },
-                  daviplata: { name: 'DaviPlata', key: '@PLATA3244725167', color: 'bg-red-900/60 text-red-200 border-red-500/40' },
-                  dale: { name: 'Dale!', key: '@SGG04', color: 'bg-amber-900/60 text-amber-200 border-amber-500/40' }
-                }[payment.method] || { name: payment.method, key: '', color: 'bg-stone-800 text-stone-300 border-stone-700' };
+                  nequi: { name: 'Nequi', key: '3244725167', color: 'bg-purple-900/60 text-purple-200 border-purple-500/40', logo: <NequiLogo className="w-4 h-4" showText={true} /> },
+                  daviplata: { name: 'DaviPlata', key: '@PLATA3244725167', color: 'bg-red-900/60 text-red-200 border-red-500/40', logo: <DaviPlataLogo className="w-4 h-4" showText={true} /> },
+                  dale: { name: 'Dale!', key: '@SGG04', color: 'bg-amber-900/60 text-amber-200 border-amber-500/40', logo: <DaleLogo className="w-4 h-4" showText={true} /> }
+                }[payment.method] || { name: payment.method, key: '', color: 'bg-stone-800 text-stone-300 border-stone-700', logo: null };
 
                 return (
                   <div
@@ -1955,9 +2042,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   >
                     <div>
                       <div className="flex items-center justify-between mb-3">
-                        <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-lg border ${methodBadge.color}`}>
-                          {methodBadge.name} • {methodBadge.key}
-                        </span>
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border bg-black/40 border-stone-800">
+                          {methodBadge.logo || (
+                            <span className="text-[10px] font-black uppercase text-stone-300">
+                              {methodBadge.name}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-mono text-stone-400">
+                            • {methodBadge.key}
+                          </span>
+                        </div>
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${payment.status === 'verified' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
                           {payment.status === 'verified' ? 'Verificado ✓' : 'Pendiente Verificación'}
                         </span>

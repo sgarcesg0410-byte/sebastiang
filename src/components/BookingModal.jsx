@@ -143,10 +143,28 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         });
       } catch (e) {}
 
-      // Abrir inmediatamente WhatsApp Línea 1 para notificar al fotógrafo
+      // Sincronización en tiempo real con el panel de administración
+      try {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          const bc = new BroadcastChannel('bookings_realtime_sync');
+          bc.postMessage({ type: 'new_booking', booking: result.booking });
+          setTimeout(() => bc.close(), 300);
+        }
+        localStorage.setItem('sebastian_g_bookings_last_sync', Date.now().toString());
+      } catch (e) {}
+
+      // Abrir inmediatamente WhatsApp Línea 1 para notificar al fotógrafo sin bloqueo de ventanas emergentes
       if (result.directWhatsAppUrl) {
         try {
-          window.open(result.directWhatsAppUrl, '_blank');
+          const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+          if (isMobile) {
+            window.location.href = result.directWhatsAppUrl;
+          } else {
+            const win = window.open(result.directWhatsAppUrl, '_blank');
+            if (!win || win.closed || typeof win.closed === 'undefined') {
+              window.location.href = result.directWhatsAppUrl;
+            }
+          }
         } catch (e) {}
       }
 
@@ -239,6 +257,12 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     href={submittedBooking.directWhatsAppUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={(e) => {
+                      if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) {
+                        e.preventDefault();
+                        window.location.href = submittedBooking.directWhatsAppUrl;
+                      }
+                    }}
                     className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold py-3.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 active:scale-98 transition-all"
                   >
                     <MessageCircle className="w-5 h-5 fill-white" />
@@ -251,6 +275,12 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     href={submittedBooking.secondaryWhatsAppUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={(e) => {
+                      if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) {
+                        e.preventDefault();
+                        window.location.href = submittedBooking.secondaryWhatsAppUrl;
+                      }
+                    }}
                     className="w-full flex items-center justify-center gap-2 bg-emerald-950/80 border border-emerald-500/50 hover:bg-emerald-900/80 text-emerald-200 font-extrabold py-3 px-6 rounded-xl text-xs active:scale-98 transition-all shadow-md"
                   >
                     <MessageCircle className="w-4 h-4 fill-emerald-400" />

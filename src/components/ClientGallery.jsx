@@ -25,6 +25,7 @@ import {
 import confetti from 'canvas-confetti';
 import { getGalleryByToken, submitGallerySelection, createPayment } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
+import { NequiLogo, DaviPlataLogo, DaleLogo } from './PaymentLogos';
 
 export default function ClientGallery({ token = "demo-cliente-2026", onBackToHome }) {
   const [galleryData, setGalleryData] = useState(null);
@@ -256,7 +257,27 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
             (voucherImage ? `\n📸 *Comprobante:* Adjuntado en el sistema` : '');
           finalUrl += encodeURIComponent(payText);
         }
-        window.open(finalUrl, '_blank');
+
+        // Sincronización en tiempo real con el panel de administración
+        try {
+          if (typeof window !== 'undefined' && window.BroadcastChannel) {
+            const bcPay = new BroadcastChannel('payments_realtime_sync');
+            bcPay.postMessage({ type: 'selection_submitted', token });
+            setTimeout(() => bcPay.close(), 300);
+          }
+          localStorage.setItem('sebastian_g_payments_last_sync', Date.now().toString());
+        } catch (e) {}
+
+        // En dispositivos móviles y WebView de Android, window.location.href abre nativamente WhatsApp sin bloqueo
+        const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        if (isMobile) {
+          window.location.href = finalUrl;
+        } else {
+          const win = window.open(finalUrl, '_blank');
+          if (!win || win.closed || typeof win.closed === 'undefined') {
+            window.location.href = finalUrl;
+          }
+        }
       }
     } catch (err) {
       alert(err.message || 'Error al enviar selección.');
@@ -806,17 +827,18 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                       <span className="text-[10px] text-stone-400 font-medium">Sin intermediarios</span>
                     </div>
 
-                    {/* Selector de billeteras: Nequi, DaviPlata, Dale */}
+                    {/* Selector de billeteras: Nequi, DaviPlata, Dale con Logos Oficiales */}
                     <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
                         onClick={() => setSelectedWallet('nequi')}
-                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${
+                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1.5 ${
                           selectedWallet === 'nequi'
-                            ? 'bg-purple-950/60 border-purple-500 text-purple-200 shadow-md shadow-purple-900/30 ring-1 ring-purple-500'
-                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                            ? 'bg-purple-950/70 border-purple-500 text-purple-200 shadow-md shadow-purple-900/40 ring-1 ring-purple-500'
+                            : 'bg-stone-950/90 border-stone-800 text-stone-400 hover:border-stone-700'
                         }`}
                       >
+                        <NequiLogo className="w-5 h-5" showText={false} />
                         <span className="text-xs font-black">Nequi</span>
                         <span className="text-[10px] opacity-75">3244725167</span>
                       </button>
@@ -824,12 +846,13 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                       <button
                         type="button"
                         onClick={() => setSelectedWallet('daviplata')}
-                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${
+                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1.5 ${
                           selectedWallet === 'daviplata'
-                            ? 'bg-red-950/60 border-red-500 text-red-200 shadow-md shadow-red-900/30 ring-1 ring-red-500'
-                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                            ? 'bg-red-950/70 border-red-500 text-red-200 shadow-md shadow-red-900/40 ring-1 ring-red-500'
+                            : 'bg-stone-950/90 border-stone-800 text-stone-400 hover:border-stone-700'
                         }`}
                       >
+                        <DaviPlataLogo className="w-5 h-5" showText={false} />
                         <span className="text-xs font-black">DaviPlata</span>
                         <span className="text-[10px] opacity-75">Por Llave</span>
                       </button>
@@ -837,25 +860,26 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                       <button
                         type="button"
                         onClick={() => setSelectedWallet('dale')}
-                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1 ${
+                        className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center gap-1.5 ${
                           selectedWallet === 'dale'
-                            ? 'bg-amber-950/60 border-amber-500 text-amber-200 shadow-md shadow-amber-900/30 ring-1 ring-amber-500'
-                            : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                            ? 'bg-amber-950/70 border-amber-500 text-amber-200 shadow-md shadow-amber-900/40 ring-1 ring-amber-500'
+                            : 'bg-stone-950/90 border-stone-800 text-stone-400 hover:border-stone-700'
                         }`}
                       >
+                        <DaleLogo className="w-5 h-5" showText={false} />
                         <span className="text-xs font-black">Dale!</span>
                         <span className="text-[10px] opacity-75">Por Llave</span>
                       </button>
                     </div>
 
-                    {/* Detalle de la cuenta seleccionada */}
+                    {/* Detalle de la cuenta seleccionada con Logo Oficial */}
                     {selectedWallet === 'nequi' && (
-                      <div className="bg-purple-950/30 border border-purple-500/40 rounded-2xl p-3.5 space-y-2">
+                      <div className="bg-purple-950/30 border border-purple-500/40 rounded-2xl p-3.5 space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-purple-200">
-                            Número Nequi de Sebastian:
-                          </span>
-                          <span className="text-xs font-mono font-bold text-white bg-purple-900/60 px-2 py-0.5 rounded-md">
+                          <div className="flex items-center gap-2">
+                            <NequiLogo className="w-5 h-5" showText={true} textColor="text-purple-200" />
+                          </div>
+                          <span className="text-xs font-mono font-bold text-white bg-purple-900/60 px-2 py-0.5 rounded-md border border-purple-500/30">
                             3244725167
                           </span>
                         </div>
@@ -883,12 +907,12 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     )}
 
                     {selectedWallet === 'daviplata' && (
-                      <div className="bg-red-950/30 border border-red-500/40 rounded-2xl p-3.5 space-y-2">
+                      <div className="bg-red-950/30 border border-red-500/40 rounded-2xl p-3.5 space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-red-200">
-                            Llave DaviPlata de Sebastian:
-                          </span>
-                          <span className="text-xs font-mono font-bold text-white bg-red-900/60 px-2 py-0.5 rounded-md">
+                          <div className="flex items-center gap-2">
+                            <DaviPlataLogo className="w-5 h-5" showText={true} textColor="text-red-200" />
+                          </div>
+                          <span className="text-xs font-mono font-bold text-white bg-red-900/60 px-2 py-0.5 rounded-md border border-red-500/30">
                             @PLATA3244725167
                           </span>
                         </div>
@@ -916,12 +940,12 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     )}
 
                     {selectedWallet === 'dale' && (
-                      <div className="bg-amber-950/30 border border-amber-500/40 rounded-2xl p-3.5 space-y-2">
+                      <div className="bg-amber-950/30 border border-amber-500/40 rounded-2xl p-3.5 space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-amber-200">
-                            Llave Dale! de Sebastian:
-                          </span>
-                          <span className="text-xs font-mono font-bold text-white bg-amber-900/60 px-2 py-0.5 rounded-md">
+                          <div className="flex items-center gap-2">
+                            <DaleLogo className="w-5 h-5" showText={true} textColor="text-amber-200" />
+                          </div>
+                          <span className="text-xs font-mono font-bold text-white bg-amber-900/60 px-2 py-0.5 rounded-md border border-amber-500/30">
                             @SGG04
                           </span>
                         </div>

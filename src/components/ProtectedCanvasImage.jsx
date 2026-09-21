@@ -6,6 +6,9 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
  * Elimina las etiquetas <img> del DOM para que las fotos no puedan ser inspeccionadas,
  * descargadas, extraídas del árbol de elementos ni capturadas mediante DevTools.
  */
+// Caché en memoria para carga ultrarrápida (0ms) en móviles y APK
+const memoryImageCache = new Map();
+
 export default function ProtectedCanvasImage({
   src,
   alt = 'Fotografía protegida',
@@ -120,43 +123,44 @@ export default function ProtectedCanvasImage({
     if (!src) return;
 
     let isMounted = true;
+
+    // 1. Revisar si la imagen ya está en caché en memoria (0ms)
+    if (memoryImageCache.has(src)) {
+      const cached = memoryImageCache.get(src);
+      if (cached && cached.complete && cached.naturalWidth > 0) {
+        imgRef.current = cached;
+        setIsLoaded(true);
+        setHasError(false);
+        drawToCanvas();
+        return;
+      }
+    }
+
     setIsLoaded(false);
     setHasError(false);
 
     const img = new Image();
-    // Intenta con anonymous para compatibilidad CORS
-    img.crossOrigin = 'anonymous';
+    if ('decoding' in img) {
+      img.decoding = 'async';
+    }
 
     img.onload = () => {
       if (!isMounted) return;
+      memoryImageCache.set(src, img);
       imgRef.current = img;
       setIsLoaded(true);
       drawToCanvas();
     };
 
     img.onerror = () => {
-      // Si falla por CORS, reintentar sin crossOrigin
-      const fallbackImg = new Image();
-      fallbackImg.onload = () => {
-        if (!isMounted) return;
-        imgRef.current = fallbackImg;
-        setIsLoaded(true);
-        drawToCanvas();
-      };
-      fallbackImg.onerror = () => {
-        if (!isMounted) return;
-        setHasError(true);
-      };
-      fallbackImg.src = src;
+      if (!isMounted) return;
+      setHasError(true);
     };
 
     img.src = src;
 
     return () => {
       isMounted = false;
-      img.onload = null;
-      img.onerror = null;
-      imgRef.current = null;
     };
   }, [src, drawToCanvas]);
 
