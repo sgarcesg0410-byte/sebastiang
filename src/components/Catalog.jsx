@@ -126,20 +126,10 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         {/* Cabecera de Catálogo y Filtros */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
           <div>
-            <div className="flex items-center gap-3 mb-2">
+            <div className="mb-2">
               <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block">
                 Portafolio de Trabajo
               </span>
-              {onNavigateToAdmin && (
-                <button
-                  type="button"
-                  onClick={onNavigateToAdmin}
-                  className="text-[11px] font-bold text-amber-300 hover:text-amber-200 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 transition-all hover:scale-105"
-                  title="Entra a tu panel para subir fotos al catálogo"
-                >
-                  + Subir Fotos
-                </button>
-              )}
             </div>
             <h2 className="text-3xl sm:text-4xl font-serif font-bold text-white">
               Catálogo de Fotos
@@ -167,80 +157,71 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
           </div>
         </div>
 
-        {/* Galería Grid */}
+        {/* Galería Grid: 2 columnas en celular (compacto para no cansar al cliente), 3 en tablet y 4 en PC */}
         {filteredPhotos.length === 0 ? (
-          <div className="p-10 sm:p-14 text-center bg-stone-900/60 border border-dashed border-amber-500/30 rounded-3xl max-w-xl mx-auto my-8 shadow-xl">
-            <Camera className="w-12 h-12 text-amber-400 mx-auto mb-3" />
-            <h3 className="text-lg font-serif font-bold text-white">Catálogo de Fotos Listo</h3>
-            <p className="text-xs text-stone-400 mt-1 max-w-sm mx-auto">
-              Las fotos de muestra han sido retiradas. Sube tus fotos reales de sesiones de Lightroom para que tus clientes las vean aquí.
+          <div className="p-8 sm:p-12 text-center bg-stone-900/60 border border-dashed border-amber-500/20 rounded-3xl max-w-md mx-auto my-8 shadow-xl">
+            <Camera className="w-10 h-10 text-amber-400 mx-auto mb-3 opacity-80" />
+            <h3 className="text-base sm:text-lg font-serif font-bold text-white">Catálogo en Actualización</h3>
+            <p className="text-xs text-stone-400 mt-1 max-w-xs mx-auto">
+              Pronto publicaremos nuevas fotos para esta categoría. Explora las demás secciones de nuestro portafolio.
             </p>
-            {onNavigateToAdmin && (
-              <button
-                type="button"
-                onClick={onNavigateToAdmin}
-                className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-extrabold text-xs rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
-              >
-                <Sparkles className="w-4 h-4 fill-stone-950" />
-                <span>📸 Entrar al Panel para Subir Fotos</span>
-              </button>
-            )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5 lg:gap-6">
             {filteredPhotos.map((photo) => (
               <div
                 key={photo.id}
                 onClick={() => setPreviewPhoto(photo)}
-                className="group relative rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-lg hover:border-amber-500/50 transition-all duration-300 cursor-pointer"
+                className="group relative rounded-xl sm:rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-md hover:border-amber-500/50 hover:shadow-xl transition-all duration-300 cursor-pointer"
               >
-              {/* Contenedor de Imagen con Protección Canvas Anti-Descarga y Anti-Inspección */}
-              <div className="relative aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
-                <ProtectedCanvasImage
-                  src={photo.url}
-                  alt={photo.title}
-                  objectFit="cover"
-                  className="group-hover:scale-105 transition-transform duration-500"
-                />
-              </div>
+                {/* Contenedor de Imagen con Protección Canvas Anti-Descarga y Anti-Inspección */}
+                <div className="relative aspect-[3/4] sm:aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
+                  <ProtectedCanvasImage
+                    src={photo.url}
+                    alt={photo.title}
+                    objectFit="cover"
+                    className="group-hover:scale-105 transition-transform duration-500"
+                  />
+                </div>
 
-              {/* Degradado oscuro inferior */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent opacity-80 group-hover:opacity-95 transition-opacity" />
+                {/* Degradado oscuro inferior */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/35 to-transparent opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none" />
 
-              {/* Badge de Categoría */}
-              <div className="absolute top-4 left-4">
-                <span className="text-[11px] font-semibold tracking-wide uppercase px-2.5 py-1 rounded-md bg-stone-950/70 backdrop-blur-md text-amber-300 border border-amber-500/20">
-                  {photo.category}
-                </span>
-              </div>
-
-              {/* Botón de Like */}
-              <button
-                onClick={(e) => toggleLike(photo.id, e)}
-                className="absolute top-4 right-4 p-2.5 rounded-full bg-stone-950/60 backdrop-blur-md border border-white/10 text-stone-300 hover:text-red-400 hover:scale-110 active:scale-95 transition-all"
-              >
-                <Heart className={`w-4 h-4 ${likes[photo.id] ? 'fill-red-500 text-red-500' : ''}`} />
-              </button>
-
-              {/* Información de la Foto */}
-              <div className="absolute bottom-0 inset-x-0 p-5">
-                <h3 className="text-lg font-bold text-white font-serif mb-1 group-hover:text-amber-300 transition-colors">
-                  {photo.title}
-                </h3>
-                <div className="flex items-center justify-between text-xs text-stone-300">
-                  <span className="flex items-center gap-1 text-stone-400">
-                    <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                    {photo.location}
-                  </span>
-                  <span className="text-amber-400 font-medium group-hover:underline flex items-center gap-1">
-                    Ver detalle
+                {/* Badge de Categoría */}
+                <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-20">
+                  <span className="text-[9px] sm:text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md bg-stone-950/80 backdrop-blur-md text-amber-300 border border-amber-500/20">
+                    {photo.category}
                   </span>
                 </div>
+
+                {/* Botón de Like */}
+                <button
+                  type="button"
+                  onClick={(e) => toggleLike(photo.id, e)}
+                  className="absolute top-2 right-2 sm:top-3 sm:right-3 p-1.5 sm:p-2.5 rounded-full bg-stone-950/60 backdrop-blur-md border border-white/10 text-stone-300 hover:text-red-400 hover:scale-110 active:scale-95 transition-all z-20"
+                >
+                  <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${likes[photo.id] ? 'fill-red-500 text-red-500' : ''}`} />
+                </button>
+
+                {/* Información de la Foto (Optimizada para pantalla móvil) */}
+                <div className="absolute bottom-0 inset-x-0 p-2.5 sm:p-4 z-20 pointer-events-none">
+                  <h3 className="text-xs sm:text-base font-bold text-white font-serif line-clamp-1 group-hover:text-amber-300 transition-colors">
+                    {photo.title}
+                  </h3>
+                  <div className="flex items-center justify-between text-[10px] sm:text-xs text-stone-300 mt-0.5 sm:mt-1">
+                    <span className="flex items-center gap-1 text-stone-400 truncate max-w-[70%]">
+                      <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate">{photo.location}</span>
+                    </span>
+                    <span className="text-amber-400 font-semibold group-hover:underline text-[10px] sm:text-xs shrink-0">
+                      Ver detalle
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
 
         {/* Banner informativo de cierre */}
         <div className="mt-16 bg-gradient-to-r from-amber-950/30 via-stone-900 to-amber-950/30 border border-amber-500/20 rounded-3xl p-6 sm:p-10 text-center">
