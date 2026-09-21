@@ -10,7 +10,7 @@ import SecurityOverlay from './components/SecurityOverlay';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG } from './services/api';
 import { trackPageVisit } from './services/analytics';
 import { supabase } from './services/supabase';
-import { Camera, MapPin, MessageCircle, ShieldCheck, Heart } from 'lucide-react';
+import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
 export default function App() {
@@ -50,15 +50,35 @@ export default function App() {
     // Registrar visita en analítica en tiempo real
     trackPageVisit();
 
-    // Detectar si la URL contiene una ruta de galería tipo /galeria/token
+    // Detectar si la URL contiene una ruta de galería tipo /galeria/token o privada /admin
     const path = window.location.pathname;
+    const urlParams = new URLSearchParams(window.location.search);
     if (path.startsWith('/galeria/')) {
       const urlToken = path.replace('/galeria/', '').trim();
       if (urlToken) {
         setActiveGalleryToken(urlToken);
         setCurrentView('gallery');
       }
+    } else if (path === '/admin' || path === '/admin/' || urlParams.get('mode') === 'admin') {
+      setCurrentView('admin');
     }
+
+    const handlePopState = () => {
+      const p = window.location.pathname;
+      const params = new URLSearchParams(window.location.search);
+      if (p.startsWith('/galeria/')) {
+        const urlToken = p.replace('/galeria/', '').trim();
+        if (urlToken) {
+          setActiveGalleryToken(urlToken);
+          setCurrentView('gallery');
+        }
+      } else if (p === '/admin' || p === '/admin/' || params.get('mode') === 'admin') {
+        setCurrentView('admin');
+      } else {
+        setCurrentView('home');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
 
     loadInitialData();
 
@@ -98,6 +118,7 @@ export default function App() {
       supabase.removeChannel(channel);
       if (bc) bc.close();
       window.removeEventListener('storage', handleStorageSync);
+      window.removeEventListener('popstate', handlePopState);
     };
   }, []);
 
@@ -290,17 +311,24 @@ export default function App() {
                 <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
                 <span>Demostración de Selección</span>
               </button>
-              <button
-                onClick={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="hover:text-amber-400 font-semibold"
-              >
-                Panel Fotógrafo
-              </button>
             </div>
 
-            {/* Créditos del Desarrollador en Negrilla y Mayor Tamaño */}
-            <div className="text-sm sm:text-base font-bold text-white tracking-wide">
-              SG Software Solutions
+            {/* Créditos del Desarrollador y Acceso Discreto */}
+            <div className="flex items-center gap-2 text-sm sm:text-base font-bold text-white tracking-wide">
+              <span>SG Software Solutions</span>
+              {/* Acceso privado discreto para Sebastian */}
+              <button
+                onClick={() => {
+                  setCurrentView('admin');
+                  if (typeof window !== 'undefined') window.history.pushState(null, '', '/admin');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="text-stone-800 hover:text-stone-500 transition-colors p-1"
+                title="Acceso Administración"
+                aria-label="Admin"
+              >
+                <Lock className="w-3 h-3 opacity-20 hover:opacity-100" />
+              </button>
             </div>
           </div>
         </footer>

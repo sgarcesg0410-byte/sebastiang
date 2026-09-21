@@ -64,18 +64,6 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
             <span>Probar Enlace de Fotos</span>
           </button>
 
-          <button
-            onClick={() => navigateTo('admin')}
-            className={`text-xs font-semibold px-3.5 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
-              currentView === 'admin' 
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm' 
-                : 'text-stone-300 hover:text-white bg-stone-900/90 border-stone-800 hover:border-amber-500/40'
-            }`}
-            title="Panel de control para subir fotos al catálogo, actualizar precios y gestionar sesiones"
-          >
-            <span>🔐 Panel Fotógrafo</span>
-          </button>
-
           {onReplayIntro && (
             <button
               onClick={onReplayIntro}
@@ -146,13 +134,6 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           >
             <ShieldCheck className="w-5 h-5 text-amber-400" />
             <span>Probar Enlace de Fotos (Demo 3 días)</span>
-          </button>
-          <button
-            onClick={() => navigateTo('admin')}
-            className="block w-full text-left py-2.5 px-3 rounded-xl bg-stone-800/90 text-amber-300 text-sm font-semibold hover:bg-stone-800 flex items-center justify-between border border-amber-500/20"
-          >
-            <span>🔐 Panel del Fotógrafo</span>
-            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">Subir fotos</span>
           </button>
 
           {onReplayIntro && (
