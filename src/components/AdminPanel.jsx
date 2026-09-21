@@ -40,6 +40,9 @@ import {
   Volume2,
   Users,
   Edit3,
+  PackageCheck,
+  DownloadCloud,
+  Send,
   X
 } from 'lucide-react';
 import { 
@@ -52,6 +55,7 @@ import {
   createAdminSession, 
   reopenAdminSession, 
   deleteAdminSession,
+  deliverSession,
   updateAdminSettings,
   getSettings,
   getPackages,
@@ -238,6 +242,92 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   // Modal ver selecciones de cliente
   const [viewingSession, setViewingSession] = useState(null);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  // Modal y formulario de Entrega de Fotos Finales en Calidad Original (Full HD / WeTransfer)
+  const [deliveringSession, setDeliveringSession] = useState(null);
+  const [deliveryForm, setDeliveryForm] = useState({
+    finalDeliveryUrl: '',
+    deliveryService: 'wetransfer',
+    deliveryNotes: ''
+  });
+  const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
+  const [deliverySuccessMsg, setDeliverySuccessMsg] = useState('');
+
+  const detectDeliveryService = (url) => {
+    if (!url) return 'wetransfer';
+    const lower = url.toLowerCase();
+    if (lower.includes('we.tl') || lower.includes('wetransfer.com')) return 'wetransfer';
+    if (lower.includes('drive.google.com')) return 'drive';
+    if (lower.includes('dropbox.com')) return 'dropbox';
+    if (lower.includes('1drv.ms') || lower.includes('onedrive')) return 'onedrive';
+    return 'direct';
+  };
+
+  const handleOpenDelivery = (session) => {
+    setDeliveringSession(session);
+    const existingUrl = session.finalDeliveryUrl || '';
+    setDeliveryForm({
+      finalDeliveryUrl: existingUrl,
+      deliveryService: session.deliveryService || detectDeliveryService(existingUrl),
+      deliveryNotes: session.deliveryNotes || 'Todas tus fotografías seleccionadas han sido editadas y preparadas en máxima resolución Full HD original.'
+    });
+    setDeliverySuccessMsg(session.status === 'delivered' ? 'Esta sesión ya tiene una entrega registrada. Puedes actualizarla o re-enviar el enlace por WhatsApp.' : '');
+  };
+
+  const handleSubmitDelivery = async (e) => {
+    e.preventDefault();
+    if (!deliveringSession || !deliveryForm.finalDeliveryUrl) return;
+    setIsSubmittingDelivery(true);
+    setDeliverySuccessMsg('');
+    try {
+      await deliverSession(deliveringSession.id || deliveringSession.token, {
+        finalDeliveryUrl: deliveryForm.finalDeliveryUrl,
+        deliveryService: deliveryForm.deliveryService,
+        deliveryNotes: deliveryForm.deliveryNotes
+      });
+      setDeliveringSession(prev => ({
+        ...prev,
+        status: 'delivered',
+        finalDeliveryUrl: deliveryForm.finalDeliveryUrl,
+        deliveryService: deliveryForm.deliveryService,
+        deliveryNotes: deliveryForm.deliveryNotes,
+        deliveredAt: new Date().toISOString()
+      }));
+      setDeliverySuccessMsg('✓ ¡Entrega guardada con éxito! Ahora puedes enviarle el enlace por WhatsApp al cliente.');
+      loadAllAdminData();
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar la entrega.');
+    } finally {
+      setIsSubmittingDelivery(false);
+    }
+  };
+
+  const getDeliveryWhatsAppUrl = (session, customUrl) => {
+    if (!session) return '#';
+    const cleanPhone = (session.clientWhatsApp || '').replace(/\D/g, '');
+    const url = customUrl || session.finalDeliveryUrl || '';
+    const serviceNames = {
+      wetransfer: 'WeTransfer (Archivos Originales Sin Compresión)',
+      drive: 'Google Drive (Máxima Resolución Full HD)',
+      dropbox: 'Dropbox (Alta Definición)',
+      onedrive: 'OneDrive (Alta Calidad)',
+      direct: 'Enlace de Descarga Directa Full HD'
+    };
+    const sType = session.deliveryService || detectDeliveryService(url);
+    const serviceName = serviceNames[sType] || 'WeTransfer (Calidad Original)';
+
+    const text = encodeURIComponent(
+      `📸 *¡Hola ${session.clientName}! Tus fotos profesionales con Sebastian G están listas en Calidad Original Full HD.* ✨\n\n` +
+      `Hemos finalizado la edición y retoque profesional de tus fotografías seleccionadas. Para que no pierdan resolución ni calidad (evitando la compresión de WhatsApp), puedes descargarlas en su tamaño original aquí:\n\n` +
+      `📥 *Enlace de Descarga Original:* ${url}\n` +
+      `📦 *Servicio de Descarga:* ${serviceName}\n\n` +
+      (session.deliveryNotes ? `📝 *Nota del Fotógrafo:* ${session.deliveryNotes}\n\n` : '') +
+      `💡 *Consejo:* Te recomiendo descargarlas y guardarlas en tu computador o celular antes de que venza el enlace para conservarlas siempre en su máxima nitidez.\n\n` +
+      `¡Fue un placer capturar tus mejores momentos! Cualquier duda estoy a tu entera disposición. ♡`
+    );
+    return `https://wa.me/${cleanPhone}?text=${text}`;
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -2302,14 +2392,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       <div className="flex items-center justify-between mb-3">
                         <span
                           className={`text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg ${
-                            isSubmitted
+                            session.status === 'delivered'
+                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1.5'
+                              : isSubmitted
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                               : session.isExpired
                               ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                               : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                           }`}
                         >
-                          {isSubmitted ? '✓ Selección Enviada por Cliente' : session.isExpired ? 'Expirada (3 días)' : 'Esperando Selección'}
+                          {session.status === 'delivered' ? (
+                            <>
+                              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                              <span>✓ Entregada en Full HD</span>
+                            </>
+                          ) : isSubmitted ? (
+                            '✓ Selección Enviada por Cliente'
+                          ) : session.isExpired ? (
+                            'Expirada (3 días)'
+                          ) : (
+                            'Esperando Selección'
+                          )}
                         </span>
 
                         <span className="text-xs text-stone-400 font-mono">
@@ -2340,20 +2443,84 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           </span>
                         </div>
                       </div>
+
+                      {session.status === 'delivered' && session.finalDeliveryUrl && (
+                        <div className="mt-3 p-3 bg-purple-950/40 border border-purple-500/30 rounded-2xl space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-purple-300 font-bold flex items-center gap-1.5">
+                              <PackageCheck className="w-4 h-4 text-purple-400" />
+                              <span>Fotos Entregadas en Full HD</span>
+                            </span>
+                            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-900/60 text-purple-200 border border-purple-500/40">
+                              {session.deliveryService || 'WeTransfer'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <a
+                              href={session.finalDeliveryUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-amber-400 hover:underline truncate max-w-[210px] text-[11px] font-mono flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{session.finalDeliveryUrl}</span>
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(session.finalDeliveryUrl)}
+                              className="text-[10px] bg-stone-900 hover:bg-stone-800 text-stone-300 px-2 py-1 rounded-md border border-stone-700 shrink-0"
+                            >
+                              Copiar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="space-y-2.5 pt-2 border-t border-stone-800">
+                      {/* BOTÓN DE ENTREGA DE FOTOS EN MÁXIMA CALIDAD */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDelivery(session)}
+                        className={`w-full font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                          session.status === 'delivered'
+                            ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-950/50'
+                            : selectedPhotos.length > 0 || isSubmitted
+                            ? 'bg-gradient-to-r from-emerald-600 via-amber-500 to-amber-400 hover:opacity-95 text-stone-950 shadow-md font-extrabold'
+                            : 'bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700'
+                        }`}
+                      >
+                        <PackageCheck className="w-4 h-4" />
+                        <span>
+                          {session.status === 'delivered'
+                            ? '✓ Editar / Re-enviar Entrega Full HD (WeTransfer)'
+                            : '📦 Entregar Fotos Finales en Calidad Original (Full HD)'}
+                        </span>
+                      </button>
+
+                      {session.status === 'delivered' && session.finalDeliveryUrl && (
+                        <a
+                          href={getDeliveryWhatsAppUrl(session)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full font-bold text-xs py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 shadow-md transition-colors"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          <span>📲 Enviar Enlace Full HD al WhatsApp del Cliente</span>
+                        </a>
+                      )}
+
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => setViewingSession(session)}
-                          className={`flex-1 font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5 transition-colors ${
+                          className={`flex-1 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors ${
                             selectedPhotos.length > 0 
-                              ? 'bg-amber-500 hover:bg-amber-400 text-stone-950'
-                              : 'bg-stone-800 hover:bg-stone-700 text-stone-300'
+                              ? 'bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-500/30'
+                              : 'bg-stone-800 hover:bg-stone-700 text-stone-400'
                           }`}
                         >
                           <Eye className="w-4 h-4" />
-                          <span>Ver Fotos Elegidas & Notas ({selectedPhotos.length})</span>
+                          <span>Ver Selección ({selectedPhotos.length})</span>
                         </button>
 
                         <button
@@ -3161,14 +3328,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               )}
             </div>
 
-            <div className="flex gap-3 pt-2">
+            <div className="flex flex-wrap gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const s = viewingSession;
+                  setViewingSession(null);
+                  handleOpenDelivery(s);
+                }}
+                className="bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs px-4 py-3 rounded-xl flex items-center justify-center gap-1.5 shadow-md transition-colors"
+              >
+                <PackageCheck className="w-4 h-4" />
+                <span>Entregar Fotos Full HD</span>
+              </button>
+
               <a
                 href={`https://wa.me/${viewingSession.clientWhatsApp.replace(/\D/g, '')}?text=${encodeURIComponent(
                   `¡Hola ${viewingSession.clientName}! Ya recibí las fotos que seleccionaste de tu sesión. Procedo con la edición final en alta resolución.`
                 )}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5"
+                className="flex-1 min-w-[200px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-1.5"
               >
                 <MessageCircle className="w-4 h-4" />
                 <span>Confirmar Recepción por WhatsApp</span>
@@ -3181,6 +3361,181 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 Cerrar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE ENTREGA DE FOTOS EN CALIDAD ORIGINAL (FULL HD / WETRANSFER) */}
+      {deliveringSession && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative max-w-xl w-full bg-stone-900 border border-purple-500/40 rounded-3xl p-6 shadow-2xl space-y-5 my-8">
+            {/* Encabezado */}
+            <div className="flex items-start justify-between border-b border-stone-800 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                    <PackageCheck className="w-5 h-5" />
+                  </span>
+                  <h3 className="text-lg font-bold text-white">Entrega de Fotos en Calidad Original (Full HD)</h3>
+                </div>
+                <p className="text-xs text-stone-400">
+                  Cliente: <span className="font-bold text-amber-300">{deliveringSession.clientName}</span> • {deliveringSession.packageType}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeliveringSession(null)}
+                className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Banner explicativo de WeTransfer / Sin Compresión */}
+            <div className="p-3.5 bg-gradient-to-r from-purple-950/60 via-stone-900 to-stone-950 border border-purple-500/30 rounded-2xl flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <p className="font-bold text-purple-200">
+                  ¡Cero compresión de WhatsApp! Máxima nitidez profesional.
+                </p>
+                <p className="text-stone-300 leading-relaxed">
+                  Sube las fotos originales editadas en tu servicio preferido (<strong className="text-amber-300">WeTransfer</strong>, Google Drive, Dropbox u OneDrive) y pega el enlace aquí. El cliente podrá descargarlas al 100% de calidad Full HD.
+                </p>
+              </div>
+            </div>
+
+            {deliverySuccessMsg && (
+              <div className="p-3 bg-emerald-950/60 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{deliverySuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitDelivery} className="space-y-4">
+              {/* Selector de servicio */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-2 uppercase tracking-wider">
+                  1. Servicio de Alojamiento / Nube:
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'wetransfer', name: 'WeTransfer', desc: 'Recomendado' },
+                    { id: 'drive', name: 'Google Drive', desc: 'Carpeta/ZIP' },
+                    { id: 'dropbox', name: 'Dropbox', desc: 'Enlace directo' },
+                    { id: 'onedrive', name: 'OneDrive', desc: 'Microsoft' }
+                  ].map((srv) => (
+                    <button
+                      key={srv.id}
+                      type="button"
+                      onClick={() => setDeliveryForm(prev => ({ ...prev, deliveryService: srv.id }))}
+                      className={`p-2.5 rounded-xl text-left border transition-all text-xs ${
+                        deliveryForm.deliveryService === srv.id
+                          ? 'bg-purple-600/30 border-purple-500 text-white font-bold shadow-md shadow-purple-950/50'
+                          : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300'
+                      }`}
+                    >
+                      <div className="font-bold">{srv.name}</div>
+                      <div className="text-[10px] text-stone-400">{srv.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Enlace de entrega */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1.5 uppercase tracking-wider">
+                  2. Enlace de Descarga Original (Full HD):
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-500">
+                    <ExternalLink className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://we.tl/t-xxxxxxx o https://drive.google.com/..."
+                    value={deliveryForm.finalDeliveryUrl}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const detected = detectDeliveryService(val);
+                      setDeliveryForm(prev => ({
+                        ...prev,
+                        finalDeliveryUrl: val,
+                        deliveryService: detected !== 'direct' ? detected : prev.deliveryService
+                      }));
+                    }}
+                    className="w-full pl-9 pr-3 py-2.5 bg-stone-950 border border-stone-700 rounded-xl text-white text-xs placeholder:text-stone-600 focus:outline-none focus:border-purple-500 font-mono"
+                  />
+                </div>
+                <div className="flex items-center justify-between mt-1 text-[11px] text-stone-500">
+                  <span>Pega el link de WeTransfer, Drive o nube donde alojaste las fotos originales.</span>
+                  {deliveryForm.finalDeliveryUrl && (
+                    <a
+                      href={deliveryForm.finalDeliveryUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-400 hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      <span>Probar enlace</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Notas de entrega */}
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1.5 uppercase tracking-wider">
+                  3. Nota del Fotógrafo para el Cliente (Opcional):
+                </label>
+                <textarea
+                  rows={3}
+                  value={deliveryForm.deliveryNotes}
+                  onChange={(e) => setDeliveryForm(prev => ({ ...prev, deliveryNotes: e.target.value }))}
+                  placeholder="Ej: Te comparto las 25 fotos seleccionadas editadas con revelado digital en máxima calidad. ¡Fue un honor trabajar contigo!"
+                  className="w-full px-3 py-2.5 bg-stone-950 border border-stone-700 rounded-xl text-white text-xs placeholder:text-stone-600 focus:outline-none focus:border-purple-500 resize-none"
+                />
+              </div>
+
+              {/* Acciones del formulario */}
+              <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="submit"
+                  disabled={isSubmittingDelivery || !deliveryForm.finalDeliveryUrl}
+                  className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-purple-950/50 transition-colors"
+                >
+                  <PackageCheck className="w-4 h-4" />
+                  <span>{isSubmittingDelivery ? 'Guardando Entrega...' : 'Guardar y Marcar como Entregada'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDeliveringSession(null)}
+                  className="px-5 bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold py-3 rounded-xl transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </form>
+
+            {/* Si ya está entregada o se acaba de guardar, mostrar botón directo de WhatsApp */}
+            {(deliveringSession.status === 'delivered' || deliveryForm.finalDeliveryUrl) && (
+              <div className="pt-3 border-t border-stone-800 space-y-2">
+                <div className="text-[11px] text-stone-400 flex items-center justify-between">
+                  <span>Notificación automática al WhatsApp del cliente:</span>
+                  <span className="text-emerald-400 font-mono font-bold">{deliveringSession.clientWhatsApp}</span>
+                </div>
+                <a
+                  href={getDeliveryWhatsAppUrl(deliveringSession, deliveryForm.finalDeliveryUrl)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>📲 Enviar Fotos Full HD por WhatsApp Ahora</span>
+                </a>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -281,12 +281,14 @@ app.get('/api/gallery/:token', (req, res) => {
   const now = Date.now();
   const expiresTime = new Date(session.expiresAt).getTime();
   const isExpired = now > expiresTime;
-  const isSubmitted = session.status === 'submitted';
+  const isSubmitted = session.status === 'submitted' || session.status === 'delivered';
+  const isDelivered = session.status === 'delivered';
 
   res.json({
     ...session,
     isExpired,
     isSubmitted,
+    isDelivered,
     watermarkSettings: {
       watermarkText: runtimeDB.settings.watermarkText,
       watermarkSubtext: runtimeDB.settings.watermarkSubtext,
@@ -583,6 +585,34 @@ app.post('/api/admin/sessions/:id/reopen', (req, res) => {
     session.status = 'pending';
     session.submittedAt = null;
   }
+
+  res.json({ success: true, session });
+});
+
+app.post('/api/admin/sessions/:id/deliver', (req, res) => {
+  const { id } = req.params;
+  const { finalDeliveryUrl, deliveryService = 'wetransfer', deliveryNotes = '', finalPhotos = [] } = req.body;
+
+  const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
+  if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
+
+  session.status = 'delivered';
+  session.finalDeliveryUrl = (finalDeliveryUrl || '').trim();
+  session.deliveryService = deliveryService;
+  session.deliveryNotes = (deliveryNotes || '').trim();
+  session.deliveredAt = new Date().toISOString();
+  if (Array.isArray(finalPhotos) && finalPhotos.length > 0) {
+    session.finalPhotos = finalPhotos;
+  }
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.sessions = runtimeDB.sessions;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
 
   res.json({ success: true, session });
 });

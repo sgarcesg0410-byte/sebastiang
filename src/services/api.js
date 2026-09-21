@@ -517,7 +517,10 @@ export async function getGalleryByToken(token) {
       if (data && data.clientName !== 'Camila Rodríguez' && token !== 'demo-cliente-2026') {
         saveLocalSession(data);
       }
-      return data;
+      return {
+        ...data,
+        isDelivered: data.status === 'delivered'
+      };
     }
   } catch (err) {
     console.warn('Error conectando con servidor para galería, consultando local:', err);
@@ -538,6 +541,7 @@ export async function getGalleryByToken(token) {
       submittedAt: null,
       isExpired: false,
       isSubmitted: false,
+      isDelivered: false,
       timeRemainingMs: 30 * 24 * 60 * 60 * 1000,
       photos: [
         { id: "photo-1", title: "Foto 001 - Retrato Primer Plano", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
@@ -563,7 +567,8 @@ export async function getGalleryByToken(token) {
     return {
       ...local,
       isExpired: now > expiresTime,
-      isSubmitted: local.status === 'submitted',
+      isSubmitted: local.status === 'submitted' || local.status === 'delivered',
+      isDelivered: local.status === 'delivered',
       timeRemainingMs: Math.max(0, expiresTime - now),
       watermarkSettings: {
         watermarkText: DEFAULT_SETTINGS.watermarkText,
@@ -1049,6 +1054,73 @@ export async function reopenAdminSession(id, additionalDays = 3) {
   });
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
   return { success: true };
+}
+
+export async function deliverSession(id, deliveryData) {
+  const { finalDeliveryUrl, deliveryService = 'wetransfer', deliveryNotes = '', finalPhotos = [] } = deliveryData;
+  const now = new Date().toISOString();
+
+  // 1. Servidor / Vercel
+  try {
+    const res = await fetch(`${API_BASE}/admin/sessions/${id}/deliver`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ finalDeliveryUrl, deliveryService, deliveryNotes, finalPhotos })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const updated = getLocalSessions().map(s => {
+        if (s.id === id || s.token === id) {
+          return {
+            ...s,
+            status: 'delivered',
+            finalDeliveryUrl,
+            deliveryService,
+            deliveryNotes,
+            deliveredAt: now,
+            ...(finalPhotos.length > 0 ? { finalPhotos } : {})
+          };
+        }
+        return s;
+      });
+      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(updated));
+      return data;
+    }
+  } catch (err) {
+    console.warn('Fallback local para entrega de fotos:', err);
+  }
+
+  // 2. Supabase si está disponible
+  try {
+    await supabase.from('sessions').update({
+      status: 'delivered',
+      final_delivery_url: finalDeliveryUrl,
+      delivery_service: deliveryService,
+      delivery_notes: deliveryNotes,
+      delivered_at: now
+    }).eq('id', id);
+  } catch (e) {}
+
+  // 3. Almacenamiento local persistente
+  const updated = getLocalSessions().map(s => {
+    if (s.id === id || s.token === id) {
+      return {
+        ...s,
+        status: 'delivered',
+        finalDeliveryUrl,
+        deliveryService,
+        deliveryNotes,
+        deliveredAt: now,
+        ...(finalPhotos.length > 0 ? { finalPhotos } : {})
+      };
+    }
+    return s;
+  });
+  localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(updated));
+  return {
+    success: true,
+    session: updated.find(s => s.id === id || s.token === id)
+  };
 }
 
 export async function updateAdminSettings(settings, packages) {

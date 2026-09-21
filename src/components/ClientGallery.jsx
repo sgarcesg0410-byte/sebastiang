@@ -18,7 +18,9 @@ import {
   Upload,
   Printer,
   ChevronRight,
-  ExternalLink
+  ExternalLink,
+  PackageCheck,
+  DownloadCloud
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { getGalleryByToken, submitGallerySelection, createPayment } from '../services/api';
@@ -104,6 +106,19 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
         };
       });
       setSelections(initialMap);
+
+      // Lanzar confeti si las fotos finales ya fueron entregadas
+      if (data && (data.isDelivered || data.status === 'delivered' || data.finalDeliveryUrl)) {
+        setTimeout(() => {
+          try {
+            confetti({
+              particleCount: 70,
+              spread: 60,
+              origin: { y: 0.6 }
+            });
+          } catch (e) {}
+        }, 400);
+      }
     } catch (err) {
       console.error(err);
       setError(err.message || 'No se pudo cargar la galería.');
@@ -287,8 +302,83 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
         {/* BARRA DE AVISO DE SEGURIDAD Y EXPIRACIÓN */}
         <div className="mb-8 space-y-4">
           
-          {/* Tarjeta de Cuenta Regresiva de 3 días */}
-          {!isLocked && (
+          {/* BANNER VIP DE ENTREGA DE FOTOS EN CALIDAD ORIGINAL (FULL HD / WETRANSFER) */}
+          {(galleryData.isDelivered || galleryData.status === 'delivered' || galleryData.finalDeliveryUrl) && (
+            <div className="bg-gradient-to-r from-purple-950/90 via-stone-900 to-purple-950/90 border-2 border-purple-500/60 rounded-3xl p-6 sm:p-8 flex flex-col gap-5 text-left shadow-2xl shadow-purple-950/50">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+                <div className="flex items-start sm:items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0">
+                    <PackageCheck className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                        Entrega Final VIP
+                      </span>
+                      <span className="text-xs text-stone-400 font-mono">
+                        {galleryData.deliveryService ? galleryData.deliveryService.toUpperCase() : 'CALIDAD ORIGINAL FULL HD'}
+                      </span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-serif font-bold text-white mt-1">
+                      🎉 ¡Tus Fotos Editadas en Calidad Original (Full HD) están Listas!
+                    </h2>
+                  </div>
+                </div>
+
+                {galleryData.finalDeliveryUrl && (
+                  <a
+                    href={galleryData.finalDeliveryUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2.5 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-sm sm:text-base py-4 px-6 rounded-2xl shadow-xl shadow-amber-500/25 transition-all active:scale-[0.98] shrink-0"
+                  >
+                    <DownloadCloud className="w-5 h-5 text-stone-950" />
+                    <span>Descargar Fotos en Full HD</span>
+                    <ExternalLink className="w-4 h-4 text-stone-900" />
+                  </a>
+                )}
+              </div>
+
+              <div className="p-4 bg-stone-950/70 border border-purple-500/20 rounded-2xl text-xs sm:text-sm text-stone-300 space-y-2">
+                <p className="flex items-center gap-2 font-semibold text-purple-200">
+                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Archivos originales 100% nítidos sin la compresión destructiva de mensajerías ni redes.</span>
+                </p>
+                <p className="text-stone-400 text-xs leading-relaxed">
+                  Sebastian G ha preparado tu paquete fotográfico con edición profesional y revelado digital en máxima definición para que las conserves e imprimas con la más alta fidelidad.
+                </p>
+                {galleryData.deliveryNotes && (
+                  <div className="mt-2 p-3 bg-stone-900 border border-stone-800 rounded-xl text-amber-300 text-xs italic">
+                    💬 <strong className="text-white not-italic">Mensaje de Sebastian:</strong> "{galleryData.deliveryNotes}"
+                  </div>
+                )}
+              </div>
+
+              {galleryData.finalDeliveryUrl && (
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-purple-500/20 text-xs">
+                  <div className="flex items-center gap-2 text-stone-400">
+                    <span className="font-mono text-[11px] truncate max-w-xs sm:max-w-md bg-black/50 px-2.5 py-1 rounded-lg border border-stone-800">
+                      {galleryData.finalDeliveryUrl}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(galleryData.finalDeliveryUrl, 'delivery-url')}
+                      className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-[11px] font-bold border border-stone-700 flex items-center gap-1"
+                    >
+                      {copiedKeyFeedback === 'delivery-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedKeyFeedback === 'delivery-url' ? '¡Copiado!' : 'Copiar Enlace'}</span>
+                    </button>
+                  </div>
+                  <span className="text-[11px] text-stone-500">
+                    💡 Recomendado descargar en tu PC o guardar en tu carrete en alta resolución.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tarjeta de Cuenta Regresiva de 3 días (solo si aún no ha expirado y no se ha entregado) */}
+          {!isLocked && !galleryData.isDelivered && (
             <div className="bg-gradient-to-r from-amber-950/70 via-stone-900 to-amber-950/70 border border-amber-500/40 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
@@ -401,9 +491,20 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           {/* CABECERA DE LA SESIÓN DEL CLIENTE */}
           <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                  Galería Privada de Revisión
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className={`text-xs font-bold uppercase tracking-widest px-2.5 py-1 rounded-md ${
+                  (galleryData.isDelivered || galleryData.status === 'delivered')
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1.5'
+                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                }`}>
+                  {(galleryData.isDelivered || galleryData.status === 'delivered') ? (
+                    <>
+                      <PackageCheck className="w-3.5 h-3.5 text-purple-400" />
+                      <span>✓ Fotos Entregadas en Full HD</span>
+                    </>
+                  ) : (
+                    'Galería Privada de Revisión'
+                  )}
                 </span>
                 <span className="text-xs text-stone-400">
                   • {galleryData.photos?.length || 0} fotos tomadas
@@ -577,22 +678,36 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 )}
               </div>
               <p className="text-[11px] text-stone-400 hidden sm:block mt-0.5">
-                Solo puedes enviar una única vez. Al confirmar, el enlace se bloqueará.
+                {(galleryData.isDelivered || galleryData.status === 'delivered' || galleryData.finalDeliveryUrl)
+                  ? 'Tus fotos finales han sido procesadas en máxima nitidez y sin compresión.'
+                  : 'Solo puedes enviar una única vez. Al confirmar, el enlace se bloqueará.'}
               </p>
             </div>
 
             <div className="w-full sm:w-auto flex items-center gap-3">
-              <button
-                type="button"
-                disabled={isLocked || selectedCount === 0}
-                onClick={() => setConfirmModalOpen(true)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-sm px-7 py-3.5 rounded-xl shadow-lg shadow-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98] transition-all"
-              >
-                <CheckCircle2 className="w-5 h-5 fill-stone-950" />
-                <span>
-                  {extraPhotos > 0 ? `Pagar Fotos Extra y Enviar ($${formatPrice(extraPhotosTotal)} COP)` : 'Enviar Mi Selección Definitiva'}
-                </span>
-              </button>
+              {(galleryData.isDelivered || galleryData.status === 'delivered' || galleryData.finalDeliveryUrl) ? (
+                <a
+                  href={galleryData.finalDeliveryUrl || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-black text-sm px-7 py-3.5 rounded-xl shadow-lg shadow-amber-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  <DownloadCloud className="w-5 h-5 text-stone-950" />
+                  <span>Descargar Fotos en Full HD</span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isLocked || selectedCount === 0}
+                  onClick={() => setConfirmModalOpen(true)}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-sm px-7 py-3.5 rounded-xl shadow-lg shadow-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  <CheckCircle2 className="w-5 h-5 fill-stone-950" />
+                  <span>
+                    {extraPhotos > 0 ? `Pagar Fotos Extra y Enviar ($${formatPrice(extraPhotosTotal)} COP)` : 'Enviar Mi Selección Definitiva'}
+                  </span>
+                </button>
+              )}
             </div>
           </div>
         </div>
