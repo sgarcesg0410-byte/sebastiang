@@ -90,9 +90,11 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               onClick={onOpenBooking}
               className="w-full sm:w-auto flex items-center justify-center gap-3 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-lg px-8 py-4 rounded-2xl shadow-xl shadow-amber-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all"
             >
-              <Calendar className="w-6 h-6 fill-stone-950" />
-              <span>Reservar Mi Sesión Ahora</span>
-              <ArrowRight className="w-5 h-5 ml-1" />
+              <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/40 flex items-center justify-center shadow-inner">
+                <Calendar className="w-5 h-5 text-white stroke-[2.5]" />
+              </div>
+              <span className="text-stone-950 font-black">Reservar Mi Sesión Ahora</span>
+              <ArrowRight className="w-5 h-5 ml-1 text-stone-950 stroke-[2.5]" />
             </button>
 
             <button

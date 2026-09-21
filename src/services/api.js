@@ -263,6 +263,80 @@ export function formatDateTime12Hour(dateTimeStr) {
 }
 
 const LOCAL_PAYMENTS_KEY = 'sebastian_g_payments_v1';
+const LOCAL_REVIEWS_KEY = 'sebastian_g_reviews_v1';
+const LOCAL_WALLET_BASE_BALANCES_KEY = 'sebastian_g_wallet_base_balances_v1';
+
+export const REAL_DEFAULT_REVIEWS = [
+  {
+    id: "rev-jennifer-vasquez",
+    clientName: "Jennifer Vásquez",
+    sessionTitle: "Coveñas • Juramento de Bandera",
+    rating: 5,
+    recommend: true,
+    comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
+    date: "30/09/2026",
+    verified: true
+  },
+  {
+    id: "rev-ayda-luz",
+    clientName: "Ayda Luz",
+    sessionTitle: "San Antero • Cumpleaños",
+    rating: 5,
+    recommend: true,
+    comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
+    date: "Reciente",
+    verified: true
+  },
+  {
+    id: "rev-shamara",
+    clientName: "Familia Shamara",
+    sessionTitle: "San Antero • Primer Cumpleaños",
+    rating: 5,
+    recommend: true,
+    comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
+    date: "Reciente",
+    verified: true
+  }
+];
+
+export function getLocalReviews() {
+  try {
+    const raw = localStorage.getItem(LOCAL_REVIEWS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(list) && list.length > 0) return list;
+  } catch (e) {}
+  return REAL_DEFAULT_REVIEWS;
+}
+
+export function saveLocalReview(review) {
+  try {
+    const list = getLocalReviews().filter(r => r.id !== review.id);
+    list.unshift(review);
+    localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(list));
+    localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
+  } catch (e) {
+    console.warn('No se pudo guardar reseña en localStorage:', e);
+  }
+}
+
+export function getWalletBaseBalances() {
+  try {
+    const raw = localStorage.getItem(LOCAL_WALLET_BASE_BALANCES_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return { nequi: 0, daviplata: 0, dale: 0 };
+}
+
+export function saveWalletBaseBalances(balances) {
+  try {
+    localStorage.setItem(LOCAL_WALLET_BASE_BALANCES_KEY, JSON.stringify(balances));
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('wallet_balances_sync');
+      bc.postMessage({ type: 'BALANCES_UPDATED', balances });
+      setTimeout(() => bc.close(), 300);
+    }
+  } catch (e) {}
+}
 
 function getLocalPayments() {
   try {
@@ -1028,6 +1102,90 @@ export async function updatePaymentStatus(id, status) {
   const local = getLocalPayments().map(p => p.id === id ? { ...p, status } : p);
   localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(local));
   return { success: true };
+}
+
+// --- CALIFICACIONES & RESEÑAS DE SATISFACCIÓN (TESTIMONIOS) ---
+export async function getReviews() {
+  try {
+    const res = await fetch(`${API_BASE}/reviews`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Consultando reseñas locales:', err);
+  }
+
+  const local = getLocalReviews();
+  if (local && local.length > 0) {
+    const map = new Map();
+    [...REAL_DEFAULT_REVIEWS, ...local].forEach(r => {
+      if (r && r.id) map.set(r.id, r);
+    });
+    return Array.from(map.values());
+  }
+  return REAL_DEFAULT_REVIEWS;
+}
+
+export async function submitGalleryReview(token, reviewData) {
+  let serverReview = null;
+  try {
+    const res = await fetch(`${API_BASE}/gallery/${token}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reviewData)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      serverReview = data.review;
+    }
+  } catch (err) {
+    console.warn('Error al guardar reseña en servidor, guardando local:', err);
+  }
+
+  const newReview = serverReview || {
+    id: `rev-${Date.now()}`,
+    clientName: (reviewData.clientName || 'Cliente').trim(),
+    sessionTitle: reviewData.sessionTitle || 'Sesión Fotográfica',
+    rating: Number(reviewData.rating) || 5,
+    recommend: reviewData.recommend !== false,
+    comment: (reviewData.comment || '').trim(),
+    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    verified: true
+  };
+
+  saveLocalReview(newReview);
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('reviews_realtime_sync');
+      bc.postMessage({ type: 'NEW_REVIEW', review: newReview, timestamp: Date.now() });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
+  } catch (e) {}
+
+  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+  const starsText = '⭐'.repeat(newReview.rating);
+  const waMsg = encodeURIComponent(
+    `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tus fotos:*\n\n` +
+    `👤 *Cliente:* ${newReview.clientName}\n` +
+    `📦 *Sesión:* ${newReview.sessionTitle}\n` +
+    `⭐ *Calificación:* ${starsText} (${newReview.rating}/5 Estrellas)\n` +
+    `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
+    `💬 *Comentario:* "${newReview.comment}"\n\n` +
+    `_¡Muchísimas gracias por tu gran trabajo y profesionalismo!_`
+  );
+
+  return {
+    success: true,
+    review: newReview,
+    directWhatsAppUrl: `https://wa.me/${p1}?text=${waMsg}`,
+    secondaryWhatsAppUrl: `https://wa.me/${p2}?text=${waMsg}`
+  };
 }
 
 // --- PROGRAMA DE FIDELIZACIÓN PARA CLIENTES RECURRENTES ---

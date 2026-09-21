@@ -111,7 +111,17 @@ export function DaleLogo({ className = "w-6 h-6", showText = true, textColor = "
 /**
  * Tarjeta interactiva de Billetera Digital con diseño corporativo
  */
-export function WalletAccountCard({ walletType, number, holderName = "Sebastian Garcés", onCopy, copiedKey }) {
+export function WalletAccountCard({ 
+  walletType, 
+  number, 
+  holderName = "Sebastian Garcés", 
+  onCopy, 
+  copiedKey,
+  balance = null,
+  transactionCount = null,
+  isFiltered = false,
+  onFilterGateway = null
+}) {
   const isNequi = walletType === 'nequi';
   const isDaviplata = walletType === 'daviplata';
   const isDale = walletType === 'dale';
@@ -137,7 +147,7 @@ export function WalletAccountCard({ walletType, number, holderName = "Sebastian 
       accent: 'text-[#ed1c24]',
       glow: 'shadow-[0_8px_30px_rgba(237,28,36,0.15)]',
       label: 'Llave Transfiya / Celular:',
-      value: number || '@PLATA3244725167 (o cel 3244725167)',
+      value: number || '@PLATA3244725167',
       copyValue: '@PLATA3244725167',
       logo: <DaviPlataLogo className="w-8 h-8" showText={true} />
     },
@@ -149,7 +159,7 @@ export function WalletAccountCard({ walletType, number, holderName = "Sebastian 
       accent: 'text-[#ffdd00]',
       glow: 'shadow-[0_8px_30px_rgba(255,221,0,0.15)]',
       label: 'Llave Transfiya / Celular:',
-      value: number || '@SGG04 (o cel 3244725167)',
+      value: number || '@SGG04',
       copyValue: '@SGG04',
       logo: <DaleLogo className="w-8 h-8" showText={true} />
     }
@@ -169,14 +179,39 @@ export function WalletAccountCard({ walletType, number, holderName = "Sebastian 
   const isCopied = copiedKey === walletType;
 
   return (
-    <div className={`relative overflow-hidden rounded-2xl sm:rounded-3xl p-4 sm:p-5 border bg-gradient-to-b ${config.gradient} ${config.border} ${config.glow} transition-all duration-300 flex flex-col justify-between group`}>
+    <div className={`relative overflow-hidden rounded-2xl sm:rounded-3xl p-4 sm:p-5 border bg-gradient-to-b ${config.gradient} ${config.border} ${config.glow} transition-all duration-300 flex flex-col justify-between group ${isFiltered ? 'ring-2 ring-amber-400 border-amber-400 shadow-xl' : ''}`}>
       {/* Resplandor superior */}
       <div className="flex items-start justify-between gap-3 mb-3">
         {config.logo}
-        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-black/40 border border-white/10 text-stone-300">
-          Activo ✓
-        </span>
+        <div className="flex items-center gap-1.5">
+          {isFiltered && (
+            <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500 text-stone-950">
+              Filtrado
+            </span>
+          )}
+          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-black/40 border border-white/10 text-stone-300 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>En Línea</span>
+          </span>
+        </div>
       </div>
+
+      {/* Saldo en tiempo real si está configurado */}
+      {balance !== null && (
+        <div className="mb-3 p-3 rounded-2xl bg-black/50 border border-white/10 backdrop-blur-sm">
+          <div className="flex items-center justify-between text-[10px] text-stone-400 uppercase font-semibold">
+            <span>Saldo en Software:</span>
+            {transactionCount !== null && (
+              <span className="text-stone-300 font-mono font-bold">
+                {transactionCount} {transactionCount === 1 ? 'pago' : 'pagos'}
+              </span>
+            )}
+          </div>
+          <div className="text-xl sm:text-2xl font-black font-mono text-emerald-400 mt-0.5 tracking-tight">
+            ${Number(balance).toLocaleString('es-CO')} <span className="text-xs font-normal text-stone-400">COP</span>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-1 mb-4">
         <span className="text-[10px] text-stone-400 uppercase font-semibold tracking-wider block">
@@ -190,19 +225,36 @@ export function WalletAccountCard({ walletType, number, holderName = "Sebastian 
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={() => onCopy && onCopy(config.copyValue, walletType)}
-        className="w-full py-2.5 px-3 rounded-xl bg-black/50 hover:bg-black/80 border border-white/10 hover:border-white/30 text-xs font-bold text-stone-200 flex items-center justify-center gap-2 active:scale-95 transition-all"
-      >
-        {isCopied ? (
-          <span className="text-emerald-400 font-extrabold flex items-center gap-1">
-            ✓ ¡Copiado al Portapapeles!
-          </span>
-        ) : (
-          <span>📋 Copiar Dato de Pago</span>
+      <div className="flex flex-col sm:flex-row items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onCopy && onCopy(config.copyValue, walletType)}
+          className="w-full flex-1 py-2 px-3 rounded-xl bg-black/50 hover:bg-black/80 border border-white/10 hover:border-white/30 text-xs font-bold text-stone-200 flex items-center justify-center gap-2 active:scale-95 transition-all"
+        >
+          {isCopied ? (
+            <span className="text-emerald-400 font-extrabold flex items-center gap-1">
+              ✓ ¡Copiado!
+            </span>
+          ) : (
+            <span>📋 Copiar Llave</span>
+          )}
+        </button>
+
+        {onFilterGateway && (
+          <button
+            type="button"
+            onClick={() => onFilterGateway(isFiltered ? 'all' : walletType)}
+            className={`w-full sm:w-auto py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 ${
+              isFiltered
+                ? 'bg-amber-500 text-stone-950 border-amber-400 shadow-md font-extrabold'
+                : 'bg-stone-900/80 hover:bg-stone-800 text-stone-300 border-stone-700'
+            }`}
+            title="Filtrar historial de pagos de esta billetera"
+          >
+            <span>{isFiltered ? 'Quitar filtro' : 'Ver historial'}</span>
+          </button>
         )}
-      </button>
+      </div>
     </div>
   );
 }

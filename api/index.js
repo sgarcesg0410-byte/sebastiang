@@ -153,7 +153,44 @@ function getDB() {
       }
     ],
     payments: [],
-    sessions: []
+    sessions: [],
+    reviews: [
+      {
+        id: "rev-jennifer-vasquez",
+        clientName: "Jennifer Vásquez",
+        sessionTitle: "Coveñas • Juramento de Bandera",
+        rating: 5,
+        recommend: true,
+        comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
+        date: "30/09/2026",
+        verified: true
+      },
+      {
+        id: "rev-ayda-luz",
+        clientName: "Ayda Luz",
+        sessionTitle: "San Antero • Cumpleaños",
+        rating: 5,
+        recommend: true,
+        comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
+        date: "Reciente",
+        verified: true
+      },
+      {
+        id: "rev-shamara",
+        clientName: "Familia Shamara",
+        sessionTitle: "San Antero • Primer Cumpleaños",
+        rating: 5,
+        recommend: true,
+        comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
+        date: "Reciente",
+        verified: true
+      }
+    ],
+    walletBalances: {
+      nequi: 0,
+      daviplata: 0,
+      dale: 0
+    }
   };
 }
 
@@ -171,6 +208,61 @@ app.get('/api/catalog', (req, res) => {
 
 app.get('/api/packages', (req, res) => {
   res.json(runtimeDB.packages || []);
+});
+
+// Reseñas y Calificaciones Públicas de Clientes (Testimonios)
+app.get('/api/reviews', (req, res) => {
+  res.json(runtimeDB.reviews || []);
+});
+
+app.post('/api/gallery/:token/review', (req, res) => {
+  const { token } = req.params;
+  const { clientName, sessionTitle, rating, comment, recommend } = req.body;
+  const newReview = {
+    id: `rev-${Date.now()}`,
+    token,
+    clientName: (clientName || 'Cliente').trim(),
+    sessionTitle: sessionTitle || 'Sesión Fotográfica',
+    rating: Number(rating) || 5,
+    recommend: recommend !== false,
+    comment: (comment || '').trim(),
+    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    verified: true
+  };
+  if (!runtimeDB.reviews) runtimeDB.reviews = [];
+  runtimeDB.reviews.unshift(newReview);
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.reviews = runtimeDB.reviews;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
+  res.json({ success: true, review: newReview });
+});
+
+// Saldos Base Oficiales de Cuentas (Nequi, DaviPlata, Dale)
+app.get('/api/admin/wallets', (req, res) => {
+  res.json(runtimeDB.walletBalances || { nequi: 0, daviplata: 0, dale: 0 });
+});
+
+app.post('/api/admin/wallets', (req, res) => {
+  const balances = req.body;
+  if (balances && typeof balances === 'object') {
+    runtimeDB.walletBalances = { ...runtimeDB.walletBalances, ...balances };
+    try {
+      const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+      if (fs.existsSync(dbPath)) {
+        const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+        current.walletBalances = runtimeDB.walletBalances;
+        fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+      }
+    } catch (e) {}
+  }
+  res.json({ success: true, walletBalances: runtimeDB.walletBalances });
 });
 
 app.post('/api/packages', (req, res) => {

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Catalog from './components/Catalog';
 import PackagesSection from './components/PackagesSection';
+import TestimonialsSection from './components/TestimonialsSection';
 import BookingModal from './components/BookingModal';
 import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
@@ -203,6 +204,11 @@ export default function App() {
                 <PackagesSection
                   packages={packages}
                   onSelectPackage={(pkg) => handleOpenBooking(pkg)}
+                />
+              </div>
+              <div id="testimonials-section">
+                <TestimonialsSection
+                  onOpenBooking={() => handleOpenBooking(null)}
                 />
               </div>
             </>
