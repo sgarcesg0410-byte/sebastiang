@@ -313,9 +313,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const getDeliveryWhatsAppUrl = (session, customUrl) => {
+  const getDeliveryWhatsAppUrl = (session, customUrl, customNotes, customService) => {
     if (!session) return '#';
-    const cleanPhone = (session.clientWhatsApp || '').replace(/\D/g, '');
+    let cleanPhone = (session.clientWhatsApp || '').replace(/\D/g, '');
+    if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
+      cleanPhone = '57' + cleanPhone;
+    }
     const url = customUrl || session.finalDeliveryUrl || '';
     const serviceNames = {
       wetransfer: 'WeTransfer (Archivos Originales Sin Compresión)',
@@ -324,15 +327,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       onedrive: 'OneDrive (Alta Calidad)',
       direct: 'Enlace de Descarga Directa Full HD'
     };
-    const sType = session.deliveryService || detectDeliveryService(url);
-    const serviceName = serviceNames[sType] || 'WeTransfer (Calidad Original)';
+    const sType = customService || session.deliveryService || detectDeliveryService(url);
+    const serviceName = serviceNames[sType] || 'WeTransfer (Archivos Originales Sin Compresión)';
+
+    // Extraer el primer nombre limpio con inicial en mayúscula para trato personal (ej: "Jennifer")
+    const rawName = (session.clientName || 'Cliente').trim();
+    const firstName = rawName.split(' ')[0] || rawName;
+    const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+
+    const activeNote = (customNotes !== undefined ? customNotes : session.deliveryNotes) ||
+      'Todas tus fotografías seleccionadas han sido editadas y preparadas en máxima resolución Full HD original.';
 
     const text = encodeURIComponent(
-      `📸 *¡Hola ${session.clientName}! Tus fotos profesionales con Sebastian G están listas en Calidad Original Full HD.* ✨\n\n` +
+      `📸 *¡Hola ${formattedFirstName}! Tus fotos profesionales con Sebastian G están listas en Calidad Original Full HD.* ✨\n\n` +
       `Hemos finalizado la edición y retoque profesional de tus fotografías seleccionadas. Para que no pierdan resolución ni calidad (evitando la compresión de WhatsApp), puedes descargarlas en su tamaño original aquí:\n\n` +
       `📥 *Enlace de Descarga Original:* ${url}\n` +
       `📦 *Servicio de Descarga:* ${serviceName}\n\n` +
-      (session.deliveryNotes ? `📝 *Nota del Fotógrafo:* ${session.deliveryNotes}\n\n` : '') +
+      `📝 *Nota del Fotógrafo:* ${activeNote}\n\n` +
       `💡 *Consejo:* Te recomiendo descargarlas y guardarlas en tu computador o celular antes de que venza el enlace para conservarlas siempre en su máxima nitidez.\n\n` +
       `¡Fue un placer capturar tus mejores momentos! Cualquier duda estoy a tu entera disposición. ♡`
     );
@@ -3590,7 +3601,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   <span className="text-emerald-400 font-mono font-bold">{deliveringSession.clientWhatsApp}</span>
                 </div>
                 <a
-                  href={getDeliveryWhatsAppUrl(deliveringSession, deliveryForm.finalDeliveryUrl)}
+                  href={getDeliveryWhatsAppUrl(
+                    deliveringSession,
+                    deliveryForm.finalDeliveryUrl,
+                    deliveryForm.deliveryNotes,
+                    deliveryForm.deliveryService
+                  )}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
