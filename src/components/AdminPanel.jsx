@@ -152,20 +152,9 @@ function playNotificationChime() {
 }
 
 export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBackToHome, onLogout, onPackagesUpdated }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const ua = window.navigator.userAgent || '';
-        const savedPin = localStorage.getItem('sebastian_g_admin_pin');
-        if (ua.includes('SebastianGNativeAndroid') || savedPin === '0493') {
-          return true;
-        }
-      }
-      return false;
-    } catch (e) {
-      return false;
-    }
-  });
+  // SEGURIDAD ESTRICTA: El panel SIEMPRE inicia 100% bloqueado.
+  // Nadie puede entrar sin ingresar la contraseña / PIN correcta (0493).
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [authError, setAuthError] = useState('');
 
@@ -572,6 +561,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setLoadingData(false);
     }
   };
+
+  // Limpieza estricta de seguridad: nunca dejar credenciales persistidas que puedan abrir el panel automáticamente
+  useEffect(() => {
+    try {
+      localStorage.removeItem('sebastian_g_admin_pin');
+      sessionStorage.removeItem('sebastian_g_admin_session_token');
+    } catch (e) {}
+  }, []);
 
   // Monitoreo inteligente para avisar instantáneamente sobre reservas y pagos sin saturar el servidor
   useEffect(() => {

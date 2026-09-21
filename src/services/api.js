@@ -813,7 +813,6 @@ export async function verifyAdminPin(pin) {
     });
     if (res.ok) {
       const data = await res.json();
-      localStorage.setItem(LOCAL_PIN_KEY, cleanPin);
       return data;
     }
   } catch (err) {
@@ -825,7 +824,6 @@ export async function verifyAdminPin(pin) {
   }
 
   if (cleanPin === DEFAULT_SETTINGS.adminPin) {
-    localStorage.setItem(LOCAL_PIN_KEY, cleanPin);
     return { success: true, token: 'admin-authorized-token' };
   }
   throw new Error('PIN incorrecto.');

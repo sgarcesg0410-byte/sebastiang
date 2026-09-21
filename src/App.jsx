@@ -17,8 +17,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-      if (urlParams.get('mode') === 'admin' || (isStandalone && !window.location.pathname.startsWith('/galeria/'))) {
+      if (urlParams.get('mode') === 'admin' || window.location.pathname === '/admin') {
         return 'admin';
       }
     }
