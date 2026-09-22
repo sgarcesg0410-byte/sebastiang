@@ -2770,51 +2770,67 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </div>
               </div>
               
-              <div className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800 text-xs font-mono break-all text-amber-300 flex items-center justify-between gap-2">
-                <span>{window.location.origin}/galeria/{createdSessionResult.session.token}</span>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(`${window.location.origin}/galeria/${createdSessionResult.session.token}`)}
-                  className="p-1.5 bg-stone-800 hover:bg-stone-700 text-white rounded-lg shrink-0"
-                  title="Copiar"
-                >
-                  <Copy className="w-4 h-4" />
-                </button>
-              </div>
+              {(() => {
+                const sessionBaseUrl = (typeof window !== 'undefined' && window.location.origin && window.location.origin.startsWith('http'))
+                  ? window.location.origin
+                  : 'https://sebastiang.vercel.app';
+                const galleryFullUrl = `${sessionBaseUrl}/galeria/${createdSessionResult.session.token}`;
+                let clientPhoneDigits = (createdSessionResult.session.clientWhatsApp || '').replace(/\D/g, '');
+                if (clientPhoneDigits.length === 10 && !clientPhoneDigits.startsWith('57')) {
+                  clientPhoneDigits = '57' + clientPhoneDigits;
+                }
 
-              <div className="flex flex-col sm:flex-row gap-3 pt-1">
-                <a
-                  href={`https://wa.me/${createdSessionResult.session.clientWhatsApp.replace(/\D/g, '')}?text=${encodeURIComponent(
-                    `📸 *¡Hola ${createdSessionResult.session.clientName}! Ya están listas las fotos de tu sesión para que elijas tus favoritas.*\n\n` +
-                    `👉 Entra a tu galería privada protegida aquí:\n${window.location.origin}/galeria/${createdSessionResult.session.token}\n\n` +
-                    `⏰ *Nota:* Tienes exactamente *3 días* para hacer tu selección antes de que el enlace expire.`
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-600/30"
-                >
-                  <Share2 className="w-4 h-4" />
-                  <span>📲 Enviar Enlace por WhatsApp al Cliente</span>
-                </a>
+                return (
+                  <>
+                    <div className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800 text-xs font-mono break-all text-amber-300 flex items-center justify-between gap-2">
+                      <span className="select-all">{galleryFullUrl}</span>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(galleryFullUrl)}
+                        className="p-1.5 bg-stone-800 hover:bg-stone-700 text-white rounded-lg shrink-0 active:scale-95"
+                        title="Copiar"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(`${window.location.origin}/galeria/${createdSessionResult.session.token}`)}
-                  className="px-4 py-3.5 bg-stone-900 border border-stone-700 hover:bg-stone-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"
-                >
-                  <Copy className="w-4 h-4" />
-                  <span>{copiedLink ? '¡Copiado!' : 'Copiar'}</span>
-                </button>
+                    <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                      <a
+                        href={`https://wa.me/${clientPhoneDigits}?text=${encodeURIComponent(
+                          `📸 *¡Hola ${createdSessionResult.session.clientName}! Ya están listas las fotografías de tu sesión con Sebastian G para que elijas tus favoritas.*\n\n` +
+                          `👉 *Ingresa a tu galería privada protegida aquí:*\n${galleryFullUrl}\n\n` +
+                          `⏰ *Importante:* Tienes exactamente *3 días* para hacer tu selección antes de que el enlace expire automáticamente.\n\n` +
+                          `🔒 *Nota de Seguridad:* Esta galería cuenta con protección digital anti-captura y marca de agua oficial. ¡Quedo atento a tus elecciones!`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-600/30 active:scale-98 transition-all"
+                      >
+                        <Share2 className="w-4 h-4" />
+                        <span>📲 Enviar Enlace por WhatsApp al Cliente</span>
+                      </a>
 
-                <button
-                  type="button"
-                  onClick={() => onOpenGalleryToken(createdSessionResult.session.token)}
-                  className="px-4 py-3.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"
-                >
-                  <Eye className="w-4 h-4" />
-                  <span>Ver como Cliente</span>
-                </button>
-              </div>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(galleryFullUrl)}
+                        className="px-4 py-3.5 bg-stone-900 border border-stone-700 hover:bg-stone-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <Copy className="w-4 h-4" />
+                        <span>{copiedLink ? '¡Copiado!' : 'Copiar'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => onOpenGalleryToken(createdSessionResult.session.token)}
+                        className="px-4 py-3.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/20"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>Ver como Cliente</span>
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 

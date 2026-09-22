@@ -225,8 +225,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const printedPrice = galleryData?.watermarkSettings?.printedPhotoPrice || 7000;
   const extraPhotosTotal = extraPhotos * extraPhotoPrice;
   const printedPhotosTotal = printedPhotosCount * printedPrice;
-  const totalAmount = sessionBasePrice + extraPhotosTotal + printedPhotosTotal;
   const formatPrice = (val) => Number(val).toLocaleString('es-CO');
+  const watermarkText = galleryData?.watermarkSettings?.watermarkText || 'SEBASTIAN G';
+  const watermarkSubtext = galleryData?.watermarkSettings?.watermarkSubtext || 'MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA';
 
   // Enviar selección final y pago directo
   const handleConfirmSubmit = async () => {
@@ -344,7 +345,6 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   }
 
   const isLocked = galleryData.isExpired || galleryData.isSubmitted || Boolean(submissionResult);
-  const watermarkSubtext = galleryData.watermarkSettings?.watermarkSubtext || "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA";
 
   return (
     <>
@@ -758,27 +758,30 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     alt={photo.title}
                     objectFit="cover"
                     watermark={true}
-                    watermarkText="SEBASTIAN G • PROTEGIDO"
+                    watermarkText={`${watermarkText} • MUESTRA`}
                   />
 
                   {/* MALLA DE MARCA DE AGUA REPETIDA EN TODA LA FOTO */}
-                  <div className="absolute inset-0 z-15 pointer-events-none overflow-hidden opacity-30 select-none flex flex-wrap gap-6 items-center justify-around -rotate-12 scale-125">
-                    {Array.from({ length: 15 }).map((_, i) => (
-                      <span key={i} className="text-[10px] font-black tracking-wider text-white/50 uppercase whitespace-nowrap drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]">
-                        SEBASTIAN G • PROHIBIDA SU DESCARGA
+                  <div className="absolute inset-0 z-15 pointer-events-none overflow-hidden opacity-35 select-none flex flex-wrap gap-5 items-center justify-around -rotate-12 scale-125">
+                    {Array.from({ length: 20 }).map((_, i) => (
+                      <span key={i} className="text-[10px] font-black tracking-wider text-white/60 uppercase whitespace-nowrap drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
+                        {watermarkText} • PROHIBIDA SU DESCARGA
                       </span>
                     ))}
                   </div>
 
                   {/* MARCA DE AGUA GIGANTE CENTRAL CON EL LOGOTIPO OFICIAL DE SEBASTIAN G */}
-                  <div className="watermark-overlay z-20">
+                  <div className="watermark-overlay z-20 pointer-events-none">
                     <div className="watermark-content animate-watermark flex flex-col items-center justify-center text-center">
                       <img
                         src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
                         alt="Sebastian G"
-                        className="h-14 w-14 sm:h-20 sm:w-20 rounded-2xl object-cover shadow-2xl border border-white/30 drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)] opacity-95 mb-2"
+                        className="h-14 w-14 sm:h-20 sm:w-20 rounded-2xl object-cover shadow-2xl border border-white/30 drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)] opacity-95 mb-1.5"
                       />
-                      <p className="text-[10px] sm:text-[11px] font-black tracking-widest text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] uppercase">
+                      <span className="text-xs sm:text-sm font-black tracking-widest text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] uppercase block">
+                        {watermarkText}
+                      </span>
+                      <p className="text-[10px] sm:text-[11px] font-black tracking-widest text-white/90 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] uppercase mt-0.5">
                         {watermarkSubtext}
                       </p>
                     </div>

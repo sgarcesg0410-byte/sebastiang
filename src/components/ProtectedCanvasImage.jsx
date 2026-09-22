@@ -106,15 +106,30 @@ export default function ProtectedCanvasImage({
 
     // Marca de agua digital en pixeles (imposible de retirar con CSS o DevTools)
     if (watermark) {
+      // 1. Marca diagonal central en los píxeles del canvas
       ctx.save();
-      const fontSize = Math.max(12, Math.floor(targetWidth * 0.025));
+      ctx.translate(targetWidth / 2, targetHeight / 2);
+      ctx.rotate(-Math.PI / 6);
+      const centerFontSize = Math.max(16, Math.floor(targetWidth * 0.045));
+      ctx.font = `900 ${centerFontSize}px sans-serif`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+      ctx.shadowBlur = 6;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(watermarkText || 'SEBASTIAN G • PROHIBIDA SU DESCARGA', 0, 0);
+      ctx.restore();
+
+      // 2. Marca en la esquina inferior derecha
+      ctx.save();
+      const fontSize = Math.max(11, Math.floor(targetWidth * 0.025));
       ctx.font = `bold ${fontSize}px sans-serif`;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
       ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
       ctx.shadowBlur = 4;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(watermarkText, targetWidth - 16, targetHeight - 14);
+      ctx.fillText(watermarkText || 'SEBASTIAN G', targetWidth - 16, targetHeight - 14);
       ctx.restore();
     }
   }, [objectFit, watermark, watermarkText]);
