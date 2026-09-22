@@ -2993,10 +2993,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
               {!useUrlMode ? (
                 <div className="space-y-4">
-                  <label
-                    htmlFor="session-photo-file-input"
-                    className="cursor-pointer border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-stone-950/80 hover:bg-stone-950 rounded-2xl p-6 sm:p-8 text-center transition-all group block"
+                  <div
+                    className="relative cursor-pointer border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-stone-950/80 hover:bg-stone-950 rounded-2xl p-6 sm:p-8 text-center transition-all group overflow-hidden"
                   >
+                    {/* Input nativo que cubre el 100% del recuadro para que cualquier toque en la pantalla lo abra */}
                     <input
                       id="session-photo-file-input"
                       ref={fileInputRef}
@@ -3004,25 +3004,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       multiple
                       accept="image/*"
                       onChange={handleFilesChosen}
-                      className="sr-only"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
                     />
 
-                    <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto mb-3 group-hover:scale-110 transition-transform">
+                    <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto mb-3 group-hover:scale-110 transition-transform pointer-events-none">
                       <Upload className="w-8 h-8" />
                     </div>
 
-                    <h5 className="text-base font-bold text-white mb-1">
+                    <h5 className="text-base font-bold text-white mb-1 pointer-events-none">
                       Toca aquí para seleccionar las fotos desde tu Celular o PC
                     </h5>
-                    <p className="text-xs text-stone-400 max-w-md mx-auto">
-                      Puedes seleccionar varias fotos a la vez de tu galería. Se optimizan automáticamente con alta nitidez y marca de agua.
+                    <p className="text-xs text-stone-400 max-w-md mx-auto pointer-events-none">
+                      Toca en cualquier parte de este recuadro para abrir la galería de tu celular. Puedes seleccionar varias fotos a la vez.
                     </p>
 
                     <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 text-xs font-bold px-5 py-2.5 rounded-xl shadow-md pointer-events-none">
                       <FileImage className="w-4 h-4" />
                       <span>Abrir Galería de Fotos</span>
                     </div>
-                  </label>
+                  </div>
 
                   {isProcessingPhotos && (
                     <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-3">
