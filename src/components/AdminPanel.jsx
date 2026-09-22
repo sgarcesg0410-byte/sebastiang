@@ -95,43 +95,111 @@ function sendBrowserNotification(title, body) {
   } catch (e) {}
 }
 
-// Función para procesar fotos conservando la fidelidad de revelado de Adobe Lightroom (Ultra HD 2.4K, 92% calidad)
-function compressImageFile(file, maxWidth = 2400, quality = 0.92) {
+// Función para procesar y optimizar fotos de manera ultraligera y segura (ideal para celulares, APK y web)
+async function compressImageFile(file, maxWidth = 1280, quality = 0.78) {
+  // 1. Intentar con createImageBitmap (Nativo de Android/Chrome: redimensiona en hardware sin saturar RAM)
+  if (typeof window !== 'undefined' && 'createImageBitmap' in window) {
+    try {
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file, {
+          resizeWidth: maxWidth,
+          resizeQuality: 'medium',
+          imageOrientation: 'from-image'
+        });
+      } catch (e) {
+        bitmap = await createImageBitmap(file);
+      }
+
+      const canvas = document.createElement('canvas');
+      let { width, height } = bitmap;
+      if (width > maxWidth || height > maxWidth) {
+        if (width > height) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxWidth) / height);
+          height = maxWidth;
+        }
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'medium';
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        if (bitmap.close) bitmap.close();
+        return canvas.toDataURL('image/jpeg', quality);
+      }
+    } catch (errBitmap) {
+      console.warn('createImageBitmap no disponible o falló:', errBitmap);
+    }
+  }
+
+  // 2. Fallback usando URL.createObjectURL (mucho más eficiente que FileReader en móviles)
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    let blobUrl = null;
+    try {
+      blobUrl = URL.createObjectURL(file);
+    } catch (e) {
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        processImg(re.target.result, null);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const processImg = (src, urlToRevoke) => {
       const img = new Image();
       img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-
-        if (width > height) {
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxWidth) {
-            width = Math.round((width * maxWidth) / height);
-            height = maxWidth;
-          }
+        if (urlToRevoke) {
+          try { URL.revokeObjectURL(urlToRevoke); } catch (e) {}
         }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, width, height);
-
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        resolve(dataUrl);
+        try {
+          const canvas = document.createElement('canvas');
+          let { width, height } = img;
+          if (width > maxWidth || height > maxWidth) {
+            if (width > height) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxWidth) / height);
+              height = maxWidth;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'medium';
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch (e) {
+          if (src && src.startsWith('data:')) resolve(src);
+          else reject(e);
+        }
       };
-      img.onerror = reject;
-      img.src = e.target.result;
+      img.onerror = (err) => {
+        if (urlToRevoke) {
+          try { URL.revokeObjectURL(urlToRevoke); } catch (e) {}
+        }
+        if (urlToRevoke) {
+          const reader = new FileReader();
+          reader.onload = (re) => resolve(re.target.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        } else {
+          reject(err);
+        }
+      };
+      img.src = src;
     };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+
+    processImg(blobUrl, blobUrl);
   });
 }
 
@@ -783,37 +851,46 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Manejador de subida de fotos para clientes
+  // Manejador de subida de fotos para clientes (optimizado para Android, móviles y PC)
   const handleFilesChosen = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+    const rawFiles = e.target.files;
+    if (!rawFiles || rawFiles.length === 0) return;
+    const files = Array.from(rawFiles);
 
     setIsProcessingPhotos(true);
     setProcessProgress({ current: 0, total: files.length });
 
     const newItems = [];
     const startIndex = uploadedPhotos.length;
+    let errorCount = 0;
 
     for (let i = 0; i < files.length; i++) {
       setProcessProgress({ current: i + 1, total: files.length });
       const file = files[i];
       try {
-        // Ultra HD Lightroom Proofing (2400px, 92% calidad)
-        const compressedBase64 = await compressImageFile(file, 2400, 0.92);
+        // Redimensionamiento a 1280px con 78% de calidad: nitidez HD, peso ligero (~90KB) y 0 fallos de memoria
+        const compressedBase64 = await compressImageFile(file, 1280, 0.78);
         newItems.push({
-          id: `upl-${Date.now()}-${startIndex + i + 1}`,
+          id: `upl-${Date.now()}-${startIndex + i + 1}-${Math.random().toString(36).substring(2, 6)}`,
           title: `Foto #${startIndex + i + 1}`,
           url: compressedBase64,
           fileName: file.name
         });
       } catch (err) {
         console.error('Error al procesar archivo:', file.name, err);
+        errorCount++;
       }
     }
 
-    setUploadedPhotos(prev => [...prev, ...newItems]);
+    if (newItems.length > 0) {
+      setUploadedPhotos(prev => [...prev, ...newItems]);
+    }
     setIsProcessingPhotos(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+
+    if (errorCount > 0 && newItems.length === 0) {
+      alert('No se pudieron procesar las fotos seleccionadas. Por favor verifica que sean imágenes JPG, PNG o WEBP.');
+    }
   };
 
   const handleRemovePhoto = (photoId) => {
@@ -2916,17 +2993,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
               {!useUrlMode ? (
                 <div className="space-y-4">
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="cursor-pointer border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-stone-950/80 hover:bg-stone-950 rounded-2xl p-6 sm:p-8 text-center transition-all group"
+                  <label
+                    htmlFor="session-photo-file-input"
+                    className="cursor-pointer border-2 border-dashed border-amber-500/40 hover:border-amber-400 bg-stone-950/80 hover:bg-stone-950 rounded-2xl p-6 sm:p-8 text-center transition-all group block"
                   >
                     <input
+                      id="session-photo-file-input"
                       ref={fileInputRef}
                       type="file"
                       multiple
                       accept="image/*"
                       onChange={handleFilesChosen}
-                      className="hidden"
+                      className="sr-only"
                     />
 
                     <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto mb-3 group-hover:scale-110 transition-transform">
@@ -2937,14 +3015,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       Toca aquí para seleccionar las fotos desde tu Celular o PC
                     </h5>
                     <p className="text-xs text-stone-400 max-w-md mx-auto">
-                      Puedes seleccionar varias fotos a la vez. No te ocupan espacio adicional en tu equipo y se procesan con alta fidelidad para el cliente.
+                      Puedes seleccionar varias fotos a la vez de tu galería. Se optimizan automáticamente con alta nitidez y marca de agua.
                     </p>
 
-                    <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 text-xs font-bold px-5 py-2.5 rounded-xl shadow-md">
+                    <div className="mt-4 inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 text-xs font-bold px-5 py-2.5 rounded-xl shadow-md pointer-events-none">
                       <FileImage className="w-4 h-4" />
                       <span>Abrir Galería de Fotos</span>
                     </div>
-                  </div>
+                  </label>
 
                   {isProcessingPhotos && (
                     <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-3">

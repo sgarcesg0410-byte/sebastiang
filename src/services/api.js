@@ -211,7 +211,14 @@ function saveLocalSession(session) {
   try {
     const sessions = getLocalSessions().filter(s => s.id !== session.id && s.token !== session.token);
     sessions.unshift(session);
-    localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
+    try {
+      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
+    } catch (quotaErr) {
+      // Si el almacenamiento local está cerca del límite de 5MB, conservar solo las 3 sesiones más recientes
+      console.warn('Límite de almacenamiento alcanzado, recortando sesiones antiguas:', quotaErr);
+      const trimmed = sessions.slice(0, 3);
+      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(trimmed));
+    }
   } catch (e) {
     console.warn('No se pudo guardar en localStorage:', e);
   }

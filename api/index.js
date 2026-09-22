@@ -636,6 +636,15 @@ app.post('/api/admin/sessions', (req, res) => {
 
   runtimeDB.sessions.unshift(newSession);
 
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+      current.sessions = runtimeDB.sessions;
+      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
+    }
+  } catch (e) {}
+
   res.status(201).json({
     success: true,
     session: newSession,
