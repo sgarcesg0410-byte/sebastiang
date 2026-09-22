@@ -17,15 +17,28 @@ import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIc
 export default function App() {
   const [currentView, setCurrentView] = useState(() => {
     if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('mode') === 'admin' || window.location.pathname === '/admin') {
+      if (path.startsWith('/galeria/')) {
+        return 'gallery';
+      }
+      if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/') {
         return 'admin';
       }
     }
     return 'home';
   }); // 'home' | 'packages' | 'gallery' | 'admin'
 
-  const [activeGalleryToken, setActiveGalleryToken] = useState('demo-cliente-2026');
+  const [activeGalleryToken, setActiveGalleryToken] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      if (path.startsWith('/galeria/')) {
+        const tokenFromUrl = path.replace('/galeria/', '').trim();
+        if (tokenFromUrl) return tokenFromUrl;
+      }
+    }
+    return 'demo-cliente-2026';
+  });
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
 

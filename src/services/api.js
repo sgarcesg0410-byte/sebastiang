@@ -193,7 +193,7 @@ function getLocalSessions() {
     const raw = localStorage.getItem(LOCAL_SESSIONS_KEY);
     const list = raw ? JSON.parse(raw) : [];
     const filtered = (Array.isArray(list) ? list : []).filter(
-      s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
+      s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
     );
     if (filtered.length !== list.length) {
       localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(filtered));
@@ -205,7 +205,7 @@ function getLocalSessions() {
 }
 
 function saveLocalSession(session) {
-  if (!session || session.clientName === 'Camila Rodríguez' || session.token === 'demo-cliente-2026' || session.id === 'sess-demo') {
+  if (!session || session.token === 'demo-cliente-2026' || session.id === 'sess-demo') {
     return;
   }
   try {
@@ -508,7 +508,7 @@ export async function getCatalog() {
     );
     const { data, error } = await Promise.race([supabasePromise, timeoutPromise]);
     if (!error && Array.isArray(data)) {
-      supabaseCatalog = data;
+      supabaseCatalog = data.filter(item => item && item.category !== 'session_data');
     }
   } catch (err) {
     console.warn('Aviso: Supabase catálogo no respondió a tiempo o error, usando caché y servidor:', err);
@@ -701,11 +701,12 @@ export async function createBooking(data) {
 }
 
 export async function getGalleryByToken(token) {
+  // 1. Consultar servidor Vercel API
   try {
     const res = await fetch(`${API_BASE}/gallery/${token}`);
     if (res.ok) {
       const data = await res.json();
-      if (data && data.clientName !== 'Camila Rodríguez' && token !== 'demo-cliente-2026') {
+      if (data && token !== 'demo-cliente-2026' && data.id !== 'sess-demo') {
         saveLocalSession(data);
       }
       return {
@@ -714,10 +715,10 @@ export async function getGalleryByToken(token) {
       };
     }
   } catch (err) {
-    console.warn('Error conectando con servidor para galería, consultando local:', err);
+    console.warn('Error conectando con servidor para galería, consultando nube y local:', err);
   }
 
-  // Si es la demostración pública para visitantes, proveer datos limpios
+  // 2. Si es la demostración pública para visitantes, proveer datos limpios
   if (token === 'demo-cliente-2026') {
     return {
       id: "sess-demo",
@@ -750,7 +751,40 @@ export async function getGalleryByToken(token) {
     };
   }
 
-  // Buscar en fallback local
+  // 3. Consultar en la nube (Supabase) para que el cliente la abra desde cualquier celular o red
+  try {
+    const { data: supaData, error: supaErr } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('id', `sess-${token}`)
+      .single();
+    if (!supaErr && supaData && supaData.url) {
+      try {
+        const parsed = JSON.parse(supaData.url);
+        if (parsed && parsed.token === token) {
+          saveLocalSession(parsed);
+          const now = Date.now();
+          const expiresTime = new Date(parsed.expiresAt).getTime();
+          return {
+            ...parsed,
+            isExpired: now > expiresTime,
+            isSubmitted: parsed.status === 'submitted' || parsed.status === 'delivered',
+            isDelivered: parsed.status === 'delivered',
+            timeRemainingMs: Math.max(0, expiresTime - now),
+            watermarkSettings: {
+              watermarkText: DEFAULT_SETTINGS.watermarkText,
+              watermarkSubtext: DEFAULT_SETTINGS.watermarkSubtext,
+              watermarkLogoUrl: DEFAULT_SETTINGS.watermarkLogoUrl
+            }
+          };
+        }
+      } catch (parseErr) {}
+    }
+  } catch (errSupa) {
+    console.warn('Error al consultar sesión en Supabase:', errSupa);
+  }
+
+  // 4. Buscar en fallback local
   const local = getLocalSessions().find(s => s.token === token);
   if (local) {
     const now = Date.now();
@@ -817,6 +851,27 @@ export async function submitGallerySelection(token, selections) {
     selectedPhotos = session.photos.filter(p => p.selected);
   } else {
     selectedPhotos = selections.filter(s => s.selected);
+  }
+
+  // Actualizar también en Supabase Cloud para que el fotógrafo reciba la selección en tiempo real
+  try {
+    const { data: supaData } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('id', `sess-${token}`)
+      .single();
+    if (supaData && supaData.url) {
+      const parsed = JSON.parse(supaData.url);
+      parsed.status = 'submitted';
+      parsed.submittedAt = new Date().toISOString();
+      parsed.photos = (parsed.photos || []).map(p => {
+        const u = selMap.get(p.id);
+        return u ? { ...p, selected: u.selected, clientComment: u.comment } : p;
+      });
+      await supabase.from('catalog').update({ url: JSON.stringify(parsed) }).eq('id', `sess-${token}`);
+    }
+  } catch (errSupaSync) {
+    console.warn('Error al actualizar selección en Supabase:', errSupaSync);
   }
 
   // Generar texto resumen impecable para WhatsApp
@@ -1209,10 +1264,32 @@ export async function getAdminSessions() {
     console.warn('Consultando sesiones locales:', err);
   }
 
+  let cloudSessions = [];
+  try {
+    const { data: supaData } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('category', 'session_data')
+      .order('created_at', { ascending: false });
+    if (Array.isArray(supaData)) {
+      cloudSessions = supaData
+        .map(item => {
+          try {
+            return JSON.parse(item.url);
+          } catch (e) {
+            return null;
+          }
+        })
+        .filter(Boolean);
+    }
+  } catch (errSupa) {
+    console.warn('Error obteniendo sesiones de Supabase:', errSupa);
+  }
+
   const localSessions = getLocalSessions();
   const map = new Map();
-  [...serverSessions, ...localSessions].forEach(s => {
-    if (s && s.token && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026') {
+  [...serverSessions, ...cloudSessions, ...localSessions].forEach(s => {
+    if (s && s.token && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026') {
       const now = Date.now();
       const expiresTime = new Date(s.expiresAt).getTime();
       map.set(s.token, {
@@ -1236,6 +1313,10 @@ export async function deleteAdminSession(id) {
     console.warn('Error al eliminar sesión en servidor:', err);
   }
 
+  try {
+    await supabase.from('catalog').delete().eq('id', `sess-${id}`);
+  } catch (e) {}
+
   const sessions = getLocalSessions().filter(s => s.id !== id && s.token !== id);
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
   return { success: true };
@@ -1253,7 +1334,6 @@ export async function createAdminSession(data) {
       serverResult = await res.json();
       if (serverResult?.session) {
         saveLocalSession(serverResult.session);
-        return serverResult;
       }
     }
   } catch (err) {
@@ -1266,7 +1346,7 @@ export async function createAdminSession(data) {
   const cleanName = (data.clientName || 'cliente').toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
   const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
 
-  const newSession = {
+  const newSession = serverResult?.session || {
     id: `sess-${Date.now()}`,
     token,
     clientName: (data.clientName || '').trim(),
@@ -1288,10 +1368,23 @@ export async function createAdminSession(data) {
 
   saveLocalSession(newSession);
 
+  // Sincronizar en la nube (Supabase) para que el cliente la abra desde cualquier dispositivo en el mundo
+  try {
+    await supabase.from('catalog').upsert({
+      id: `sess-${newSession.token}`,
+      title: newSession.clientName || 'Cliente',
+      category: 'session_data',
+      location: newSession.clientWhatsApp || '',
+      url: JSON.stringify(newSession)
+    });
+  } catch (errSupa) {
+    console.warn('Error al sincronizar sesión en Supabase:', errSupa);
+  }
+
   return {
     success: true,
     session: newSession,
-    link: `/galeria/${token}`
+    link: `/galeria/${newSession.token}`
   };
 }
 

@@ -566,7 +566,7 @@ app.patch('/api/admin/payments/:id', (req, res) => {
 
 app.get('/api/admin/sessions', (req, res) => {
   const now = Date.now();
-  const sessions = (runtimeDB.sessions || []).filter(s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026');
+  const sessions = (runtimeDB.sessions || []).filter(s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026');
   const enriched = sessions.map(s => {
     const expiresTime = new Date(s.expiresAt).getTime();
     const isExpired = now > expiresTime;

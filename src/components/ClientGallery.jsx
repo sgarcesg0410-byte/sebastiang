@@ -225,7 +225,8 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const printedPrice = galleryData?.watermarkSettings?.printedPhotoPrice || 7000;
   const extraPhotosTotal = extraPhotos * extraPhotoPrice;
   const printedPhotosTotal = printedPhotosCount * printedPrice;
-  const formatPrice = (val) => Number(val).toLocaleString('es-CO');
+  const totalAmount = sessionBasePrice + extraPhotosTotal + printedPhotosTotal;
+  const formatPrice = (val) => Number(val || 0).toLocaleString('es-CO');
   const watermarkText = galleryData?.watermarkSettings?.watermarkText || 'SEBASTIAN G';
   const watermarkSubtext = galleryData?.watermarkSettings?.watermarkSubtext || 'MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA';
 

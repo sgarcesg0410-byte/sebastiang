@@ -561,7 +561,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       const rawSessions = sRes.status === 'fulfilled' && Array.isArray(sRes.value) ? sRes.value : [];
       const cleanSessions = rawSessions.filter(
-        s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
+        s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
       );
       setSessions(cleanSessions);
 
@@ -1446,7 +1446,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   }
 
   const safeSessions = (sessions || []).filter(
-    s => s && s.clientName !== 'Camila Rodríguez' && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
+    s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
   );
 
   return (
