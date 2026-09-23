@@ -237,29 +237,5 @@
     }
   ],
   "payments": [],
-  "sessions": [
-    {
-      "id": "sess-camila-zbkbpo",
-      "token": "camila-zbkbpo",
-      "clientName": "Camila Rodríguez",
-      "clientWhatsApp": "+57 300 000 0000",
-      "packageId": "pkg-8fotos",
-      "packageName": "8 Fotos Digitales (+ 2 Fotos Gratis)",
-      "packagePrice": 75000,
-      "baseIncludedPhotos": 10,
-      "extraPhotoPrice": 8000,
-      "printedPhotoPrice": 7000,
-      "photos": [],
-      "createdAt": "2026-09-21T20:00:00.000Z",
-      "expiresAt": "2026-09-30T20:00:00.000Z",
-      "status": "delivered",
-      "finalDeliveryUrl": "https://we.tl/t-tnGifpXedaA0n70M",
-      "deliveryService": "wetransfer",
-      "deliveryNotes": "Todas tus fotografías seleccionadas han sido editadas y preparadas con el mayor cuidado en máxima resolución Full HD original.",
-      "deliveredAt": "2026-09-22T22:45:00.000Z",
-      "selectedPhotos": [],
-      "printedPhotos": [],
-      "customNotes": ""
-    }
-  ]
+  "sessions": []
 }

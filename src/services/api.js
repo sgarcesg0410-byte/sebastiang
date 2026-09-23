@@ -1304,21 +1304,98 @@ export async function getAdminSessions() {
   return Array.from(map.values());
 }
 
-export async function deleteAdminSession(id) {
+export async function deleteAdminSession(id, token) {
+  let sId = typeof id === 'object' && id !== null ? id.id : id;
+  let sToken = typeof id === 'object' && id !== null ? id.token : token;
+  if (!sToken && typeof id === 'string' && !id.startsWith('sess-')) {
+    sToken = id;
+  }
+
+  const cleanId = (sId || '').trim();
+  const cleanToken = (sToken || '').trim();
+
+  // 1. Servidor Vercel / Express
   try {
-    await fetch(`${API_BASE}/admin/sessions/${id}`, {
-      method: 'DELETE'
-    });
+    if (cleanId) {
+      await fetch(`${API_BASE}/admin/sessions/${encodeURIComponent(cleanId)}`, { method: 'DELETE' });
+    }
+    if (cleanToken && cleanToken !== cleanId) {
+      await fetch(`${API_BASE}/admin/sessions/${encodeURIComponent(cleanToken)}`, { method: 'DELETE' });
+    }
   } catch (err) {
     console.warn('Error al eliminar sesión en servidor:', err);
   }
 
+  // 2. Supabase (Eliminación definitiva en la nube)
   try {
-    await supabase.from('catalog').delete().eq('id', `sess-${id}`);
-  } catch (e) {}
+    const candidateIds = new Set();
+    if (cleanId) {
+      candidateIds.add(cleanId);
+      candidateIds.add(`sess-${cleanId}`);
+      candidateIds.add(cleanId.replace(/^sess-/, ''));
+      candidateIds.add(`sess-${cleanId.replace(/^sess-/, '')}`);
+    }
+    if (cleanToken) {
+      candidateIds.add(cleanToken);
+      candidateIds.add(`sess-${cleanToken}`);
+      candidateIds.add(cleanToken.replace(/^sess-/, ''));
+      candidateIds.add(`sess-${cleanToken.replace(/^sess-/, '')}`);
+    }
 
-  const sessions = getLocalSessions().filter(s => s.id !== id && s.token !== id);
+    const idsArray = Array.from(candidateIds).filter(Boolean);
+    if (idsArray.length > 0) {
+      await supabase
+        .from('catalog')
+        .delete()
+        .eq('category', 'session_data')
+        .in('id', idsArray);
+    }
+
+    // Escanear por coincidencia interna en JSON para no dejar nada huérfano
+    const { data: supaRows } = await supabase
+      .from('catalog')
+      .select('id, url')
+      .eq('category', 'session_data');
+
+    if (Array.isArray(supaRows)) {
+      const rowIdsToDelete = [];
+      for (const row of supaRows) {
+        try {
+          const parsed = JSON.parse(row.url);
+          if (
+            (cleanId && (parsed.id === cleanId || parsed.token === cleanId)) ||
+            (cleanToken && (parsed.token === cleanToken || parsed.id === cleanToken))
+          ) {
+            rowIdsToDelete.push(row.id);
+          }
+        } catch (e) {
+          if (
+            (cleanId && row.url.includes(cleanId)) ||
+            (cleanToken && row.url.includes(cleanToken))
+          ) {
+            rowIdsToDelete.push(row.id);
+          }
+        }
+      }
+      if (rowIdsToDelete.length > 0) {
+        await supabase
+          .from('catalog')
+          .delete()
+          .in('id', rowIdsToDelete);
+      }
+    }
+  } catch (e) {
+    console.warn('Error al eliminar en Supabase:', e);
+  }
+
+  // 3. LocalStorage
+  const sessions = getLocalSessions().filter(s => 
+    s.id !== cleanId && 
+    s.token !== cleanId && 
+    (!cleanToken || (s.id !== cleanToken && s.token !== cleanToken))
+  );
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
+
   return { success: true };
 }
 

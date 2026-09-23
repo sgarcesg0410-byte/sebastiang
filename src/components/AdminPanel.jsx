@@ -1160,13 +1160,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const handleDeleteSession = async (sessionId, clientName) => {
-    if (!confirm(`¿Estás seguro de eliminar permanentemente la galería de "${clientName || 'este cliente'}"? Esta acción no se puede deshacer.`)) return;
+  const handleDeleteSession = async (sessionOrId, clientName, token) => {
+    const sessionId = typeof sessionOrId === 'object' && sessionOrId !== null ? sessionOrId.id : sessionOrId;
+    const sessionToken = typeof sessionOrId === 'object' && sessionOrId !== null ? sessionOrId.token : token;
+    const name = typeof sessionOrId === 'object' && sessionOrId !== null ? sessionOrId.clientName : clientName;
+
+    if (!confirm(`¿Estás seguro de eliminar permanentemente la galería de "${name || 'este cliente'}"? Esta acción no se puede deshacer.`)) return;
     try {
-      await deleteAdminSession(sessionId);
-      setSessions(prev => prev.filter(s => s.id !== sessionId && s.token !== sessionId));
+      await deleteAdminSession(sessionId, sessionToken);
+      setSessions(prev => prev.filter(s => 
+        s.id !== sessionId && 
+        s.token !== sessionId && 
+        (!sessionToken || (s.id !== sessionToken && s.token !== sessionToken))
+      ));
     } catch (err) {
-      alert('Error al eliminar galería');
+      alert('Error al eliminar galería: ' + (err.message || 'Error desconocido'));
     }
   };
 
@@ -3341,7 +3349,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                         <button
                           type="button"
-                          onClick={() => handleDeleteSession(session.id, session.clientName)}
+                          onClick={() => handleDeleteSession(session, session.clientName, session.token)}
                           className="text-stone-500 hover:text-red-400 flex items-center gap-1 font-semibold transition-colors"
                           title="Eliminar esta galería de cliente"
                         >

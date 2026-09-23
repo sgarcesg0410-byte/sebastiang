@@ -582,7 +582,20 @@ app.get('/api/admin/sessions', (req, res) => {
 
 app.delete('/api/admin/sessions/:id', (req, res) => {
   const { id } = req.params;
-  runtimeDB.sessions = (runtimeDB.sessions || []).filter(s => s.id !== id && s.token !== id);
+  const rawId = (id || '').trim();
+  const cleanId = rawId.replace(/^sess-/, '');
+
+  runtimeDB.sessions = (runtimeDB.sessions || []).filter(s => {
+    if (!s) return false;
+    const match = 
+      s.id === rawId || 
+      s.token === rawId || 
+      s.id === cleanId || 
+      s.token === cleanId || 
+      s.id === `sess-${cleanId}` || 
+      s.token === `sess-${cleanId}`;
+    return !match;
+  });
 
   try {
     const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
