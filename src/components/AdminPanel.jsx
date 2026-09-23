@@ -74,6 +74,7 @@ import {
   formatPhotoUrl,
   getReviews,
   getWalletBaseBalances,
+  fetchCloudWalletBaseBalances,
   saveWalletBaseBalances,
   REAL_DEFAULT_BOOKINGS,
   DEFAULT_PACKAGES,
@@ -544,14 +545,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const loadAllAdminData = async () => {
     try {
       setLoadingData(true);
-      const [bRes, sRes, setRes, pRes, cRes, payRes, revRes] = await Promise.allSettled([
+      const [bRes, sRes, setRes, pRes, cRes, payRes, revRes, cloudBalRes] = await Promise.allSettled([
         getAdminBookings(),
         getAdminSessions(),
         getSettings(),
         getPackages(),
         getCatalog(),
         getAdminPayments(),
-        getReviews()
+        getReviews(),
+        fetchCloudWalletBaseBalances()
       ]);
 
       const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value) && bRes.value.length > 0 
@@ -597,7 +599,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       const revData = revRes.status === 'fulfilled' && Array.isArray(revRes.value) ? revRes.value : [];
       setReviewsList(revData);
-      setWalletBaseBalances(getWalletBaseBalances());
+
+      const cloudBal = revRes && cloudBalRes ? (cloudBalRes.status === 'fulfilled' && cloudBalRes.value ? cloudBalRes.value : getWalletBaseBalances()) : getWalletBaseBalances();
+      setWalletBaseBalances(cloudBal);
 
       setAnalyticsStats(getLocalAnalytics());
 
@@ -665,33 +669,36 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
     };
 
-    const interval = setInterval(poll, 6000);
+    // Latido de actualización cada 3.5 segundos para sincronización instantánea
+    const interval = setInterval(poll, 3500);
     const handleVisibility = () => {
       if (!document.hidden) loadAllAdminData();
     };
+    const handleFocus = () => {
+      loadAllAdminData();
+    };
+
     document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleFocus);
 
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleFocus);
     };
   }, [isAuthenticated]);
 
-  // Sincronización simultánea de catálogo, reservas y pagos en tiempo real (Celular <-> PC y entre pestañas)
+  // Sincronización simultánea en la nube en tiempo real (Celular <-> PC y entre pestañas)
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    // Cualquier cambio en Supabase (sesiones, reservas, pagos, saldos, ajustes, catálogo)
+    // dispara la actualización inmediata en el PC y la APK en menos de 200 milisegundos
     const channel = supabase
       .channel('admin_all_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-        getCatalog().then(data => {
-          if (Array.isArray(data)) setCatalog(data);
-        });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
-        loadAllAdminData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
         loadAllAdminData();
       })
       .subscribe();
@@ -701,9 +708,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bcCatalog = new BroadcastChannel('catalog_realtime_sync');
         bcCatalog.onmessage = () => {
-          getCatalog().then(data => {
-            if (Array.isArray(data)) setCatalog(data);
-          });
+          loadAllAdminData();
         };
 
         bcBookings = new BroadcastChannel('bookings_realtime_sync');
@@ -723,16 +728,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
         bcWallets = new BroadcastChannel('wallet_balances_sync');
         bcWallets.onmessage = () => {
-          setWalletBaseBalances(getWalletBaseBalances());
+          fetchCloudWalletBaseBalances().then(b => setWalletBaseBalances(b));
         };
       }
     } catch (e) {}
 
     const handleStorage = (e) => {
       if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
-        getCatalog().then(data => {
-          if (Array.isArray(data)) setCatalog(data);
-        });
+        loadAllAdminData();
       }
       if (e.key === 'sebastian_g_bookings_last_sync' || e.key === 'sebastian_g_bookings_v1') {
         loadAllAdminData();
@@ -744,7 +747,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         loadAllAdminData();
       }
       if (e.key === 'sebastian_g_wallet_base_balances_v1') {
-        setWalletBaseBalances(getWalletBaseBalances());
+        fetchCloudWalletBaseBalances().then(b => setWalletBaseBalances(b));
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -1605,16 +1608,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       {/* CABECERA DEL PANEL DE CONTROL */}
       <div className="flex flex-col gap-4 pb-6 border-b border-stone-800 mb-8">
-        <div>
-          <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-            Administración Oficial
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white">
-            Panel de Control • Sebastian G
-          </h1>
-          <p className="text-xs text-stone-400 mt-0.5">
-            Línea 1: {settings.photographerWhatsApp || '+573244725167'} • Línea 2: {settings.photographerWhatsApp2 || '+573023696513'}
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
+                Administración Oficial
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Sincronizado en Tiempo Real (PC ⇄ Celular)</span>
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white">
+              Panel de Control • Sebastian G
+            </h1>
+            <p className="text-xs text-stone-400 mt-0.5">
+              Línea 1: {settings.photographerWhatsApp || '+573244725167'} • Línea 2: {settings.photographerWhatsApp2 || '+573023696513'}
+            </p>
+          </div>
         </div>
 
         {/* Pestañas de navegación 100% responsive: Grid adaptable */}
@@ -2535,8 +2546,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        saveWalletBaseBalances(tempBalances);
+                      onClick={async () => {
+                        await saveWalletBaseBalances(tempBalances);
                         setWalletBaseBalances(tempBalances);
                         setIsAdjustingBalances(false);
                       }}

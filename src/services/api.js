@@ -310,7 +310,25 @@ export function getWalletBaseBalances() {
   return { nequi: 0, daviplata: 0, dale: 0 };
 }
 
-export function saveWalletBaseBalances(balances) {
+export async function fetchCloudWalletBaseBalances() {
+  try {
+    const { data } = await supabase
+      .from('catalog')
+      .select('url')
+      .eq('id', 'system_wallet_balances')
+      .maybeSingle();
+    if (data && data.url) {
+      const parsed = JSON.parse(data.url);
+      if (parsed && typeof parsed === 'object') {
+        localStorage.setItem(LOCAL_WALLET_BASE_BALANCES_KEY, JSON.stringify(parsed));
+        return parsed;
+      }
+    }
+  } catch (e) {}
+  return getWalletBaseBalances();
+}
+
+export async function saveWalletBaseBalances(balances) {
   try {
     localStorage.setItem(LOCAL_WALLET_BASE_BALANCES_KEY, JSON.stringify(balances));
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -319,6 +337,19 @@ export function saveWalletBaseBalances(balances) {
       setTimeout(() => bc.close(), 300);
     }
   } catch (e) {}
+
+  // Sincronizar en la nube (Supabase) para que PC y APK se sincronicen en tiempo real
+  try {
+    await supabase.from('catalog').upsert({
+      id: 'system_wallet_balances',
+      title: 'Wallet Balances',
+      category: 'wallet_data',
+      location: 'system',
+      url: JSON.stringify(balances)
+    });
+  } catch (err) {
+    console.warn('Error al sincronizar saldos en Supabase:', err);
+  }
 }
 
 function getLocalPayments() {
@@ -508,7 +539,16 @@ export async function getCatalog() {
     );
     const { data, error } = await Promise.race([supabasePromise, timeoutPromise]);
     if (!error && Array.isArray(data)) {
-      supabaseCatalog = data.filter(item => item && item.category !== 'session_data');
+      supabaseCatalog = data.filter(item => 
+        item && 
+        item.category !== 'session_data' && 
+        !item.category?.endsWith('_data') && 
+        !item.id?.startsWith('system_') && 
+        !item.id?.startsWith('book-') && 
+        !item.id?.startsWith('pay-') && 
+        !item.id?.startsWith('rev-') && 
+        !item.id?.startsWith('sess-')
+      );
     }
   } catch (err) {
     console.warn('Aviso: Supabase catálogo no respondió a tiempo o error, usando caché y servidor:', err);
@@ -670,7 +710,7 @@ export async function createBooking(data) {
   }
 
   // Fallback local garantizado
-  const newBooking = {
+  const newBooking = result?.booking || {
     id: `book-${Date.now()}`,
     ...data,
     totalPrice: data.totalPrice || 75000,
@@ -678,6 +718,17 @@ export async function createBooking(data) {
     status: 'pending'
   };
   saveLocalBooking(newBooking);
+
+  // Sincronización en la nube (Supabase) para avisar al instante al PC y a la APK
+  try {
+    await supabase.from('catalog').upsert({
+      id: `book-${newBooking.id}`,
+      title: newBooking.clientName || 'Reserva',
+      category: 'booking_data',
+      location: newBooking.specificLocation || '',
+      url: JSON.stringify(newBooking)
+    });
+  } catch (e) {}
 
   const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
   const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
@@ -942,24 +993,39 @@ export async function verifyAdminPin(pin) {
 }
 
 export async function getAdminBookings() {
-  let combined = [];
+  let serverBookings = [];
   try {
     const res = await fetch(`${API_BASE}/admin/bookings`);
     if (res.ok) {
-      const data = await res.json();
-      const local = getLocalBookings();
-      const map = new Map();
-      [...data, ...local].forEach(b => {
-        if (b && b.id && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1') {
-          map.set(b.id, b);
-        }
-      });
-      combined = Array.from(map.values());
+      serverBookings = await res.json();
     }
   } catch (err) {
-    console.warn(err);
-    combined = getLocalBookings();
+    console.warn('Consultando reservas del servidor:', err);
   }
+
+  let cloudBookings = [];
+  try {
+    const { data: supaB } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('category', 'booking_data')
+      .order('created_at', { ascending: false });
+    if (Array.isArray(supaB)) {
+      cloudBookings = supaB.map(sb => {
+        try { return JSON.parse(sb.url); } catch(e) { return null; }
+      }).filter(Boolean);
+    }
+  } catch (e) {}
+
+  const localBookings = getLocalBookings();
+  const map = new Map();
+  [...serverBookings, ...cloudBookings, ...localBookings].forEach(b => {
+    if (b && b.id && b.id !== 'book-demo-1') {
+      map.set(b.id, b);
+    }
+  });
+
+  let combined = Array.from(map.values());
 
   if (combined.length === 0) {
     combined = [...REAL_DEFAULT_BOOKINGS];
@@ -994,7 +1060,7 @@ export async function getAdminBookings() {
   }
 
   // Filtrar cualquier rastro de reservas demo
-  return combined.filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
+  return combined.filter(b => b && b.id !== 'book-demo-1');
 }
 
 export async function updateAdminBooking(id, updates) {
@@ -1008,7 +1074,6 @@ export async function updateAdminBooking(id, updates) {
       const data = await res.json();
       if (data && data.booking) {
         saveLocalBooking(data.booking);
-        return data;
       }
     }
   } catch (err) {
@@ -1019,7 +1084,23 @@ export async function updateAdminBooking(id, updates) {
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
   } catch (e) {}
-  return { success: true, booking: list.find(b => b.id === id) };
+
+  const updatedBooking = list.find(b => b.id === id);
+
+  // Sincronizar actualización de reserva en la nube (Supabase)
+  if (updatedBooking) {
+    try {
+      await supabase.from('catalog').upsert({
+        id: `book-${id}`,
+        title: updatedBooking.clientName || 'Reserva',
+        category: 'booking_data',
+        location: updatedBooking.specificLocation || '',
+        url: JSON.stringify(updatedBooking)
+      });
+    } catch (e) {}
+  }
+
+  return { success: true, booking: updatedBooking };
 }
 
 export async function updateBookingStatus(id, status) {
@@ -1033,6 +1114,11 @@ export async function deleteAdminBooking(id) {
     console.warn('Error al eliminar reserva en servidor:', err);
   }
 
+  try {
+    await supabase.from('catalog').delete().eq('id', `book-${id}`);
+    await supabase.from('catalog').delete().eq('id', id);
+  } catch (e) {}
+
   const list = getLocalBookings().filter(b => b.id !== id);
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
@@ -1042,21 +1128,36 @@ export async function deleteAdminBooking(id) {
 
 // --- PAGOS EN TIEMPO REAL (NEQUI, DAVIPLATA, DALE) ---
 export async function getAdminPayments() {
+  let serverPayments = [];
   try {
     const res = await fetch(`${API_BASE}/admin/payments`);
     if (res.ok) {
-      const serverPayments = await res.json();
-      const localPayments = getLocalPayments();
-      const map = new Map();
-      [...serverPayments, ...localPayments].forEach(p => {
-        if (p && p.id) map.set(p.id, p);
-      });
-      return Array.from(map.values());
+      serverPayments = await res.json();
     }
   } catch (err) {
-    console.warn('Consultando pagos locales:', err);
+    console.warn('Consultando pagos del servidor:', err);
   }
-  return getLocalPayments();
+
+  let cloudPayments = [];
+  try {
+    const { data: supaP } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('category', 'payment_data')
+      .order('created_at', { ascending: false });
+    if (Array.isArray(supaP)) {
+      cloudPayments = supaP.map(sp => {
+        try { return JSON.parse(sp.url); } catch(e) { return null; }
+      }).filter(Boolean);
+    }
+  } catch (e) {}
+
+  const localPayments = getLocalPayments();
+  const map = new Map();
+  [...serverPayments, ...cloudPayments, ...localPayments].forEach(p => {
+    if (p && p.id) map.set(p.id, p);
+  });
+  return Array.from(map.values());
 }
 
 export async function createPayment(paymentData) {
@@ -1071,7 +1172,6 @@ export async function createPayment(paymentData) {
       serverResult = await res.json();
       if (serverResult?.payment) {
         saveLocalPayment(serverResult.payment);
-        return serverResult;
       }
     }
   } catch (err) {
@@ -1079,7 +1179,7 @@ export async function createPayment(paymentData) {
   }
 
   // Fallback local garantizado
-  const newPayment = {
+  const newPayment = serverResult?.payment || {
     id: `pay-${Date.now()}`,
     clientName: (paymentData.clientName || 'Cliente').trim(),
     clientWhatsApp: (paymentData.clientWhatsApp || '').trim(),
@@ -1095,6 +1195,17 @@ export async function createPayment(paymentData) {
     createdAt: new Date().toISOString()
   };
   saveLocalPayment(newPayment);
+
+  // Sincronizar pago en la nube (Supabase) para avisar al instante al PC y a la APK
+  try {
+    await supabase.from('catalog').upsert({
+      id: `pay-${newPayment.id}`,
+      title: newPayment.clientName || 'Pago',
+      category: 'payment_data',
+      location: newPayment.method || '',
+      url: JSON.stringify(newPayment)
+    });
+  } catch (e) {}
 
   const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
   const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
@@ -1132,32 +1243,71 @@ export async function updatePaymentStatus(id, status) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
     });
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.payment) {
+        saveLocalPayment(data.payment);
+      }
+    }
   } catch (err) {
     console.warn(err);
   }
 
   const local = getLocalPayments().map(p => p.id === id ? { ...p, status } : p);
   localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(local));
+
+  // Sincronizar actualización de pago en Supabase
+  try {
+    const target = local.find(p => p.id === id);
+    if (target) {
+      await supabase.from('catalog').upsert({
+        id: `pay-${id}`,
+        title: target.clientName || 'Pago',
+        category: 'payment_data',
+        location: target.method || '',
+        url: JSON.stringify(target)
+      });
+    }
+  } catch (e) {}
+
   return { success: true };
 }
 
 // --- CALIFICACIONES & RESEÑAS DE SATISFACCIÓN (TESTIMONIOS) ---
 export async function getReviews() {
+  let serverReviews = [];
   try {
     const res = await fetch(`${API_BASE}/reviews`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        const clean = data.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
-        return clean;
+        serverReviews = data.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
       }
     }
   } catch (err) {
-    console.warn('Consultando reseñas locales:', err);
+    console.warn('Consultando reseñas del servidor:', err);
   }
 
-  return getLocalReviews();
+  let cloudReviews = [];
+  try {
+    const { data: supaRev } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('category', 'review_data')
+      .order('created_at', { ascending: false });
+    if (Array.isArray(supaRev)) {
+      cloudReviews = supaRev.map(sr => {
+        try { return JSON.parse(sr.url); } catch(e) { return null; }
+      }).filter(Boolean);
+    }
+  } catch (e) {}
+
+  const localReviews = getLocalReviews().filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+  const map = new Map();
+  [...serverReviews, ...cloudReviews, ...localReviews].forEach(r => {
+    if (r && r.id) map.set(r.id, r);
+  });
+  return Array.from(map.values());
 }
 
 export async function submitGalleryReview(token, reviewData) {
@@ -1188,6 +1338,17 @@ export async function submitGalleryReview(token, reviewData) {
   };
 
   saveLocalReview(newReview);
+
+  // Sincronizar reseña en la nube (Supabase) para avisar al instante al PC y a la APK
+  try {
+    await supabase.from('catalog').upsert({
+      id: `rev-${newReview.id}`,
+      title: newReview.clientName || 'Reseña',
+      category: 'review_data',
+      location: `${newReview.rating} estrellas`,
+      url: JSON.stringify(newReview)
+    });
+  } catch (e) {}
 
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -1478,7 +1639,7 @@ export async function reopenAdminSession(id, additionalDays = 3) {
   }
 
   const sessions = getLocalSessions().map(s => {
-    if (s.id === id) {
+    if (s.id === id || s.token === id) {
       return {
         ...s,
         expiresAt: new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000).toISOString(),
@@ -1489,6 +1650,21 @@ export async function reopenAdminSession(id, additionalDays = 3) {
     return s;
   });
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
+
+  // Sincronizar reapertura en la nube (Supabase)
+  try {
+    const sessionObj = sessions.find(s => s.id === id || s.token === id);
+    if (sessionObj) {
+      await supabase.from('catalog').upsert({
+        id: `sess-${sessionObj.token}`,
+        title: sessionObj.clientName || 'Cliente',
+        category: 'session_data',
+        location: sessionObj.clientWhatsApp || '',
+        url: JSON.stringify(sessionObj)
+      });
+    }
+  } catch (e) {}
+
   return { success: true };
 }
 
@@ -1496,48 +1672,7 @@ export async function deliverSession(id, deliveryData) {
   const { finalDeliveryUrl, deliveryService = 'wetransfer', deliveryNotes = '', finalPhotos = [] } = deliveryData;
   const now = new Date().toISOString();
 
-  // 1. Servidor / Vercel
-  try {
-    const res = await fetch(`${API_BASE}/admin/sessions/${id}/deliver`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ finalDeliveryUrl, deliveryService, deliveryNotes, finalPhotos })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const updated = getLocalSessions().map(s => {
-        if (s.id === id || s.token === id) {
-          return {
-            ...s,
-            status: 'delivered',
-            finalDeliveryUrl,
-            deliveryService,
-            deliveryNotes,
-            deliveredAt: now,
-            ...(finalPhotos.length > 0 ? { finalPhotos } : {})
-          };
-        }
-        return s;
-      });
-      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(updated));
-      return data;
-    }
-  } catch (err) {
-    console.warn('Fallback local para entrega de fotos:', err);
-  }
-
-  // 2. Supabase si está disponible
-  try {
-    await supabase.from('sessions').update({
-      status: 'delivered',
-      final_delivery_url: finalDeliveryUrl,
-      delivery_service: deliveryService,
-      delivery_notes: deliveryNotes,
-      delivered_at: now
-    }).eq('id', id);
-  } catch (e) {}
-
-  // 3. Almacenamiento local persistente
+  // 1. Almacenamiento local persistente
   const updated = getLocalSessions().map(s => {
     if (s.id === id || s.token === id) {
       return {
@@ -1553,6 +1688,36 @@ export async function deliverSession(id, deliveryData) {
     return s;
   });
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(updated));
+
+  // 2. Servidor / Vercel
+  try {
+    const res = await fetch(`${API_BASE}/admin/sessions/${id}/deliver`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ finalDeliveryUrl, deliveryService, deliveryNotes, finalPhotos })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (err) {
+    console.warn('Fallback local para entrega de fotos:', err);
+  }
+
+  // 3. Supabase en tiempo real (tabla catalog, category: 'session_data')
+  try {
+    const sessionObj = updated.find(s => s.id === id || s.token === id);
+    if (sessionObj) {
+      await supabase.from('catalog').upsert({
+        id: `sess-${sessionObj.token}`,
+        title: sessionObj.clientName || 'Cliente',
+        category: 'session_data',
+        location: sessionObj.clientWhatsApp || '',
+        url: JSON.stringify(sessionObj)
+      });
+    }
+  } catch (e) {}
+
   return {
     success: true,
     session: updated.find(s => s.id === id || s.token === id)
@@ -1570,6 +1735,18 @@ export async function updateAdminSettings(settings, packages) {
   } catch (err) {
     console.warn(err);
   }
+
+  // Sincronizar ajustes y paquetes en Supabase para sincronización en tiempo real PC <-> APK
+  try {
+    await supabase.from('catalog').upsert({
+      id: 'system_settings_packages',
+      title: 'Settings & Packages',
+      category: 'settings_data',
+      location: 'system',
+      url: JSON.stringify({ settings, packages })
+    });
+  } catch (e) {}
+
   return { success: true, settings, packages };
 }
 
