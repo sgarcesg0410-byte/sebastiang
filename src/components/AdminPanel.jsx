@@ -276,7 +276,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [viewingVoucherModal, setViewingVoucherModal] = useState(null);
   const previousCountsRef = useRef({ bookings: 1, payments: 0, initialized: true });
   const [sessions, setSessions] = useState([]);
-  const [catalog, setCatalog] = useState(DEFAULT_REAL_CATALOG);
+  const [catalog, setCatalog] = useState(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('sebastian_g_catalog_v1');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      }
+    } catch (e) {}
+    return DEFAULT_REAL_CATALOG;
+  });
   const [settings, setSettings] = useState({
     photographerName: 'Sebastian G',
     photographerWhatsApp: '+573244725167',
@@ -542,9 +553,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const loadAllAdminData = async () => {
+  const loadAllAdminData = async (isSilent = false) => {
     try {
-      setLoadingData(true);
+      if (!isSilent) setLoadingData(true);
       const [bRes, sRes, setRes, pRes, cRes, payRes, revRes, cloudBalRes] = await Promise.allSettled([
         getAdminBookings(),
         getAdminSessions(),
@@ -559,13 +570,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value) && bRes.value.length > 0 
         ? bRes.value 
         : REAL_DEFAULT_BOOKINGS;
-      setBookings(bData);
+      setBookings(prev => {
+        if (prev && prev.length === bData.length && prev[0]?.id === bData[0]?.id && prev[0]?.status === bData[0]?.status) {
+          return prev;
+        }
+        return bData;
+      });
 
       const rawSessions = sRes.status === 'fulfilled' && Array.isArray(sRes.value) ? sRes.value : [];
       const cleanSessions = rawSessions.filter(
         s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
       );
-      setSessions(cleanSessions);
+      setSessions(prev => {
+        if (prev && prev.length === cleanSessions.length && prev[0]?.id === cleanSessions[0]?.id && prev[0]?.status === cleanSessions[0]?.status) {
+          return prev;
+        }
+        return cleanSessions;
+      });
 
       const setData = setRes.status === 'fulfilled' && setRes.value ? setRes.value : null;
       if (setData) {
@@ -577,8 +598,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const pData = pRes.status === 'fulfilled' && Array.isArray(pRes.value) && pRes.value.length > 0 
         ? pRes.value 
         : DEFAULT_PACKAGES;
-      setPackages(pData);
-      setEditablePackages(pData);
+      setPackages(prev => {
+        if (prev && prev.length === pData.length) return prev;
+        return pData;
+      });
+      setEditablePackages(prev => {
+        if (prev && prev.length === pData.length) return prev;
+        return pData;
+      });
       if (!newSessionForm.packageId) {
         const defaultPkg = pData.find(p => p.photoCount === 8) || pData[0];
         setNewSessionForm(prev => ({
@@ -592,16 +619,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const cData = cRes.status === 'fulfilled' && Array.isArray(cRes.value) && cRes.value.length > 0
         ? cRes.value
         : DEFAULT_REAL_CATALOG;
-      setCatalog(cData);
+      setCatalog(prev => {
+        if (prev && prev.length > cData.length && cData.length <= 18) {
+          return prev;
+        }
+        if (prev && prev.length === cData.length && prev[0]?.id === cData[0]?.id) {
+          return prev;
+        }
+        return cData;
+      });
 
       const payData = payRes.status === 'fulfilled' && Array.isArray(payRes.value) ? payRes.value : [];
-      setPayments(payData);
+      setPayments(prev => {
+        if (prev && prev.length === payData.length && prev[0]?.id === payData[0]?.id && prev[0]?.status === payData[0]?.status) {
+          return prev;
+        }
+        return payData;
+      });
 
       const revData = revRes.status === 'fulfilled' && Array.isArray(revRes.value) ? revRes.value : [];
-      setReviewsList(revData);
+      setReviewsList(prev => {
+        if (prev && prev.length === revData.length) return prev;
+        return revData;
+      });
 
-      const cloudBal = revRes && cloudBalRes ? (cloudBalRes.status === 'fulfilled' && cloudBalRes.value ? cloudBalRes.value : getWalletBaseBalances()) : getWalletBaseBalances();
-      setWalletBaseBalances(cloudBal);
+      const cloudBal = cloudBalRes && cloudBalRes.status === 'fulfilled' && cloudBalRes.value ? cloudBalRes.value : getWalletBaseBalances();
+      setWalletBaseBalances(prev => {
+        if (prev && prev.nequi === cloudBal.nequi && prev.daviplata === cloudBal.daviplata && prev.dale === cloudBal.dale) {
+          return prev;
+        }
+        return cloudBal;
+      });
 
       setAnalyticsStats(getLocalAnalytics());
 
@@ -646,7 +694,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     } catch (err) {
       console.error('Error cargando datos de administración:', err);
     } finally {
-      setLoadingData(false);
+      if (!isSilent) setLoadingData(false);
     }
   };
 
@@ -665,17 +713,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
     const poll = () => {
       if (!document.hidden) {
-        loadAllAdminData();
+        loadAllAdminData(true);
       }
     };
 
-    // Latido de actualización cada 3.5 segundos para sincronización instantánea
-    const interval = setInterval(poll, 3500);
+    // Latido suave de actualización cada 15 segundos para sincronización en segundo plano sin parpadeos
+    const interval = setInterval(poll, 15000);
     const handleVisibility = () => {
-      if (!document.hidden) loadAllAdminData();
+      if (!document.hidden) loadAllAdminData(true);
     };
     const handleFocus = () => {
-      loadAllAdminData();
+      loadAllAdminData(true);
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
@@ -694,12 +742,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    let debounceTimer = null;
+    const triggerSilentRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadAllAdminData(true);
+      }, 400);
+    };
+
     // Cualquier cambio en Supabase (sesiones, reservas, pagos, saldos, ajustes, catálogo)
-    // dispara la actualización inmediata en el PC y la APK en menos de 200 milisegundos
+    // dispara la actualización inmediata y silenciosa en el PC y la APK
     const channel = supabase
       .channel('admin_all_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-        loadAllAdminData();
+        triggerSilentRefresh();
       })
       .subscribe();
 
@@ -708,22 +764,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bcCatalog = new BroadcastChannel('catalog_realtime_sync');
         bcCatalog.onmessage = () => {
-          loadAllAdminData();
+          triggerSilentRefresh();
         };
 
         bcBookings = new BroadcastChannel('bookings_realtime_sync');
         bcBookings.onmessage = () => {
-          loadAllAdminData();
+          triggerSilentRefresh();
         };
 
         bcPayments = new BroadcastChannel('payments_realtime_sync');
         bcPayments.onmessage = () => {
-          loadAllAdminData();
+          triggerSilentRefresh();
         };
 
         bcReviews = new BroadcastChannel('reviews_realtime_sync');
         bcReviews.onmessage = () => {
-          loadAllAdminData();
+          triggerSilentRefresh();
         };
 
         bcWallets = new BroadcastChannel('wallet_balances_sync');
@@ -734,17 +790,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     } catch (e) {}
 
     const handleStorage = (e) => {
-      if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
-        loadAllAdminData();
-      }
-      if (e.key === 'sebastian_g_bookings_last_sync' || e.key === 'sebastian_g_bookings_v1') {
-        loadAllAdminData();
-      }
-      if (e.key === 'sebastian_g_payments_last_sync' || e.key === 'sebastian_g_payments_v1') {
-        loadAllAdminData();
-      }
-      if (e.key === 'sebastian_g_reviews_last_sync' || e.key === 'sebastian_g_reviews_v1') {
-        loadAllAdminData();
+      if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1' ||
+          e.key === 'sebastian_g_bookings_last_sync' || e.key === 'sebastian_g_bookings_v1' ||
+          e.key === 'sebastian_g_payments_last_sync' || e.key === 'sebastian_g_payments_v1' ||
+          e.key === 'sebastian_g_reviews_last_sync' || e.key === 'sebastian_g_reviews_v1') {
+        triggerSilentRefresh();
       }
       if (e.key === 'sebastian_g_wallet_base_balances_v1') {
         fetchCloudWalletBaseBalances().then(b => setWalletBaseBalances(b));
@@ -753,6 +803,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     window.addEventListener('storage', handleStorage);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
       if (bcCatalog) bcCatalog.close();
       if (bcBookings) bcBookings.close();

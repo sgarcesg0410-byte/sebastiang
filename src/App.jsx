@@ -56,9 +56,33 @@ export default function App() {
 
   // Datos globales con inicio instantáneo sin pantalla en blanco
   const [settings, setSettings] = useState({});
-  const [catalog, setCatalog] = useState(DEFAULT_REAL_CATALOG);
+  const [catalog, setCatalog] = useState(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('sebastian_g_catalog_v1');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      }
+    } catch (e) {}
+    return DEFAULT_REAL_CATALOG;
+  });
   const [packages, setPackages] = useState(DEFAULT_PACKAGES);
   const [loading, setLoading] = useState(false);
+
+  const updateCatalogSafely = (data) => {
+    if (!Array.isArray(data) || data.length === 0) return;
+    setCatalog(prev => {
+      if (prev && prev.length > data.length && data.length <= 18) {
+        return prev;
+      }
+      if (prev && prev.length === data.length && prev[0]?.id === data[0]?.id) {
+        return prev;
+      }
+      return data;
+    });
+  };
 
   useEffect(() => {
     // Registrar visita en analítica en tiempo real
@@ -96,13 +120,21 @@ export default function App() {
 
     loadInitialData();
 
+    let syncDebounce = null;
+    const triggerDebouncedCatalog = () => {
+      if (syncDebounce) clearTimeout(syncDebounce);
+      syncDebounce = setTimeout(() => {
+        getCatalog().then(data => {
+          updateCatalogSafely(data);
+        });
+      }, 500);
+    };
+
     // 1. Sincronización en la nube en tiempo real (Celular <-> Computador)
     const channel = supabase
       .channel('catalog_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-        getCatalog().then(data => {
-          if (Array.isArray(data) && data.length > 0) setCatalog(data);
-        });
+        triggerDebouncedCatalog();
       })
       .subscribe();
 
@@ -112,23 +144,20 @@ export default function App() {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bc = new BroadcastChannel('catalog_realtime_sync');
         bc.onmessage = () => {
-          getCatalog().then(data => {
-            if (Array.isArray(data) && data.length > 0) setCatalog(data);
-          });
+          triggerDebouncedCatalog();
         };
       }
     } catch (e) {}
 
     const handleStorageSync = (e) => {
       if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
-        getCatalog().then(data => {
-          if (Array.isArray(data) && data.length > 0) setCatalog(data);
-        });
+        triggerDebouncedCatalog();
       }
     };
     window.addEventListener('storage', handleStorageSync);
 
     return () => {
+      if (syncDebounce) clearTimeout(syncDebounce);
       supabase.removeChannel(channel);
       if (bc) bc.close();
       window.removeEventListener('storage', handleStorageSync);
@@ -148,7 +177,7 @@ export default function App() {
         setSettings(sRes.value);
       }
       if (cRes.status === 'fulfilled' && Array.isArray(cRes.value) && cRes.value.length > 0) {
-        setCatalog(cRes.value);
+        updateCatalogSafely(cRes.value);
       }
       if (pRes.status === 'fulfilled' && Array.isArray(pRes.value) && pRes.value.length > 0) {
         setPackages(pRes.value);

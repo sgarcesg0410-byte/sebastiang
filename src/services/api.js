@@ -535,7 +535,7 @@ export async function getCatalog() {
       .select('*')
       .order('created_at', { ascending: false });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Supabase catalog timeout')), 2500)
+      setTimeout(() => reject(new Error('Supabase catalog timeout')), 7500)
     );
     const { data, error } = await Promise.race([supabasePromise, timeoutPromise]);
     if (!error && Array.isArray(data)) {
@@ -570,33 +570,6 @@ export async function getCatalog() {
   const rawDeleted = getDeletedCatalogIds();
   const deletedIds = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
-
-  // AUTO-SYNC INTELIGENTE: Si en este dispositivo hay fotos en localItems que no están en Supabase, sincronizarlas automáticamente
-  if (localItems.length > 0) {
-    setTimeout(async () => {
-      try {
-        for (const localItem of localItems) {
-          if (!localItem || !localItem.id || deletedIds.has(localItem.id)) continue;
-          const norm = (localItem.title || '').trim().toLowerCase();
-          const exists = supabaseCatalog.some(s => 
-            s.id === localItem.id || (s.title && s.title.trim().toLowerCase() === norm)
-          );
-          if (!exists && localItem.url && localItem.title) {
-            await supabase.from('catalog').insert({
-              id: String(localItem.id),
-              title: localItem.title.trim(),
-              category: localItem.category || 'Retratos',
-              location: localItem.location || 'San Antero',
-              url: localItem.url
-            });
-            console.log('✓ Foto sincronizada a Supabase en la nube:', localItem.title);
-          }
-        }
-      } catch (e) {
-        console.warn('Error en auto-sync a Supabase:', e);
-      }
-    }, 1200);
-  }
 
   // Fuentes combinadas y deduplicadas inteligentemente:
   // Supabase -> Local -> Servidor -> Catálogo base predeterminado
@@ -637,23 +610,14 @@ export async function getCatalog() {
     result.push(item);
   }
 
-  // Saneamiento automático en localStorage del celular para eliminar duplicados residuales
-  try {
-    const cleanLocal = [];
-    const localTitles = new Set();
-    localItems.forEach(i => {
-      if (!i || !i.id || deletedIds.has(i.id)) return;
-      const t = (i.title || '').trim().toLowerCase();
-      if (t && localTitles.has(t)) return;
-      if (t) localTitles.add(t);
-      cleanLocal.push(i);
-    });
-    if (cleanLocal.length !== localItems.length) {
-      localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(cleanLocal));
-    }
-  } catch (e) {}
+  // Guardar en caché local para que jamás baje a 18 fotos aunque falle la red
+  if (result.length > 18) {
+    try {
+      saveLocalCatalog(result);
+    } catch (e) {}
+  }
 
-  return result.length > 0 ? result : DEFAULT_REAL_CATALOG;
+  return result.length > 0 ? result : (localItems.length > 0 ? localItems : DEFAULT_REAL_CATALOG);
 }
 
 export async function getPackages() {
