@@ -553,12 +553,19 @@ const KNOWN_STATIC_PHOTOS = {
 export async function getCatalog() {
   let supabaseCatalog = [];
   try {
+    // Filtrar a nivel de servidor en Supabase para no descargar jamás sesiones pesadas de fotos de clientes
     const supabasePromise = supabase
       .from('catalog')
-      .select('*')
+      .select('id, title, category, location, url')
+      .not('id', 'like', 'sess-%')
+      .not('id', 'like', 'book-%')
+      .not('id', 'like', 'pay-%')
+      .not('id', 'like', 'rev-%')
+      .not('id', 'like', 'system_%')
+      .not('category', 'like', '%_data')
       .order('created_at', { ascending: false });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Supabase catalog timeout')), 7500)
+      setTimeout(() => reject(new Error('Supabase catalog timeout')), 5000)
     );
     const { data, error } = await Promise.race([supabasePromise, timeoutPromise]);
     if (!error && Array.isArray(data)) {

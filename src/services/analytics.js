@@ -59,17 +59,6 @@ export async function trackPageVisit() {
     try {
       localStorage.setItem(LOCAL_ANALYTICS_KEY, JSON.stringify(stats));
     } catch (e) {}
-
-    // Intentar registrar en Supabase si la tabla existe
-    try {
-      await supabase.from('analytics').insert({
-        id: `vis-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        event_type: 'visit',
-        user_agent: navigator.userAgent.includes('Mobile') ? 'Móvil' : 'Computador'
-      });
-    } catch (err) {
-      // Si la tabla no existe aún en Supabase, continúa con almacenamiento local
-    }
   }
 
   return stats;
@@ -89,15 +78,6 @@ export async function trackLinkShare(channel = 'whatsapp') {
   try {
     localStorage.setItem(LOCAL_ANALYTICS_KEY, JSON.stringify(stats));
   } catch (e) {}
-
-  // Intentar sincronizar en Supabase
-  try {
-    await supabase.from('analytics').insert({
-      id: `share-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      event_type: `share_${channel}`,
-      user_agent: channel
-    });
-  } catch (err) {}
 
   return stats;
 }
