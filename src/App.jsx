@@ -327,113 +327,273 @@ export default function App() {
 
       {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD Y DEL RECIBO) */}
       {currentView !== 'admin' && currentView !== 'receipt' && (
-        <footer className="border-t border-stone-800/80 bg-stone-950 py-12 px-4 sm:px-6 lg:px-8">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-3">
-              <img
-                src="/app-icon.png"
-                alt="Sebastian G"
-                className="h-12 w-12 rounded-2xl object-cover shadow-lg shadow-pink-500/25 border border-white/20 cursor-pointer hover:scale-105 transition-all"
-                onClick={() => setShowIntro(true)}
-                title="Toca para ver el logo interactivo"
-              />
-              <div className="border-l border-stone-800 pl-3">
-                <span className="text-sm font-bold text-white block font-serif">
-                  {settings.photographerName || 'Sebastian G'}
+        <footer className="relative bg-[#090807] border-t border-stone-800/80 text-stone-300 pt-16 pb-12 px-4 sm:px-6 lg:px-8 overflow-hidden">
+          {/* Luz ambiental decorativa superior */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 max-w-4xl h-[1px] bg-gradient-to-r from-transparent via-amber-500/30 to-transparent pointer-events-none" />
+          <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-96 h-36 bg-amber-500/5 blur-3xl rounded-full pointer-events-none" />
+
+          <div className="max-w-7xl mx-auto space-y-12 relative z-10">
+            {/* 1. SECCIÓN DESTACADA: 3 TARJETAS DE GARANTÍA Y VALOR EXCLUSIVO */}
+            <div>
+              <div className="text-center max-w-xl mx-auto mb-8">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full inline-block">
+                  Compromiso & Excelencia Sebastian G
                 </span>
-                <span className="text-[11px] font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-pink-400 to-purple-400 block uppercase">
-                  Fotografía & Edición Profesional
+                <h3 className="text-lg sm:text-xl font-serif font-bold text-white mt-2">
+                  Tu tranquilidad y satisfacción garantizadas
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
+                {/* Tarjeta 1: Calidad */}
+                <div className="group relative p-5 rounded-2xl bg-stone-900/40 border border-stone-800/80 hover:border-amber-500/40 transition-all duration-300 hover:shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0 text-xl group-hover:scale-110 transition-transform">
+                      📸
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors">
+                          Máxima Calidad 4K / Full HD
+                        </h4>
+                      </div>
+                      <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                        Edición profesional, colorimetría cinematográfica y entrega de fotos originales en máxima resolución sin compresión.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tarjeta 2: Clima */}
+                <div className="group relative p-5 rounded-2xl bg-stone-900/40 border border-stone-800/80 hover:border-sky-500/40 transition-all duration-300 hover:shadow-lg hover:shadow-sky-500/5 hover:-translate-y-0.5">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center shrink-0 text-xl group-hover:scale-110 transition-transform">
+                      ⛅
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white group-hover:text-sky-300 transition-colors">
+                          Garantía Total de Clima
+                        </h4>
+                      </div>
+                      <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                        Si llueve o el clima no favorece tu sesión en playa o locación, reprogramamos tu fecha sin costo ni penalidad.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tarjeta 3: Obsequio */}
+                <div className="group relative p-5 rounded-2xl bg-stone-900/40 border border-stone-800/80 hover:border-emerald-500/40 transition-all duration-300 hover:shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0 text-xl group-hover:scale-110 transition-transform">
+                      🎁
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white group-hover:text-emerald-300 transition-colors">
+                          +2 Fotos Profesionales de Regalo
+                        </h4>
+                      </div>
+                      <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                        Obsequio exclusivo incluido en todos los paquetes para capturar tomas espontáneas que no olvidarás jamás.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. GRID PRINCIPAL: 4 COLUMNAS BALANCEADAS */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-8 lg:gap-10 pt-10 border-t border-stone-800/60">
+              
+              {/* COLUMNA 1 (5 cols): Marca, Identidad y Redes */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="flex items-center gap-3.5">
+                  <img
+                    src="/app-icon.png"
+                    alt="Sebastian G"
+                    className="h-14 w-14 rounded-2xl object-cover shadow-xl shadow-amber-500/10 border border-amber-500/30 cursor-pointer hover:scale-105 transition-all"
+                    onClick={() => setShowIntro(true)}
+                    title="Toca para revivir el logo interactivo"
+                  />
+                  <div>
+                    <span className="text-lg font-bold text-white block font-serif tracking-tight">
+                      {settings.photographerName || 'Sebastian G'}
+                    </span>
+                    <span className="text-xs font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-rose-300 to-amber-200 block uppercase">
+                      Fotografía & Edición Profesional
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-stone-400 leading-relaxed max-w-sm">
+                  Capturando instantes únicos con estética cinematográfica en las playas más hermosas de Colombia. Sesiones individuales, parejas, familias y aniversarios.
+                </p>
+
+                {/* Redes Sociales Oficiales */}
+                <div className="pt-2">
+                  <span className="text-[11px] font-semibold text-stone-400 uppercase tracking-wider block mb-2">
+                    Conéctate en Redes Sociales
+                  </span>
+                  <div className="flex items-center gap-2.5">
+                    <a
+                      href={SOCIAL_LINKS.instagram.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-2 px-3.5 py-2 rounded-xl bg-stone-900/90 border border-stone-800 text-stone-300 hover:text-white hover:border-pink-500/50 hover:bg-pink-500/10 text-xs font-semibold transition-all duration-200 hover:scale-105"
+                      title="Instagram: @sgarces01"
+                    >
+                      <InstagramIcon className="w-4 h-4 text-pink-400 group-hover:scale-110 transition-transform" />
+                      <span>@sgarces01</span>
+                    </a>
+                    <a
+                      href={SOCIAL_LINKS.facebook.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-2 px-3.5 py-2 rounded-xl bg-stone-900/90 border border-stone-800 text-stone-300 hover:text-white hover:border-blue-500/50 hover:bg-blue-500/10 text-xs font-semibold transition-all duration-200 hover:scale-105"
+                      title="Facebook: /Sgarces01"
+                    >
+                      <FacebookIcon className="w-4 h-4 text-blue-400 group-hover:scale-110 transition-transform" />
+                      <span>Facebook</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* COLUMNA 2 (2 cols): Explorar / Navegación */}
+              <div className="lg:col-span-2 space-y-3">
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-widest block">
+                  Explorar
                 </span>
+                <ul className="space-y-2.5 text-xs text-stone-400">
+                  <li>
+                    <button
+                      onClick={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                      className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
+                    >
+                      <span>Catálogo & Galería</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => { setCurrentView('packages'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                      className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
+                    >
+                      <span>Paquetes & Tarifas</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById('testimonials');
+                        if (el) el.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                      className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
+                    >
+                      <span>Opiniones de Clientes</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => { setActiveGalleryToken('demo-cliente-2026'); setCurrentView('gallery'); }}
+                      className="hover:text-amber-300 transition-colors flex items-center gap-1.5 text-amber-400/90 font-medium"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Demo Selección</span>
+                    </button>
+                  </li>
+                </ul>
               </div>
-            </div>
 
-            {/* Redes Sociales Oficiales en Footer (Único Lugar de la App) */}
-            <div className="flex items-center gap-3">
-              <a
-                href={SOCIAL_LINKS.instagram.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-300 hover:text-pink-400 hover:border-pink-500/40 text-xs font-semibold transition-all hover:scale-105"
-                title="Instagram: @sgarces01"
-              >
-                <InstagramIcon className="w-4 h-4 text-pink-400" />
-                <span>Instagram</span>
-              </a>
-              <a
-                href={SOCIAL_LINKS.facebook.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-stone-900 border border-stone-800 text-stone-300 hover:text-blue-400 hover:border-blue-500/40 text-xs font-semibold transition-all hover:scale-105"
-                title="Facebook: /Sgarces01"
-              >
-                <FacebookIcon className="w-4 h-4 text-blue-400" />
-                <span>Facebook</span>
-              </a>
-            </div>
-
-            {/* Garantías de Experiencia Sebastian G */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-4xl py-3 border-y border-stone-800/80 my-2 text-left">
-              <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
-                <span className="text-xl">📸</span>
-                <div>
-                  <span className="text-xs font-bold text-amber-300 block">Máxima Calidad Full HD</span>
-                  <span className="text-[11px] text-stone-400">Edición profesional y archivos originales sin compresión.</span>
+              {/* COLUMNA 3 (2 cols): Locaciones */}
+              <div className="lg:col-span-2 space-y-3">
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-widest block">
+                  Locaciones
+                </span>
+                <ul className="space-y-2 text-xs text-stone-400">
+                  <li className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                    <span>San Antero</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                    <span>Coveñas</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                    <span>Santiago de Tolú</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                    <span>Playa Blanca & Privadas</span>
+                  </li>
+                </ul>
+                <div className="pt-1">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Disponibilidad 2026
+                  </span>
                 </div>
               </div>
-              <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
-                <span className="text-xl">⛅</span>
-                <div>
-                  <span className="text-xs font-bold text-sky-300 block">Garantía de Clima en tu Locación</span>
-                  <span className="text-[11px] text-stone-400">Si llueve en tu locación o playa, reprogramamos tu sesión sin costo.</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
-                <span className="text-xl">🎁</span>
-                <div>
-                  <span className="text-xs font-bold text-emerald-300 block">+2 Fotos Gratis</span>
-                  <span className="text-[11px] text-stone-400">Obsequio exclusivo incluido en todos los paquetes.</span>
+
+              {/* COLUMNA 4 (3 cols): Reserva Directa & Respaldo */}
+              <div className="lg:col-span-3 space-y-3.5">
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-widest block">
+                  Reserva & Contacto
+                </span>
+                <p className="text-xs text-stone-400 leading-relaxed">
+                  ¿Tienes una fecha en mente? Agenda directamente o escríbenos para coordinar tu hora ideal de puesta de sol.
+                </p>
+
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      setSelectedPackageForBooking(null);
+                      setIsBookingOpen(true);
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs shadow-lg shadow-amber-500/20 hover:scale-[1.02] transition-all cursor-pointer"
+                  >
+                    <span>📅 Reservar Sesión Online</span>
+                  </button>
+
+                  <a
+                    href="https://wa.me/573244725167?text=Hola%20Sebastian,%20quiero%20cotizar%20y%20agendar%20una%20sesi%C3%B3n%20fotogr%C3%A1fica%20en%20la%20playa."
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-stone-900 border border-stone-800 hover:border-emerald-500/40 text-stone-300 hover:text-emerald-300 text-xs font-semibold transition-all hover:bg-emerald-500/5"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Escribir por WhatsApp</span>
+                  </a>
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-stone-400">
-              <button
-                onClick={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="hover:text-amber-400"
-              >
-                Inicio & Catálogo
-              </button>
-              <button
-                onClick={() => { setCurrentView('packages'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="hover:text-amber-400"
-              >
-                Paquetes
-              </button>
-              <button
-                onClick={() => { setActiveGalleryToken('demo-cliente-2026'); setCurrentView('gallery'); }}
-                className="hover:text-amber-400 flex items-center gap-1"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                <span>Demostración de Selección</span>
-              </button>
-            </div>
+            {/* 3. SUB-FOOTER INFERIOR: COPYRIGHT & ACCESO ADMINISTRATIVO DISCRETO */}
+            <div className="pt-6 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-stone-500">
+              <div className="text-center sm:text-left">
+                <span>© {new Date().getFullYear()} {settings.photographerName || 'Sebastian G'}. Todos los derechos reservados. San Antero & Coveñas, Colombia.</span>
+              </div>
 
-            {/* Créditos del Desarrollador y Acceso Discreto */}
-            <div className="flex items-center gap-2 text-sm sm:text-base font-bold text-white tracking-wide">
-              <span>SG Software Solutions</span>
-              {/* Acceso privado discreto para Sebastian */}
-              <button
-                onClick={() => {
-                  setCurrentView('admin');
-                  if (typeof window !== 'undefined') window.history.pushState(null, '', '/admin');
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="text-stone-800 hover:text-stone-500 transition-colors p-1"
-                title="Acceso Administración"
-                aria-label="Admin"
-              >
-                <Lock className="w-3 h-3 opacity-20 hover:opacity-100" />
-              </button>
+              <div className="flex items-center gap-3">
+                <span className="text-stone-400 font-semibold tracking-wide">
+                  SG Software Solutions
+                </span>
+                {/* Candado de acceso administrativo discreto para Sebastian */}
+                <button
+                  onClick={() => {
+                    setCurrentView('admin');
+                    if (typeof window !== 'undefined') window.history.pushState(null, '', '/admin');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="text-stone-700 hover:text-amber-400 transition-colors p-1"
+                  title="Acceso Administrativo"
+                  aria-label="Panel Admin"
+                >
+                  <Lock className="w-3.5 h-3.5 opacity-30 hover:opacity-100" />
+                </button>
+              </div>
             </div>
           </div>
         </footer>
