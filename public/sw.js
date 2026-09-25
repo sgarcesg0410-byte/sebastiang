@@ -57,3 +57,34 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request))
   );
 });
+
+// Interacción con Notificaciones Push (Estilo WhatsApp / Messenger)
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const action = event.action;
+  const notifData = event.notification.data || {};
+  let targetUrl = notifData.url || '/?mode=admin';
+
+  if (action === 'whatsapp' && notifData.whatsappUrl) {
+    targetUrl = notifData.whatsappUrl;
+  }
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Si ya hay una ventana abierta con el panel, enfocarla
+      for (const client of clientList) {
+        if (client.url.includes('mode=admin') && 'focus' in client) {
+          if (notifData.targetTab) {
+            client.postMessage({ type: 'NAVIGATE_TAB', tab: notifData.targetTab });
+          }
+          return client.focus();
+        }
+      }
+      // Si no hay ventana abierta, abrir la URL correspondiente
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});

@@ -84,17 +84,13 @@ import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
 import { NequiLogo, DaviPlataLogo, DaleLogo, WalletAccountCard } from './PaymentLogos';
 
-// Función para enviar notificaciones de escritorio / móvil en segundo plano
-function sendBrowserNotification(title, body) {
-  try {
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      new Notification(title, {
-        body,
-        icon: '/app-icon.png'
-      });
-    }
-  } catch (e) {}
-}
+import {
+  sendSystemPushNotification,
+  requestPushPermission,
+  getPushPermissionState,
+  playPushNotificationChime,
+  flashDocumentTitle
+} from '../services/notifications';
 
 // Función para procesar y optimizar fotos de manera ultraligera y segura (ideal para celulares, APK y web)
 async function compressImageFile(file, maxWidth = 1280, quality = 0.78) {
@@ -274,7 +270,41 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [analyticsStats, setAnalyticsStats] = useState(getLocalAnalytics());
   const [realtimeAlert, setRealtimeAlert] = useState(null);
   const [viewingVoucherModal, setViewingVoucherModal] = useState(null);
-  const previousCountsRef = useRef({ bookings: 1, payments: 0, initialized: true });
+  const [pushPermission, setPushPermission] = useState(() => getPushPermissionState());
+  const knownBookingIdsRef = useRef(null);
+  const knownPaymentIdsRef = useRef(null);
+
+  const handleEnablePush = async () => {
+    const res = await requestPushPermission();
+    setPushPermission(res);
+    if (res === 'granted') {
+      await sendSystemPushNotification({
+        title: '🔔 ¡Notificaciones Push Activas!',
+        body: 'Listo Sebastian G. Las alertas de reservas y pagos sonarán al instante como en WhatsApp.',
+        tag: 'test-push-granted',
+        data: { type: 'booking' }
+      });
+    }
+  };
+
+  const handleTestPush = async () => {
+    await sendSystemPushNotification({
+      title: '📸 ¡Prueba de Reserva en Tiempo Real!',
+      body: 'Camila acaba de reservar: 8 Fotos Digitales (+ 2 Fotos Gratis) para el 28 de Septiembre.',
+      tag: 'test-push-sample',
+      data: { type: 'booking' }
+    });
+    setRealtimeAlert({
+      type: 'booking',
+      clientName: 'Camila (Prueba)',
+      packageName: '8 Fotos Digitales (+ 2 Fotos Gratis)',
+      dateTime: '28 de Septiembre a las 4:00 p. m.',
+      location: 'Playa Blanca, San Antero',
+      totalPrice: 75000,
+      targetTab: 'bookings'
+    });
+    setTimeout(() => setRealtimeAlert(null), 10000);
+  };
   const [sessions, setSessions] = useState([]);
   const [catalog, setCatalog] = useState(() => {
     try {
@@ -653,44 +683,61 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       setAnalyticsStats(getLocalAnalytics());
 
-      // Alerta sonora y visual si llega una nueva reserva o pago en tiempo real
-      if (previousCountsRef.current.initialized) {
-        const newBookings = bData.length > previousCountsRef.current.bookings;
-        const newPayments = (payData ? payData.length : 0) > previousCountsRef.current.payments;
-        if (newBookings) {
-          playNotificationChime();
-          const latest = bData[0];
-          sendBrowserNotification(
-            '📸 ¡Nueva Reserva Recibida!',
-            `${latest?.clientName || 'Un cliente'} ha reservado (${latest?.packageName || 'Sesión'}) para el ${formatDateTime12Hour(latest?.dateTime) || 'próximamente'}`
-          );
+      // Detección exacta de nuevas reservas en tiempo real (por ID único para evitar falsos positivos)
+      if (knownBookingIdsRef.current !== null) {
+        const freshBookings = bData.filter(b => b?.id && !knownBookingIdsRef.current.has(b.id));
+        if (freshBookings.length > 0) {
+          const latest = freshBookings[0];
+          let cleanPhone = (latest.clientWhatsApp || '').replace(/\D/g, '');
+          if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) cleanPhone = '57' + cleanPhone;
+          const waUrl = cleanPhone ? `https://wa.me/${cleanPhone}` : null;
+
+          sendSystemPushNotification({
+            title: `📸 ¡Nueva Reserva: ${latest.clientName || 'Cliente'}!`,
+            body: `${latest.packageName || 'Sesión Fotográfica'} para el ${formatDateTime12Hour(latest.dateTime) || 'próximamente'}.\n📍 ${latest.specificLocation || 'San Antero'} ($${Number(latest.totalPrice || 0).toLocaleString('es-CO')} COP)`,
+            tag: `booking-${latest.id}`,
+            data: { type: 'booking', targetTab: 'bookings', bookingId: latest.id },
+            whatsappUrl: waUrl
+          });
+
           setRealtimeAlert({
             type: 'booking',
-            message: `🔔 ¡Nueva Reserva en Tiempo Real de ${latest?.clientName || 'un cliente'} (${formatDateTime12Hour(latest?.dateTime)})!`,
+            clientName: latest.clientName || 'Un cliente',
+            packageName: latest.packageName || 'Sesión Fotográfica',
+            dateTime: formatDateTime12Hour(latest.dateTime) || 'Próximamente',
+            location: latest.specificLocation || 'San Antero',
+            totalPrice: latest.totalPrice,
+            whatsappUrl: waUrl,
             targetTab: 'bookings'
           });
-          setTimeout(() => setRealtimeAlert(null), 9000);
-        } else if (newPayments) {
-          playNotificationChime();
-          const latestPay = payData?.[0];
-          sendBrowserNotification(
-            '💰 ¡Nuevo Pago Recibido!',
-            `${latestPay?.clientName || 'Un cliente'} pagó $${Number(latestPay?.amount || 0).toLocaleString('es-CO')} COP vía ${latestPay?.method?.toUpperCase() || 'transferencia'}`
-          );
-          setRealtimeAlert({
-            type: 'payment',
-            message: `💰 ¡Nuevo Pago Recibido de ${latestPay?.clientName || 'un cliente'} ($${Number(latestPay?.amount || 0).toLocaleString('es-CO')} COP)!`,
-            targetTab: 'payments'
-          });
-          setTimeout(() => setRealtimeAlert(null), 9000);
+          setTimeout(() => setRealtimeAlert(null), 14000);
         }
       }
+      knownBookingIdsRef.current = new Set(bData.map(b => b?.id).filter(Boolean));
 
-      previousCountsRef.current = {
-        bookings: bData.length,
-        payments: payData ? payData.length : 0,
-        initialized: true
-      };
+      // Detección exacta de nuevos pagos en tiempo real (por ID)
+      if (knownPaymentIdsRef.current !== null && Array.isArray(payData)) {
+        const freshPayments = payData.filter(p => p?.id && !knownPaymentIdsRef.current.has(p.id));
+        if (freshPayments.length > 0) {
+          const latestPay = freshPayments[0];
+          sendSystemPushNotification({
+            title: `💰 ¡Nuevo Pago: ${latestPay.clientName || 'Cliente'}!`,
+            body: `Pagó $${Number(latestPay.amount || 0).toLocaleString('es-CO')} COP vía ${latestPay.method?.toUpperCase() || 'transferencia'}. Comprobante disponible para verificar.`,
+            tag: `payment-${latestPay.id}`,
+            data: { type: 'payment', targetTab: 'payments', paymentId: latestPay.id }
+          });
+
+          setRealtimeAlert({
+            type: 'payment',
+            clientName: latestPay.clientName || 'Un cliente',
+            amount: latestPay.amount,
+            method: latestPay.method,
+            targetTab: 'payments'
+          });
+          setTimeout(() => setRealtimeAlert(null), 14000);
+        }
+      }
+      knownPaymentIdsRef.current = new Set((payData || []).map(p => p?.id).filter(Boolean));
     } catch (err) {
       console.error('Error cargando datos de administración:', err);
     } finally {
@@ -800,7 +847,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         fetchCloudWalletBaseBalances().then(b => setWalletBaseBalances(b));
       }
     };
-    window.addEventListener('storage', handleStorage);
+    const handleSwitchTab = (e) => {
+      if (e.detail && e.detail.tab) {
+        setActiveTab(e.detail.tab);
+      }
+    };
+    window.addEventListener('admin-switch-tab', handleSwitchTab);
+
+    let swMessageListener = null;
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      swMessageListener = (event) => {
+        if (event.data?.type === 'NAVIGATE_TAB' && event.data.tab) {
+          setActiveTab(event.data.tab);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', swMessageListener);
+    }
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -811,6 +873,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       if (bcReviews) bcReviews.close();
       if (bcWallets) bcWallets.close();
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('admin-switch-tab', handleSwitchTab);
+      if (swMessageListener && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', swMessageListener);
+      }
     };
   }, [isAuthenticated]);
 
@@ -1532,8 +1598,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </div>
         </div>
 
-        {/* Acciones Rápidas: Instalar en Android, Ver Portafolio y Cerrar Sesión */}
+        {/* Acciones Rápidas: Push, Instalar en Android, Ver Portafolio y Cerrar Sesión */}
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Control de Notificaciones Push estilo WhatsApp / Messenger */}
+          {pushPermission !== 'granted' ? (
+            <button
+              type="button"
+              onClick={handleEnablePush}
+              className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-lg shadow-emerald-600/30 active:scale-95 animate-pulse"
+              title="Activar notificaciones Push para que suenen como en WhatsApp cuando un cliente reserve"
+            >
+              <Bell className="w-4 h-4" />
+              <span>🔔 Activar Notificaciones Push</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-1 bg-stone-950/90 border border-emerald-500/40 px-2.5 py-1.5 rounded-xl">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-1" />
+              <span className="text-[11px] font-bold text-emerald-300">Push Activo</span>
+              <button
+                type="button"
+                onClick={handleTestPush}
+                className="ml-1 text-[10px] text-stone-400 hover:text-amber-300 underline font-semibold"
+                title="Hacer sonar y probar una notificación de prueba"
+              >
+                (Probar)
+              </button>
+            </div>
+          )}
+
           {!isStandalone && (
             <button
               type="button"
@@ -1566,17 +1658,67 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         </div>
       </div>
 
-      {/* ALERTA VISUAL Y SONORA EN TIEMPO REAL CUANDO ENTRA UNA RESERVA O PAGO */}
+      {/* ALERTA FLOTANTE EN TIEMPO REAL ESTILO WHATSAPP / MESSENGER */}
       {realtimeAlert && (
-        <div 
-          onClick={() => setActiveTab(realtimeAlert.targetTab)}
-          className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-black text-xs sm:text-sm flex items-center justify-between shadow-2xl cursor-pointer ring-4 ring-amber-400/40 animate-pulse transition-all"
-        >
-          <div className="flex items-center gap-2.5">
-            <Bell className="w-5 h-5 fill-stone-950 shrink-0" />
-            <span>{realtimeAlert.message}</span>
+        <div className="fixed top-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 animate-bounce-in">
+          <div className="bg-stone-950/95 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 shadow-[0_20px_60px_rgba(245,158,11,0.4)] backdrop-blur-2xl text-left text-white ring-4 ring-amber-400/20">
+            <div className="flex items-start gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center shrink-0 text-stone-950 text-2xl shadow-lg shadow-amber-500/30">
+                {realtimeAlert.type === 'payment' ? '💰' : '📸'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                    {realtimeAlert.type === 'payment' ? '¡Nuevo Pago Recibido!' : '¡Nueva Reserva en Vivo!'}
+                  </span>
+                  <button
+                    onClick={() => setRealtimeAlert(null)}
+                    className="text-stone-400 hover:text-white text-xs px-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <h4 className="text-base font-extrabold text-white truncate mt-1">
+                  {realtimeAlert.clientName}
+                </h4>
+                {realtimeAlert.type === 'booking' ? (
+                  <p className="text-xs text-stone-300 mt-0.5 line-clamp-2">
+                    {realtimeAlert.packageName} • {realtimeAlert.dateTime}
+                    <br />
+                    <span className="text-amber-300/90 font-medium">📍 {realtimeAlert.location} (${Number(realtimeAlert.totalPrice || 0).toLocaleString('es-CO')} COP)</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-stone-300 mt-0.5">
+                    Monto: <strong className="text-emerald-400 font-bold">${Number(realtimeAlert.amount || 0).toLocaleString('es-CO')} COP</strong> ({realtimeAlert.method?.toUpperCase()})
+                  </p>
+                )}
+
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => {
+                      setActiveTab(realtimeAlert.targetTab);
+                      setRealtimeAlert(null);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Ver {realtimeAlert.type === 'payment' ? 'Pago' : 'Reserva'}</span>
+                  </button>
+                  {realtimeAlert.whatsappUrl && (
+                    <a
+                      href={realtimeAlert.whatsappUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                    >
+                      <span>💬 Chat WhatsApp</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
-          <span className="text-xs font-bold uppercase underline shrink-0 ml-2">Ver Ahora &rarr;</span>
         </div>
       )}
 

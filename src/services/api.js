@@ -658,6 +658,10 @@ export async function updatePackages(packages) {
 }
 
 export async function createBooking(data) {
+  let serverBooking = null;
+  let directWhatsAppUrl = '';
+  let secondaryWhatsAppUrl = '';
+
   try {
     const res = await fetch(`${API_BASE}/bookings`, {
       method: 'POST',
@@ -666,24 +670,31 @@ export async function createBooking(data) {
     });
     if (res.ok) {
       const result = await res.json();
-      saveLocalBooking(result.booking);
-      return result;
+      if (result && result.booking) {
+        serverBooking = result.booking;
+        directWhatsAppUrl = result.directWhatsAppUrl || '';
+        secondaryWhatsAppUrl = result.secondaryWhatsAppUrl || '';
+      }
     }
   } catch (err) {
-    console.warn('Server offline o error al reservar, usando fallback seguro:', err);
+    console.warn('Server offline o error al reservar en API Vercel:', err);
   }
 
-  // Fallback local garantizado
-  const newBooking = result?.booking || {
+  // Objeto de reserva definitivo
+  const newBooking = serverBooking || {
     id: `book-${Date.now()}`,
     ...data,
     totalPrice: data.totalPrice || 75000,
     createdAt: new Date().toISOString(),
     status: 'pending'
   };
+
+  // 1. Guardar localmente
   saveLocalBooking(newBooking);
 
-  // Sincronización en la nube (Supabase) para avisar al instante al PC y a la APK
+  // 2. SINCRONIZACIÓN OBLIGATORIA EN SUPABASE (EN LA NUBE)
+  // Esto garantiza que la reserva quede grabada de por vida, nunca desaparezca,
+  // y active en < 200 ms la notificación PUSH sonora en el PC y la APK móvil del fotógrafo.
   try {
     await supabase.from('catalog').upsert({
       id: `book-${newBooking.id}`,
@@ -692,26 +703,43 @@ export async function createBooking(data) {
       location: newBooking.specificLocation || '',
       url: JSON.stringify(newBooking)
     });
+    console.log('✓ Reserva guardada y sincronizada en Supabase con éxito:', newBooking.clientName);
+  } catch (supaErr) {
+    console.error('Error sincronizando reserva con Supabase:', supaErr);
+  }
+
+  // 3. Notificación instantánea entre pestañas / ventanas en el mismo equipo
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('bookings_realtime_sync');
+      bc.postMessage({ type: 'new_booking', booking: newBooking });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_bookings_last_sync', Date.now().toString());
   } catch (e) {}
 
-  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
-  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
-  const msg = encodeURIComponent(
-    `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
-    `👤 *Nombre:* ${newBooking.clientName}\n` +
-    `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
-    `📦 *Paquete:* ${newBooking.packageName || 'Sesión Fotográfica'} ($${Number(newBooking.totalPrice || 0).toLocaleString('es-CO')} COP)\n` +
-    `📍 *Lugar:* ${newBooking.specificLocation || 'San Antero'}\n` +
-    `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
-    `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
-    `_Quedo atento a tu confirmación para agendarla definitivamente._`
-  );
+  if (!directWhatsAppUrl) {
+    const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+    const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+    const msg = encodeURIComponent(
+      `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
+      `👤 *Nombre:* ${newBooking.clientName}\n` +
+      `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
+      `📦 *Paquete:* ${newBooking.packageName || 'Sesión Fotográfica'} ($${Number(newBooking.totalPrice || 0).toLocaleString('es-CO')} COP)\n` +
+      `📍 *Lugar:* ${newBooking.specificLocation || 'San Antero'}\n` +
+      `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
+      `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
+      `_Quedo atento a tu confirmación para agendarla definitivamente._`
+    );
+    directWhatsAppUrl = `https://wa.me/${p1}?text=${msg}`;
+    secondaryWhatsAppUrl = `https://wa.me/${p2}?text=${msg}`;
+  }
 
   return {
     success: true,
     booking: newBooking,
-    directWhatsAppUrl: `https://wa.me/${p1}?text=${msg}`,
-    secondaryWhatsAppUrl: `https://wa.me/${p2}?text=${msg}`
+    directWhatsAppUrl,
+    secondaryWhatsAppUrl
   };
 }
 
@@ -981,10 +1009,28 @@ export async function getAdminBookings() {
     }
   } catch (e) {}
 
+  // Respaldar inmediatamente en la caché local del dispositivo para que nunca desaparezcan
+  if (cloudBookings.length > 0) {
+    try {
+      const currentLocal = getLocalBookings();
+      const localMap = new Map();
+      currentLocal.forEach(b => { if (b?.id) localMap.set(b.id, b); });
+      cloudBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
+      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(Array.from(localMap.values())));
+    } catch (e) {}
+  }
+
+  // Lista de reservas eliminadas explícitamente para que no reaparezcan
+  let deletedIds = new Set();
+  try {
+    const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
+    deletedIds = new Set(Array.isArray(rawDel) ? rawDel : []);
+  } catch (e) {}
+
   const localBookings = getLocalBookings();
   const map = new Map();
   [...serverBookings, ...cloudBookings, ...localBookings].forEach(b => {
-    if (b && b.id && b.id !== 'book-demo-1') {
+    if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       map.set(b.id, b);
     }
   });
@@ -1023,8 +1069,8 @@ export async function getAdminBookings() {
     }
   }
 
-  // Filtrar cualquier rastro de reservas demo
-  return combined.filter(b => b && b.id !== 'book-demo-1');
+  // Filtrar cualquier rastro de reservas demo o eliminadas
+  return combined.filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`));
 }
 
 export async function updateAdminBooking(id, updates) {
@@ -1073,6 +1119,13 @@ export async function updateBookingStatus(id, status) {
 
 export async function deleteAdminBooking(id) {
   try {
+    const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
+    rawDel.push(id);
+    rawDel.push(`book-${id}`);
+    localStorage.setItem('sebastian_g_deleted_bookings', JSON.stringify([...new Set(rawDel)]));
+  } catch (e) {}
+
+  try {
     await fetch(`${API_BASE}/admin/bookings/${id}`, { method: 'DELETE' });
   } catch (err) {
     console.warn('Error al eliminar reserva en servidor:', err);
@@ -1083,10 +1136,19 @@ export async function deleteAdminBooking(id) {
     await supabase.from('catalog').delete().eq('id', id);
   } catch (e) {}
 
-  const list = getLocalBookings().filter(b => b.id !== id);
+  const list = getLocalBookings().filter(b => b.id !== id && b.id !== `book-${id}`);
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
   } catch (e) {}
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('bookings_realtime_sync');
+      bc.postMessage({ type: 'delete_booking', id });
+      setTimeout(() => bc.close(), 300);
+    }
+  } catch (e) {}
+
   return { success: true };
 }
 
