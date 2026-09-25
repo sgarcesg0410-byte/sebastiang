@@ -339,6 +339,31 @@ export default function App() {
               </a>
             </div>
 
+            {/* Garantías de Experiencia Sebastian G */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-4xl py-3 border-y border-stone-800/80 my-2 text-left">
+              <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
+                <span className="text-xl">📸</span>
+                <div>
+                  <span className="text-xs font-bold text-amber-300 block">Máxima Calidad Full HD</span>
+                  <span className="text-[11px] text-stone-400">Edición profesional y archivos originales sin compresión.</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
+                <span className="text-xl">⛅</span>
+                <div>
+                  <span className="text-xs font-bold text-sky-300 block">Garantía de Clima</span>
+                  <span className="text-[11px] text-stone-400">Si llueve en San Antero, reprogramamos tu sesión sin costo.</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
+                <span className="text-xl">🎁</span>
+                <div>
+                  <span className="text-xs font-bold text-emerald-300 block">+2 Fotos Gratis</span>
+                  <span className="text-[11px] text-stone-400">Obsequio exclusivo incluido en todos los paquetes.</span>
+                </div>
+              </div>
+            </div>
+
             <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-stone-400">
               <button
                 onClick={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
