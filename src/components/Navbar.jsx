@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Menu, X, Sparkles, Lock, MessageCircle } from 'lucide-react';
+import { ShieldCheck, Menu, X, Sparkles, Lock } from 'lucide-react';
 
 export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setCurrentView, photographerName = "Sebastian G" }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -76,36 +76,14 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           )}
         </nav>
 
-        {/* Contacto Directo WhatsApp Desktop */}
-        <div className="hidden md:flex items-center gap-4">
-          <a
-            href="https://wa.me/573244725167?text=Hola%20Sebastian,%20estoy%20viendo%20tu%20sitio%20web%20y%20me%20gustar%C3%ADa%20hacerte%20una%20consulta."
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-stone-900 border border-stone-800 hover:border-emerald-500/50 text-stone-300 hover:text-emerald-400 font-semibold text-xs px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-sm"
-          >
-            <MessageCircle className="w-4 h-4 text-emerald-400" />
-            <span>WhatsApp Directo</span>
-          </a>
-        </div>
-
-        {/* Acciones Móviles: Menú Limpio sin saturación de botones */}
+        {/* Acciones Móviles: Menú Limpio */}
         <div className="flex md:hidden items-center gap-2">
-          <a
-            href="https://wa.me/573244725167?text=Hola%20Sebastian,%20estoy%20viendo%20tu%20sitio%20web%20y%20me%20gustar%C3%ADa%20hacerte%20una%20consulta."
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-2 text-stone-300 hover:text-emerald-400 rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-center"
-            title="WhatsApp Directo"
-          >
-            <MessageCircle className="w-5 h-5 text-emerald-400" />
-          </a>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 text-stone-300 hover:text-white rounded-xl bg-stone-900 border border-stone-800"
             aria-label="Abrir menú"
           >
-            {mobileMenuOpen ? <X className="w-6 h-6 text-amber-400" /> : <Menu className="w-6 h-6" />}
+            {mobileMenuOpen ? <X className="w-6 h-6 text-amber-400" /> : <Menu className="w-6 h-6 text-stone-200" />}
           </button>
         </div>
       </div>
@@ -142,19 +120,6 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
               <span>✨ Ver Animación de Entrada del Logo</span>
             </button>
           )}
-
-          <div className="pt-3 border-t border-stone-800">
-            <a
-              href="https://wa.me/573244725167?text=Hola%20Sebastian,%20estoy%20viendo%20tu%20sitio%20web%20y%20me%20gustar%C3%ADa%20hacerte%20una%20consulta."
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setMobileMenuOpen(false)}
-              className="w-full flex items-center justify-center gap-2 bg-stone-950 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 font-bold text-sm py-3 rounded-xl shadow-lg"
-            >
-              <MessageCircle className="w-4 h-4 text-emerald-400" />
-              <span>Escribir por WhatsApp</span>
-            </a>
-          </div>
         </div>
       )}
     </header>
