@@ -150,15 +150,7 @@ export default function App() {
       }, 500);
     };
 
-    // 1. Sincronización en la nube en tiempo real (Celular <-> Computador)
-    const channel = supabase
-      .channel('catalog_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-        triggerDebouncedCatalog();
-      })
-      .subscribe();
-
-    // 2. Sincronización instantánea simultánea en 0ms entre pestañas / ventanas
+    // 1. Sincronización instantánea simultánea en 0ms entre pestañas / ventanas (0 costo de Supabase)
     let bc;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -178,7 +170,6 @@ export default function App() {
 
     return () => {
       if (syncDebounce) clearTimeout(syncDebounce);
-      supabase.removeChannel(channel);
       if (bc) bc.close();
       window.removeEventListener('storage', handleStorageSync);
       window.removeEventListener('popstate', handlePopState);
