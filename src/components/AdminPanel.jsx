@@ -78,7 +78,8 @@ import {
   saveWalletBaseBalances,
   REAL_DEFAULT_BOOKINGS,
   DEFAULT_PACKAGES,
-  DEFAULT_REAL_CATALOG
+  DEFAULT_REAL_CATALOG,
+  sendEmailNotification
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -1003,9 +1004,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         await updateBookingStatus(confirmingBooking.id, 'confirmed');
         setBookings(prev => prev.map(b => b.id === confirmingBooking.id ? { ...b, status: 'confirmed' } : b));
       }
-      // 2. Generar URL de WhatsApp y abrirla
+      // 2. Si el cliente suministró correo, enviar comprobante formal por email
+      if (confirmingBooking.clientEmail && confirmingBooking.clientEmail.includes('@')) {
+        sendEmailNotification({
+          type: 'booking_confirmation',
+          data: {
+            booking: confirmingBooking,
+            customNotes: confirmNote
+          }
+        }).catch(err => console.error('Error enviando correo de confirmación:', err));
+      }
+
+      // 3. Generar URL de WhatsApp y abrirla
       const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote);
-      setConfirmSuccessMsg(`✓ ¡Reserva confirmada! Abriendo WhatsApp para enviar mensaje a ${confirmingBooking.clientName}...`);
+      setConfirmSuccessMsg(
+        confirmingBooking.clientEmail
+          ? `✓ ¡Reserva confirmada! Correo enviado a ${confirmingBooking.clientEmail} y abriendo WhatsApp...`
+          : `✓ ¡Reserva confirmada! Abriendo WhatsApp para enviar mensaje a ${confirmingBooking.clientName}...`
+      );
 
       const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
       if (isMobile) {
@@ -2155,7 +2171,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         {booking.clientName}
                       </h4>
 
-                      <div className="mt-1">
+                      <div className="mt-1 flex flex-wrap items-center gap-3">
                         <a
                           href={`https://wa.me/${clientPhoneClean}`}
                           target="_blank"
@@ -2165,6 +2181,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <MessageCircle className="w-3.5 h-3.5" />
                           <span>{booking.clientWhatsApp} (Chatear)</span>
                         </a>
+
+                        {booking.clientEmail && (
+                          <a
+                            href={`mailto:${booking.clientEmail}`}
+                            className="inline-flex items-center gap-1.5 text-xs text-amber-300 hover:text-amber-200 font-medium"
+                            title="Enviar correo a cliente"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            <span>{booking.clientEmail}</span>
+                          </a>
+                        )}
                       </div>
 
                       <div className="mt-4 p-3.5 rounded-2xl bg-stone-950 border border-stone-800/80 space-y-2 text-xs">
@@ -4775,6 +4802,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </div>
                 <p className="text-xs text-stone-400">
                   Cliente: <span className="font-bold text-amber-300">{confirmingBooking.clientName}</span> ({confirmingBooking.clientWhatsApp})
+                  {confirmingBooking.clientEmail && (
+                    <span className="block text-emerald-400 font-semibold mt-1">
+                      ✉️ Correo: {confirmingBooking.clientEmail} (Se enviará confirmación automática por email)
+                    </span>
+                  )}
                 </p>
               </div>
               <button
