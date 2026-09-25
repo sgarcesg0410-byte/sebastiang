@@ -279,6 +279,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [receiptPaymentMethod, setReceiptPaymentMethod] = useState('Nequi');
   const [receiptNotes, setReceiptNotes] = useState('Abono para reserva de fecha y cupo garantizado.');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [receiptWhatsAppLine, setReceiptWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
   const [payments, setPayments] = useState([]);
   const [copiedWalletKey, setCopiedWalletKey] = useState(null);
   const handleCopyWalletKey = (val, keyName) => {
@@ -429,6 +430,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   });
   const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
   const [deliverySuccessMsg, setDeliverySuccessMsg] = useState('');
+  const [deliveryWhatsAppLine, setDeliveryWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
 
   // Modal y confirmación de reserva por WhatsApp al cliente
   const [confirmingBooking, setConfirmingBooking] = useState(null);
@@ -525,7 +527,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const getDeliveryWhatsAppUrl = (session, customUrl, customNotes, customService) => {
+  const getDeliveryWhatsAppUrl = (session, customUrl, customNotes, customService, chosenLine = 'line1') => {
     if (!session) return '#';
     let cleanPhone = (session.clientWhatsApp || '').replace(/\D/g, '');
     if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
@@ -550,6 +552,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const activeNote = (customNotes !== undefined ? customNotes : session.deliveryNotes) ||
       'Todas tus fotografías seleccionadas han sido editadas y preparadas en máxima resolución Full HD original.';
 
+    const lineDisplay = chosenLine === 'line2'
+      ? '+57 302 369 6513 (Línea 2)'
+      : '+57 324 472 5167 (Línea 1)';
+
     const text = encodeURIComponent(
       `📸 *¡Hola ${formattedFirstName}! Tus fotos profesionales con Sebastian G están listas en Calidad Original Full HD.* ✨\n\n` +
       `Hemos finalizado la edición y retoque profesional de tus fotografías seleccionadas. Para que no pierdan resolución ni calidad (evitando la compresión de WhatsApp), puedes descargarlas en su tamaño original aquí:\n\n` +
@@ -557,6 +563,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `📦 *Servicio de Descarga:* ${serviceName}\n\n` +
       `📝 *Nota del Fotógrafo:* ${activeNote}\n\n` +
       `💡 *Consejo:* Te recomiendo descargarlas y guardarlas en tu computador o celular antes de que venza el enlace para conservarlas siempre en su máxima nitidez.\n\n` +
+      `📞 *Contacto Fotógrafo:* Sebastian G • ${lineDisplay}\n\n` +
       `¡Fue un placer capturar tus mejores momentos! Cualquier duda estoy a tu entera disposición. ♡`
     );
     return `https://wa.me/${cleanPhone}?text=${text}`;
@@ -1305,7 +1312,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     window.print();
   };
 
-  const handleSendReceiptWhatsApp = async () => {
+  const handleSendReceiptWhatsApp = async (chosenLine = receiptWhatsAppLine) => {
     if (!receiptBooking) return;
     setIsGeneratingPdf(true);
 
@@ -1323,6 +1330,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
     const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.id}&paid=${paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
+    const lineInfo = chosenLine === 'line2'
+      ? '+57 302 369 6513 (Línea 2)'
+      : '+57 324 472 5167 (Línea 1)';
+
     const text =
       `🧾 *COMPROBANTE DE PAGO OFICIAL • SEBASTIAN G* 📸✨\n\n` +
       `*N° de Comprobante:* ${voucherNum}\n` +
@@ -1339,6 +1350,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `📌 *Estado:* ${balance === 0 ? 'PAGADO TOTALMENTE (100%)' : 'ABONO CONFIRMADO (Cupo Reservado)'}\n` +
       `📝 *Concepto:* ${receiptNotes}\n` +
       `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en ${loc}, tu sesión se reprograma sin ningún costo ni penalidad.\n\n` +
+      `📞 *Contacto Oficial Fotógrafo:* Sebastian G • ${lineInfo}\n\n` +
       `📄 *DESCARGA O VISUALIZA TU RECIBO EN PDF AQUÍ:*\n${voucherOnlineUrl}\n\n` +
       `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está agendada. Nos vemos muy pronto 📸`;
 
@@ -3969,26 +3981,43 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       </button>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                    <div className="flex flex-col sm:flex-row gap-2 pt-1">
                       <a
                         href={`https://wa.me/${clientPhoneDigits}?text=${encodeURIComponent(
                           `📸 *¡Hola ${createdSessionResult.session.clientName}! Ya están listas las fotografías de tu sesión con Sebastian G para que elijas tus favoritas.*\n\n` +
-                          `👉 *Ingresa a tu galería privada protegida aquí:*\n${galleryFullUrl}\n\n` +
+                          `👉 *Ingresa a tu galería privada aquí:*\n${galleryFullUrl}\n\n` +
                           `⏰ *Importante:* Tienes exactamente *3 días* para hacer tu selección antes de que el enlace expire automáticamente.\n\n` +
-                          `🔒 *Nota de Seguridad:* Esta galería cuenta con protección digital anti-captura y marca de agua oficial. ¡Quedo atento a tus elecciones!`
+                          `📞 *Contacto:* Sebastian G • +57 324 472 5167 (Línea 1)\n\n` +
+                          `✨ Toca cualquier foto para elegirla. ¡Quedo muy atento a tus elecciones!`
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-600/30 active:scale-98 transition-all"
+                        className="flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs py-3.5 px-3 rounded-xl shadow-lg shadow-emerald-600/30 active:scale-98 transition-all"
                       >
-                        <Share2 className="w-4 h-4" />
-                        <span>📲 Enviar Enlace por WhatsApp al Cliente</span>
+                        <Share2 className="w-4 h-4 shrink-0" />
+                        <span>📲 Enviar vía Línea 1 (324...)</span>
+                      </a>
+
+                      <a
+                        href={`https://wa.me/${clientPhoneDigits}?text=${encodeURIComponent(
+                          `📸 *¡Hola ${createdSessionResult.session.clientName}! Ya están listas las fotografías de tu sesión con Sebastian G para que elijas tus favoritas.*\n\n` +
+                          `👉 *Ingresa a tu galería privada aquí:*\n${galleryFullUrl}\n\n` +
+                          `⏰ *Importante:* Tienes exactamente *3 días* para hacer tu selección antes de que el enlace expire automáticamente.\n\n` +
+                          `📞 *Contacto:* Sebastian G • +57 302 369 6513 (Línea 2)\n\n` +
+                          `✨ Toca cualquier foto para elegirla. ¡Quedo muy atento a tus elecciones!`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 text-white font-extrabold text-xs py-3.5 px-3 rounded-xl shadow-lg shadow-emerald-700/30 active:scale-98 transition-all"
+                      >
+                        <Share2 className="w-4 h-4 shrink-0" />
+                        <span>📲 Enviar vía Línea 2 (302...)</span>
                       </a>
 
                       <button
                         type="button"
                         onClick={() => copyToClipboard(galleryFullUrl)}
-                        className="px-4 py-3.5 bg-stone-900 border border-stone-700 hover:bg-stone-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-95"
+                        className="px-3.5 py-3.5 bg-stone-900 border border-stone-700 hover:bg-stone-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-95 shrink-0"
                       >
                         <Copy className="w-4 h-4" />
                         <span>{copiedLink ? '¡Copiado!' : 'Copiar'}</span>
@@ -3997,10 +4026,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       <button
                         type="button"
                         onClick={() => onOpenGalleryToken(createdSessionResult.session.token)}
-                        className="px-4 py-3.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/20"
+                        className="px-3.5 py-3.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-95 shadow-md shadow-amber-500/20 shrink-0"
                       >
                         <Eye className="w-4 h-4" />
-                        <span>Ver como Cliente</span>
+                        <span>Ver Galería</span>
                       </button>
                     </div>
                   </>
@@ -5394,27 +5423,92 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </form>
 
-            {/* Si ya está entregada o se acaba de guardar, mostrar botón directo de WhatsApp */}
+            {/* Si ya está entregada o se acaba de guardar, mostrar opciones de envío por WhatsApp con selector de línea */}
             {(deliveringSession.status === 'delivered' || deliveryForm.finalDeliveryUrl) && (
-              <div className="pt-3 border-t border-stone-800 space-y-2">
+              <div className="pt-4 border-t border-stone-800 space-y-3">
                 <div className="text-[11px] text-stone-400 flex items-center justify-between">
-                  <span>Notificación automática al WhatsApp del cliente:</span>
+                  <span>WhatsApp del cliente receptor:</span>
                   <span className="text-emerald-400 font-mono font-bold">{deliveringSession.clientWhatsApp}</span>
                 </div>
-                <a
-                  href={getDeliveryWhatsAppUrl(
-                    deliveringSession,
-                    deliveryForm.finalDeliveryUrl,
-                    deliveryForm.deliveryNotes,
-                    deliveryForm.deliveryService
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>📲 Enviar Fotos Full HD por WhatsApp Ahora</span>
-                </a>
+
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                      Elige tu línea de WhatsApp para enviar:
+                    </span>
+                    <span className="text-[10px] text-stone-400 font-medium">
+                      {deliveryWhatsAppLine === 'line1' ? 'Línea 1 Seleccionada' : 'Línea 2 Seleccionada'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryWhatsAppLine('line1')}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
+                        deliveryWhatsAppLine === 'line1'
+                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
+                          : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-[10px] text-stone-400">Línea 1 (Principal)</div>
+                        <div className="font-mono text-xs text-white">324 472 5167</div>
+                      </div>
+                      {deliveryWhatsAppLine === 'line1' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryWhatsAppLine('line2')}
+                      className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
+                        deliveryWhatsAppLine === 'line2'
+                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
+                          : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="text-[10px] text-stone-400">Línea 2 (Secundaria)</div>
+                        <div className="font-mono text-xs text-white">302 369 6513</div>
+                      </div>
+                      {deliveryWhatsAppLine === 'line2' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <a
+                    href={getDeliveryWhatsAppUrl(
+                      deliveringSession,
+                      deliveryForm.finalDeliveryUrl,
+                      deliveryForm.deliveryNotes,
+                      deliveryForm.deliveryService,
+                      'line1'
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 px-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
+                  >
+                    <MessageCircle className="w-4 h-4 shrink-0" />
+                    <span>📲 Enviar vía Línea 1 (324...)</span>
+                  </a>
+
+                  <a
+                    href={getDeliveryWhatsAppUrl(
+                      deliveringSession,
+                      deliveryForm.finalDeliveryUrl,
+                      deliveryForm.deliveryNotes,
+                      deliveryForm.deliveryService,
+                      'line2'
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs py-3 px-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
+                  >
+                    <MessageCircle className="w-4 h-4 shrink-0" />
+                    <span>📲 Enviar vía Línea 2 (302...)</span>
+                  </a>
+                </div>
               </div>
             )}
           </div>
@@ -5820,32 +5914,86 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
+            {/* Selector de Línea de WhatsApp para Recibo */}
+            <div className="p-3 bg-stone-950/80 border border-stone-800 rounded-2xl space-y-2 no-print">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                  Elige la línea de WhatsApp para enviar el comprobante:
+                </span>
+                <span className="text-[10px] text-stone-400 font-medium">
+                  {receiptWhatsAppLine === 'line1' ? 'Línea 1 Seleccionada' : 'Línea 2 Seleccionada'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setReceiptWhatsAppLine('line1')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
+                    receiptWhatsAppLine === 'line1'
+                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
+                      : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
+                  }`}
+                >
+                  <div>
+                    <div className="text-[10px] text-stone-400">Línea 1 (Principal)</div>
+                    <div className="font-mono text-xs text-white">324 472 5167</div>
+                  </div>
+                  {receiptWhatsAppLine === 'line1' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReceiptWhatsAppLine('line2')}
+                  className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
+                    receiptWhatsAppLine === 'line2'
+                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
+                      : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
+                  }`}
+                >
+                  <div>
+                    <div className="text-[10px] text-stone-400">Línea 2 (Secundaria)</div>
+                    <div className="font-mono text-xs text-white">302 369 6513</div>
+                  </div>
+                  {receiptWhatsAppLine === 'line2' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                </button>
+              </div>
+            </div>
+
             {/* Botones de Acción (No se imprimen) */}
-            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 no-print">
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1 no-print">
               <button
                 type="button"
                 onClick={handleDownloadReceiptPdf}
                 disabled={isGeneratingPdf}
-                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95 disabled:opacity-50"
+                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700 text-amber-300 hover:text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
               >
                 <DownloadCloud className="w-4 h-4" />
-                <span>{isGeneratingPdf ? 'Generando PDF...' : '📥 Descargar Archivo PDF'}</span>
+                <span>{isGeneratingPdf ? 'Generando...' : 'Descargar PDF'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={handleSendReceiptWhatsApp}
+                onClick={() => handleSendReceiptWhatsApp('line1')}
                 disabled={isGeneratingPdf}
-                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95 disabled:opacity-50"
+                className="w-full sm:flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/20 transition-all active:scale-95 disabled:opacity-50"
               >
-                <MessageCircle className="w-4 h-4" />
-                <span>{isGeneratingPdf ? 'Preparando...' : '📲 Enviar Archivo PDF a WhatsApp'}</span>
+                <MessageCircle className="w-4 h-4 shrink-0" />
+                <span>📲 Enviar vía Línea 1 (324...)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSendReceiptWhatsApp('line2')}
+                disabled={isGeneratingPdf}
+                className="w-full sm:flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-700/20 transition-all active:scale-95 disabled:opacity-50"
+              >
+                <MessageCircle className="w-4 h-4 shrink-0" />
+                <span>📲 Enviar vía Línea 2 (302...)</span>
               </button>
 
               <button
                 type="button"
                 onClick={handlePrintReceipt}
-                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto px-3.5 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold flex items-center justify-center gap-1"
                 title="Imprimir copia"
               >
                 <Printer className="w-3.5 h-3.5" />
@@ -5855,7 +6003,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <button
                 type="button"
                 onClick={() => setReceiptBooking(null)}
-                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-white text-xs font-semibold border border-stone-800"
+                className="w-full sm:w-auto px-3.5 py-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-white text-xs font-semibold border border-stone-800"
               >
                 Cerrar
               </button>

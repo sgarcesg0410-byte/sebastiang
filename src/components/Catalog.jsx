@@ -84,26 +84,12 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             Sesiones de retratos, campo, eventos, bodas y parejas en cualquier locación o destino que elijas.
           </p>
 
-          {/* BOTONES DE ACCIÓN: EXPLORAR CATÁLOGO Y COMPARTIR PORTAFOLIO */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <button
-              onClick={() => {
-                const el = document.getElementById('catalog-gallery-section');
-                if (el) el.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="w-full sm:w-auto flex items-center justify-center gap-3 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-base sm:text-lg px-8 py-4 rounded-2xl shadow-xl shadow-amber-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
-            >
-              <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/40 flex items-center justify-center shadow-inner">
-                <Camera className="w-5 h-5 text-stone-950 stroke-[2.5]" />
-              </div>
-              <span className="text-stone-950 font-black">Explorar Catálogo de Fotos</span>
-              <ArrowRight className="w-5 h-5 ml-1 text-stone-950 stroke-[2.5]" />
-            </button>
-
+          {/* BOTÓN DE ACCIÓN: COMPARTIR PORTAFOLIO */}
+          <div className="flex items-center justify-center">
             <button
               type="button"
               onClick={handleShareApp}
-              className="w-full sm:w-auto flex items-center justify-center gap-2.5 bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 hover:border-amber-500/50 text-stone-200 hover:text-white font-bold text-base px-6 py-4 rounded-2xl transition-all shadow-lg active:scale-[0.98]"
+              className="inline-flex items-center justify-center gap-2.5 bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 hover:border-amber-500/50 text-stone-200 hover:text-white font-bold text-sm sm:text-base px-7 py-3.5 rounded-2xl transition-all shadow-lg active:scale-[0.98]"
               title="Compartir enlace del portafolio por WhatsApp o redes"
             >
               {shareCopied ? (
@@ -119,8 +105,8 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               )}
             </button>
           </div>
-          <p className="text-xs text-stone-400 mt-3">
-            ✨ Toca cualquier fotografía del portafolio para verla en detalle y agendar tu sesión.
+          <p className="text-xs text-stone-400 mt-4">
+            ✨ Toca cualquier fotografía del portafolio para verla en alta definición.
           </p>
         </div>
       </section>
@@ -219,7 +205,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                       <span className="truncate">{photo.location}</span>
                     </span>
                     <span className="text-amber-400 font-semibold group-hover:underline text-[10px] sm:text-xs shrink-0">
-                      Ver foto & reservar
+                      Ver foto
                     </span>
                   </div>
                 </div>
@@ -237,7 +223,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             "Capturamos momentos, creamos recuerdos. ♡"
           </p>
           <p className="text-xs text-stone-400 max-w-md mx-auto">
-            💡 Toca cualquiera de las fotos de arriba para verla en pantalla completa y reservar tu sesión con esa temática o locación.
+            💡 Toca cualquiera de las fotos de arriba para verla en alta definición.
           </p>
         </div>
       </section>
@@ -246,57 +232,66 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
       {previewPhoto && (
         <div 
           onClick={() => setPreviewPhoto(null)}
-          className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 cursor-pointer select-none"
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 cursor-pointer select-none"
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="bg-stone-900 border border-stone-700 rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[92vh]"
+            className="bg-stone-950 border border-stone-800 rounded-2xl sm:rounded-3xl max-w-4xl sm:max-w-5xl md:max-w-6xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[95vh] relative"
           >
             {/* Cabecera Limpia del Visor */}
-            <div className="px-5 py-3 bg-stone-950/90 border-b border-stone-800 flex items-center justify-between">
+            <div className="px-4 sm:px-6 py-2.5 sm:py-3 bg-stone-950/95 border-b border-stone-800 flex items-center justify-between">
               <span className="text-xs font-serif font-bold text-white tracking-wider">
-                Sebastian G
+                Sebastian G • Fotografía Profesional
               </span>
               <button
                 onClick={() => setPreviewPhoto(null)}
                 className="p-1.5 text-stone-400 hover:text-white rounded-xl bg-stone-900 hover:bg-stone-800 transition-colors"
-                title="Cerrar vista previa"
+                title="Cerrar vista (o toca afuera)"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Contenedor de Imagen Protegida con Canvas Anti-Inspección */}
-            <div className="relative w-full bg-black flex items-center justify-center min-h-[320px] max-h-[66vh] overflow-hidden select-none">
-              <ProtectedCanvasImage
-                src={previewPhoto.url}
-                alt={previewPhoto.title}
-                objectFit="contain"
-                className="max-h-[64vh]"
-              />
+            {/* Contenedor de Imagen Amplia en Alta Definición con Canvas Anti-Inspección */}
+            <div 
+              onClick={() => setPreviewPhoto(null)}
+              className="relative w-full bg-black flex items-center justify-center min-h-[350px] sm:min-h-[500px] max-h-[75vh] sm:max-h-[82vh] overflow-hidden select-none cursor-pointer"
+              title="Toca afuera o en la foto para volver al catálogo"
+            >
+              <div 
+                onClick={(e) => e.stopPropagation()} 
+                className="w-full h-full flex items-center justify-center max-h-[75vh] sm:max-h-[82vh] cursor-default"
+              >
+                <ProtectedCanvasImage
+                  src={previewPhoto.url}
+                  alt={previewPhoto.title}
+                  objectFit="contain"
+                  className="max-h-[75vh] sm:max-h-[82vh]"
+                />
+              </div>
             </div>
 
-            <div className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-stone-900 border-t border-stone-800">
-              <div>
-                <span className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider block">
+            {/* Pie de foto limpio y compacto (sin botones de reserva) */}
+            <div className="px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-4 bg-stone-950 border-t border-stone-800 text-xs">
+              <div className="min-w-0">
+                <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider block">
                   {previewPhoto.category}
                 </span>
-                <h4 className="text-lg font-serif font-bold text-white">{previewPhoto.title}</h4>
-                <p className="text-xs text-stone-400 flex items-center gap-1 mt-0.5">
-                  <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                  {previewPhoto.location}
+                <h4 className="text-xs sm:text-sm font-serif font-bold text-white truncate">
+                  {previewPhoto.title}
+                </h4>
+                <p className="text-[11px] text-stone-400 flex items-center gap-1 mt-0.5 truncate">
+                  <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                  <span className="truncate">{previewPhoto.location}</span>
                 </p>
               </div>
+
               <button
-                onClick={() => {
-                  const chosenPhoto = previewPhoto;
-                  setPreviewPhoto(null);
-                  if (onOpenBooking) onOpenBooking(chosenPhoto);
-                }}
-                className="w-full sm:w-auto bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs sm:text-sm px-6 py-3 rounded-xl shadow-lg shadow-amber-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                type="button"
+                onClick={() => setPreviewPhoto(null)}
+                className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-300 hover:text-white text-xs font-semibold transition-colors shrink-0 cursor-pointer"
               >
-                <Sparkles className="w-4 h-4 fill-stone-950 text-stone-950" />
-                <span>Reservar sesión con esta foto</span>
+                Volver al Catálogo
               </button>
             </div>
           </div>
