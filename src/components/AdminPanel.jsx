@@ -294,6 +294,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [pushPermission, setPushPermission] = useState(() => getPushPermissionState());
   const knownBookingIdsRef = useRef(null);
   const knownPaymentIdsRef = useRef(null);
+  const knownSubmittedSessionTokensRef = useRef(null);
 
   useEffect(() => {
     const handlePushChange = () => {
@@ -639,26 +640,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         fetchCloudWalletBaseBalances()
       ]);
 
+      const areArraysEqual = (a, b) => {
+        if (a === b) return true;
+        if (!a || !b || a.length !== b.length) return false;
+        try {
+          return JSON.stringify(a) === JSON.stringify(b);
+        } catch (e) {
+          return false;
+        }
+      };
+
       const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value) && bRes.value.length > 0 
         ? bRes.value 
         : REAL_DEFAULT_BOOKINGS;
-      setBookings(prev => {
-        if (prev && prev.length === bData.length && prev[0]?.id === bData[0]?.id && prev[0]?.status === bData[0]?.status) {
-          return prev;
-        }
-        return bData;
-      });
+      setBookings(prev => areArraysEqual(prev, bData) ? prev : bData);
 
       const rawSessions = sRes.status === 'fulfilled' && Array.isArray(sRes.value) ? sRes.value : [];
       const cleanSessions = rawSessions.filter(
         s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
       );
-      setSessions(prev => {
-        if (prev && prev.length === cleanSessions.length && prev[0]?.id === cleanSessions[0]?.id && prev[0]?.status === cleanSessions[0]?.status) {
-          return prev;
-        }
-        return cleanSessions;
-      });
+      setSessions(prev => areArraysEqual(prev, cleanSessions) ? prev : cleanSessions);
 
       const setData = setRes.status === 'fulfilled' && setRes.value ? setRes.value : null;
       if (setData) {
@@ -670,14 +671,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const pData = pRes.status === 'fulfilled' && Array.isArray(pRes.value) && pRes.value.length > 0 
         ? pRes.value 
         : DEFAULT_PACKAGES;
-      setPackages(prev => {
-        if (prev && prev.length === pData.length) return prev;
-        return pData;
-      });
-      setEditablePackages(prev => {
-        if (prev && prev.length === pData.length) return prev;
-        return pData;
-      });
+      setPackages(prev => areArraysEqual(prev, pData) ? prev : pData);
+      setEditablePackages(prev => areArraysEqual(prev, pData) ? prev : pData);
       if (!newSessionForm.packageId) {
         const defaultPkg = pData.find(p => p.photoCount === 8) || pData[0];
         setNewSessionForm(prev => ({
@@ -691,37 +686,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const cData = cRes.status === 'fulfilled' && Array.isArray(cRes.value) && cRes.value.length > 0
         ? cRes.value
         : DEFAULT_REAL_CATALOG;
-      setCatalog(prev => {
-        if (prev && prev.length > cData.length && cData.length <= 18) {
-          return prev;
-        }
-        if (prev && prev.length === cData.length && prev[0]?.id === cData[0]?.id) {
-          return prev;
-        }
-        return cData;
-      });
+      setCatalog(prev => areArraysEqual(prev, cData) ? prev : cData);
 
       const payData = payRes.status === 'fulfilled' && Array.isArray(payRes.value) ? payRes.value : [];
-      setPayments(prev => {
-        if (prev && prev.length === payData.length && prev[0]?.id === payData[0]?.id && prev[0]?.status === payData[0]?.status) {
-          return prev;
-        }
-        return payData;
-      });
+      setPayments(prev => areArraysEqual(prev, payData) ? prev : payData);
 
       const revData = revRes.status === 'fulfilled' && Array.isArray(revRes.value) ? revRes.value : [];
-      setReviewsList(prev => {
-        if (prev && prev.length === revData.length) return prev;
-        return revData;
-      });
+      setReviewsList(prev => areArraysEqual(prev, revData) ? prev : revData);
 
       const cloudBal = cloudBalRes && cloudBalRes.status === 'fulfilled' && cloudBalRes.value ? cloudBalRes.value : getWalletBaseBalances();
-      setWalletBaseBalances(prev => {
-        if (prev && prev.nequi === cloudBal.nequi && prev.daviplata === cloudBal.daviplata && prev.dale === cloudBal.dale) {
-          return prev;
-        }
-        return cloudBal;
-      });
+      setWalletBaseBalances(prev => areArraysEqual(prev, cloudBal) ? prev : cloudBal);
 
       setAnalyticsStats(getLocalAnalytics());
 
@@ -780,6 +754,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         }
       }
       knownPaymentIdsRef.current = new Set((payData || []).map(p => p?.id).filter(Boolean));
+
+      // Detección exacta de selección de fotos lista por parte del cliente
+      if (knownSubmittedSessionTokensRef.current !== null && Array.isArray(cleanSessions)) {
+        const freshSubmitted = cleanSessions.filter(
+          s => s?.token && s.status === 'submitted' && !knownSubmittedSessionTokensRef.current.has(s.token)
+        );
+        if (freshSubmitted.length > 0) {
+          const latestSess = freshSubmitted[0];
+          const count = latestSess.selectedCount || (latestSess.photos ? latestSess.photos.filter(p => p.selected).length : 0);
+          sendSystemPushNotification({
+            title: `📸 ¡Selección Lista: ${latestSess.clientName || 'Cliente'}!`,
+            body: `El cliente eligió sus ${count} fotos para edición. ¡Lista para procesar!`,
+            tag: `session-${latestSess.token}`,
+            data: { type: 'session', targetTab: 'sessions', token: latestSess.token }
+          });
+
+          setRealtimeAlert({
+            type: 'session',
+            clientName: latestSess.clientName || 'Cliente',
+            packageName: latestSess.packageTitle || 'Sesión Fotográfica',
+            targetTab: 'sessions'
+          });
+          setTimeout(() => setRealtimeAlert(null), 14000);
+        }
+      }
+      knownSubmittedSessionTokensRef.current = new Set(
+        (cleanSessions || []).filter(s => s?.token && s.status === 'submitted').map(s => s.token)
+      );
     } catch (err) {
       console.error('Error cargando datos de administración:', err);
     } finally {
@@ -795,81 +797,53 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     } catch (e) {}
   }, []);
 
-  // Monitoreo inteligente para avisar instantáneamente sobre reservas y pagos sin saturar el servidor
+  // Sincronización continua en tiempo real (Web <-> APK Android, WebSocket + Heartbeat 2.5s + BroadcastChannel + Instant Wakeup)
   useEffect(() => {
     if (!isAuthenticated) return;
+
+    // 1. Carga inicial de datos
     loadAllAdminData();
 
-    const poll = () => {
-      if (!document.hidden) {
-        loadAllAdminData(true);
-      }
-    };
-
-    // Latido suave de actualización cada 15 segundos para sincronización en segundo plano sin parpadeos
-    const interval = setInterval(poll, 15000);
-    const handleVisibility = () => {
-      if (!document.hidden) loadAllAdminData(true);
-    };
-    const handleFocus = () => {
+    // 2. Exponer método global para que el WebView nativo de Android o eventos externos fuercen sincronización instantánea (0ms)
+    window.forceRealtimeAdminSync = () => {
       loadAllAdminData(true);
     };
 
-    document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleFocus);
-    window.addEventListener('online', handleFocus);
-
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleFocus);
-      window.removeEventListener('online', handleFocus);
-    };
-  }, [isAuthenticated]);
-
-  // Sincronización simultánea en la nube en tiempo real (Celular <-> PC y entre pestañas)
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
     let debounceTimer = null;
-    const triggerSilentRefresh = () => {
+    const triggerSilentRefresh = (delay = 100) => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         loadAllAdminData(true);
-      }, 400);
+      }, delay);
     };
 
-    // Cualquier cambio en Supabase (sesiones, reservas, pagos, saldos, ajustes, catálogo)
-    // dispara la actualización inmediata y silenciosa en el PC y la APK
+    // 3. Canal Supabase Realtime (WebSocket bidireccional permanente para reservas, pagos, catálogo, sesiones y saldos)
     const channel = supabase
       .channel('admin_all_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-        triggerSilentRefresh();
+        triggerSilentRefresh(80);
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          loadAllAdminData(true);
+        }
+      });
 
+    // 4. Canales locales BroadcastChannel para sincronización 0ms entre pestañas y ventanas
     let bcCatalog, bcBookings, bcPayments, bcReviews, bcWallets;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bcCatalog = new BroadcastChannel('catalog_realtime_sync');
-        bcCatalog.onmessage = () => {
-          triggerSilentRefresh();
-        };
+        bcCatalog.onmessage = () => triggerSilentRefresh(40);
 
         bcBookings = new BroadcastChannel('bookings_realtime_sync');
-        bcBookings.onmessage = () => {
-          triggerSilentRefresh();
-        };
+        bcBookings.onmessage = () => triggerSilentRefresh(40);
 
         bcPayments = new BroadcastChannel('payments_realtime_sync');
-        bcPayments.onmessage = () => {
-          triggerSilentRefresh();
-        };
+        bcPayments.onmessage = () => triggerSilentRefresh(40);
 
         bcReviews = new BroadcastChannel('reviews_realtime_sync');
-        bcReviews.onmessage = () => {
-          triggerSilentRefresh();
-        };
+        bcReviews.onmessage = () => triggerSilentRefresh(40);
 
         bcWallets = new BroadcastChannel('wallet_balances_sync');
         bcWallets.onmessage = () => {
@@ -883,12 +857,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           e.key === 'sebastian_g_bookings_last_sync' || e.key === 'sebastian_g_bookings_v1' ||
           e.key === 'sebastian_g_payments_last_sync' || e.key === 'sebastian_g_payments_v1' ||
           e.key === 'sebastian_g_reviews_last_sync' || e.key === 'sebastian_g_reviews_v1') {
-        triggerSilentRefresh();
+        triggerSilentRefresh(40);
       }
       if (e.key === 'sebastian_g_wallet_base_balances_v1') {
         fetchCloudWalletBaseBalances().then(b => setWalletBaseBalances(b));
       }
     };
+    window.addEventListener('storage', handleStorage);
+
     const handleSwitchTab = (e) => {
       if (e.detail && e.detail.tab) {
         setActiveTab(e.detail.tab);
@@ -906,36 +882,45 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       navigator.serviceWorker.addEventListener('message', swMessageListener);
     }
 
-    // Sondeo de respaldo en tiempo real cada 3.5 segundos (Garantiza sincronización permanente en la APK y PC)
-    const realtimeInterval = setInterval(() => {
-      loadAllAdminData(true);
-    }, 3500);
+    // 5. Latido activo en tiempo real cada 2.5 segundos:
+    // Garantiza que la APK en celular y el navegador en PC nunca queden desfasados,
+    // incluso si la red móvil duerme WebSockets en segundo plano
+    const heartbeatInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        loadAllAdminData(true);
+      }
+    }, 2500);
 
-    // Actualización instantánea al cambiar de pestaña o volver a enfocar la app/APK
-    const handleVisibilityAndFocus = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    // 6. Despertar instantáneo al volver a la APK o pestaña (0 milisegundos de retardo)
+    const handleInstantWakeup = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
         loadAllAdminData(true);
       }
     };
-    document.addEventListener('visibilitychange', handleVisibilityAndFocus);
-    window.addEventListener('focus', handleVisibilityAndFocus);
+    document.addEventListener('visibilitychange', handleInstantWakeup);
+    window.addEventListener('focus', handleInstantWakeup);
+    window.addEventListener('online', handleInstantWakeup);
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      clearInterval(realtimeInterval);
-      document.removeEventListener('visibilitychange', handleVisibilityAndFocus);
-      window.removeEventListener('focus', handleVisibilityAndFocus);
+      clearInterval(heartbeatInterval);
+      document.removeEventListener('visibilitychange', handleInstantWakeup);
+      window.removeEventListener('focus', handleInstantWakeup);
+      window.removeEventListener('online', handleInstantWakeup);
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('admin-switch-tab', handleSwitchTab);
       supabase.removeChannel(channel);
       if (bcCatalog) bcCatalog.close();
       if (bcBookings) bcBookings.close();
       if (bcPayments) bcPayments.close();
       if (bcReviews) bcReviews.close();
       if (bcWallets) bcWallets.close();
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('admin-switch-tab', handleSwitchTab);
       if (swMessageListener && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', swMessageListener);
       }
+      try {
+        delete window.forceRealtimeAdminSync;
+      } catch (e) {}
     };
   }, [isAuthenticated]);
 
