@@ -5491,12 +5491,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
+            <a
+              href="/SebastianG-Admin.apk"
+              download="SebastianG-Admin.apk"
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.02]"
+            >
+              <DownloadCloud className="w-4 h-4" />
+              <span>📥 Descargar Archivo APK Directo (v1.2.0)</span>
+            </a>
+
             <button
               type="button"
               onClick={() => setShowInstallModal(false)}
               className="w-full py-2.5 bg-stone-800 hover:bg-stone-700 text-white font-bold text-xs rounded-xl"
             >
-              Entendido
+              Entendido / Cerrar
             </button>
           </div>
         </div>
