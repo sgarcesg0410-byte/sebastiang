@@ -141,3 +141,48 @@ html.security-blackout [role="dialog"] img {
 ::-webkit-scrollbar-thumb:hover {
   background: #f59e0b;
 }
+
+/* Estilos de Impresión de Alta Definición para el Comprobante Digital (PDF) */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #sebastian-g-digital-receipt,
+  #sebastian-g-digital-receipt * {
+    visibility: visible !important;
+  }
+  #sebastian-g-digital-receipt {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  #sebastian-g-digital-receipt * {
+    color: #0f172a !important;
+    border-color: #e2e8f0 !important;
+    background: transparent !important;
+  }
+  #sebastian-g-digital-receipt h2,
+  #sebastian-g-digital-receipt h5,
+  #sebastian-g-digital-receipt .font-serif {
+    color: #000000 !important;
+  }
+  #sebastian-g-digital-receipt .text-amber-400,
+  #sebastian-g-digital-receipt .text-amber-300 {
+    color: #b45309 !important;
+  }
+  #sebastian-g-digital-receipt .text-emerald-400 {
+    color: #047857 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

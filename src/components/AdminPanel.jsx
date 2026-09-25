@@ -44,7 +44,12 @@ import {
   DownloadCloud,
   Send,
   X,
-  Star
+  Star,
+  Mail,
+  FileText,
+  Printer,
+  ChevronLeft,
+  List
 } from 'lucide-react';
 import { 
   verifyAdminPin, 
@@ -259,6 +264,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [bookings, setBookings] = useState(REAL_DEFAULT_BOOKINGS);
   const [editingBooking, setEditingBooking] = useState(null);
   const [isSavingBooking, setIsSavingBooking] = useState(false);
+
+  // Modo de visualización de Reservas: Lista tradicional o Calendario Mensual
+  const [bookingViewMode, setBookingViewMode] = useState('list'); // 'list' | 'calendar'
+  const [calendarDate, setCalendarDate] = useState(() => new Date());
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState(null);
+
+  // Modal de Recibo Digital / Comprobante de Pago
+  const [receiptBooking, setReceiptBooking] = useState(null);
+  const [receiptType, setReceiptType] = useState('deposit'); // 'deposit' | 'total' | 'custom'
+  const [receiptPaidAmount, setReceiptPaidAmount] = useState('');
+  const [receiptPaymentMethod, setReceiptPaymentMethod] = useState('Nequi');
+  const [receiptNotes, setReceiptNotes] = useState('Abono para reserva de fecha y cupo garantizado.');
   const [payments, setPayments] = useState([]);
   const [copiedWalletKey, setCopiedWalletKey] = useState(null);
   const handleCopyWalletKey = (val, keyName) => {
@@ -1082,6 +1099,162 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       } catch (err) {
         alert('Error al eliminar reserva: ' + err.message);
       }
+    }
+  };
+
+  // 1. Parseo seguro de fechas de reservas para el Calendario
+  const parseBookingDate = (dateTimeStr) => {
+    if (!dateTimeStr) return null;
+    const str = String(dateTimeStr).trim();
+    // Formato DD/MM/YYYY (ej: "28/09/2026")
+    const ddmmyyyyMatch = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (ddmmyyyyMatch) {
+      const day = parseInt(ddmmyyyyMatch[1], 10);
+      const month = parseInt(ddmmyyyyMatch[2], 10) - 1;
+      const year = parseInt(ddmmyyyyMatch[3], 10);
+      return new Date(year, month, day);
+    }
+    // Formato YYYY-MM-DD
+    const yyyymmddMatch = str.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (yyyymmddMatch) {
+      const year = parseInt(yyyymmddMatch[1], 10);
+      const month = parseInt(yyyymmddMatch[2], 10) - 1;
+      const day = parseInt(yyyymmddMatch[3], 10);
+      return new Date(year, month, day);
+    }
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) return parsed;
+    return null;
+  };
+
+  // 2. Generador de enlace directo a Google Calendar (1 clic en Android y Web)
+  const getGoogleCalendarUrl = (booking) => {
+    const d = parseBookingDate(booking.dateTime);
+    if (!d) return '#';
+    let hour = 16;
+    let minute = 0;
+    const timeMatch = (booking.dateTime || '').match(/(\d{1,2}):(\d{2})\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?/i);
+    if (timeMatch) {
+      let h = parseInt(timeMatch[1], 10);
+      const m = parseInt(timeMatch[2], 10);
+      const ampm = (timeMatch[3] || '').toLowerCase().replace(/\./g, '').trim();
+      if (ampm === 'pm' && h < 12) h += 12;
+      if (ampm === 'am' && h === 12) h = 0;
+      hour = h;
+      minute = m;
+    }
+    const pad = (n) => String(n).padStart(2, '0');
+    const startYear = d.getFullYear();
+    const startMonth = pad(d.getMonth() + 1);
+    const startDay = pad(d.getDate());
+    const startHour = pad(hour);
+    const startMin = pad(minute);
+
+    let endHourNum = hour + 1;
+    let endMinNum = minute + 30;
+    if (endMinNum >= 60) {
+      endHourNum += 1;
+      endMinNum -= 60;
+    }
+    const endHour = pad(endHourNum % 24);
+    const endMin = pad(endMinNum);
+
+    const startIso = `${startYear}${startMonth}${startDay}T${startHour}${startMin}00`;
+    const endIso = `${startYear}${startMonth}${startDay}T${endHour}${endMin}00`;
+
+    const title = `📸 Sesión Fotográfica • ${booking.clientName}`;
+    const details = `Cliente: ${booking.clientName}\nWhatsApp: ${booking.clientWhatsApp || 'N/A'}\nPaquete: ${booking.packageName}\nPrecio: $${Number(booking.totalPrice).toLocaleString('es-CO')} COP\nNotas: ${booking.description || 'Sin notas adicionales'}\n\nAgendado desde Sebastian G (sebastiang.app)`;
+    const loc = booking.specificLocation || 'Playa Blanca, San Antero, Córdoba';
+
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startIso}/${endIso}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(loc)}`;
+  };
+
+  // 3. Recordatorio inteligente a 24 Horas de la Sesión vía WhatsApp
+  const handleSendReminder = (booking) => {
+    let clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+    if (clientPhone.length === 10 && !clientPhone.startsWith('57')) {
+      clientPhone = '57' + clientPhone;
+    }
+    const dateFormatted = formatDateTime12Hour(booking.dateTime);
+    const loc = booking.specificLocation || 'Playa Blanca, San Antero';
+    const rawName = (booking.clientName || 'Cliente').trim();
+    const firstName = rawName.split(' ')[0] || rawName;
+    const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+
+    const text = 
+      `¡Hola ${formattedFirstName}! 👋 Te saluda Sebastian G ✨\n\n` +
+      `Te escribo para recordarte con mucho entusiasmo nuestra sesión fotográfica programada:\n\n` +
+      `📅 *Fecha y Hora:* ${dateFormatted}\n` +
+      `📍 *Punto de Encuentro:* ${loc}\n` +
+      `📦 *Paquete Contratado:* ${booking.packageName}\n\n` +
+      `💡 *Recomendaciones VIP para tu sesión:*\n` +
+      `1. Llegar con 10 a 15 minutos de anticipación para aprovechar al máximo la luz natural (la "Golden Hour" del atardecer caribeño es mágica).\n` +
+      `2. Traer los cambios de ropa planchados o listos para usar.\n` +
+      `3. Hidratarte bien y llevar bloqueador solar o repelente según la locación.\n` +
+      `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en San Antero, reprogramamos tu sesión sin ningún costo adicional.\n\n` +
+      `¿Tienes alguna duda previa o cambio de última hora? ¡Quedo muy atento! Nos vemos muy pronto para crear fotos inolvidables 📸✨`;
+
+    const url = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
+    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    if (isMobile) {
+      window.location.href = url;
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  // 4. Modal de Recibo Digital Oficial y Voucher
+  const handleOpenReceipt = (booking) => {
+    setReceiptBooking(booking);
+    const total = Number(booking.totalPrice || 0);
+    const defaultPaid = booking.status === 'completed' ? total : Math.round(total * 0.5);
+    setReceiptPaidAmount(defaultPaid);
+    setReceiptType(booking.status === 'completed' ? 'total' : 'deposit');
+    setReceiptPaymentMethod('Nequi');
+    setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
+  };
+
+  const handlePrintReceipt = () => {
+    window.print();
+  };
+
+  const handleSendReceiptWhatsApp = () => {
+    if (!receiptBooking) return;
+    let clientPhone = (receiptBooking.clientWhatsApp || '').replace(/\D/g, '');
+    if (clientPhone.length === 10 && !clientPhone.startsWith('57')) {
+      clientPhone = '57' + clientPhone;
+    }
+    const total = Number(receiptBooking.totalPrice || 0);
+    const paid = Number(receiptPaidAmount || 0);
+    const balance = Math.max(0, total - paid);
+    const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
+    const rawName = (receiptBooking.clientName || 'Cliente').trim();
+    const firstName = rawName.split(' ')[0] || rawName;
+
+    const text =
+      `🧾 *COMPROBANTE DE PAGO OFICIAL • SEBASTIAN G* 📸✨\n\n` +
+      `*N° de Comprobante:* ${voucherNum}\n` +
+      `*Fecha de Emisión:* ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}\n` +
+      `*Cliente:* ${receiptBooking.clientName}\n` +
+      `*Sesión:* ${formatDateTime12Hour(receiptBooking.dateTime)}\n` +
+      `*Locación:* ${receiptBooking.specificLocation || 'San Antero'}\n` +
+      `*Paquete:* ${receiptBooking.packageName}\n\n` +
+      `────────────────────────\n` +
+      `💰 *Total del Paquete:* $${total.toLocaleString('es-CO')} COP\n` +
+      `✅ *Valor Recibido / Abonado:* $${paid.toLocaleString('es-CO')} COP (${receiptPaymentMethod})\n` +
+      `⏳ *Saldo Pendiente:* $${balance.toLocaleString('es-CO')} COP\n` +
+      `────────────────────────\n` +
+      `📌 *Estado:* ${balance === 0 ? 'PAGADO TOTALMENTE (100%)' : 'ABONO REGISTRADO (Cupo Reservado)'}\n` +
+      `📝 *Concepto:* ${receiptNotes}\n` +
+      `⛅ *Garantía:* Respaldo de clima en San Antero sin recargo por reprogramación.\n\n` +
+      `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está formalmente agendada. Nos vemos muy pronto 📸`;
+
+    const url = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
+    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    if (isMobile) {
+      window.location.href = url;
+    } else {
+      window.open(url, '_blank');
     }
   };
 
@@ -2110,32 +2283,392 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         </div>
       </div>
 
-      {/* PESTAÑA 1: RESERVAS DE CLIENTES */}
+      {/* PESTAÑA 1: RESERVAS DE CLIENTES (VISTA LISTA & CALENDARIO INTERACTIVO) */}
       {activeTab === 'bookings' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h3 className="text-xl font-serif font-bold text-white">
-                Reservas Recibidas desde la Página Web
+              <h3 className="text-xl font-serif font-bold text-white flex items-center gap-2">
+                <span>Reservas de Clientes</span>
+                <span className="text-xs font-sans font-bold text-amber-400 bg-amber-400/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                  {bookings.length} {bookings.length === 1 ? 'reserva' : 'reservas'}
+                </span>
               </h3>
               <p className="text-xs text-stone-400">
-                Notificaciones directas con locación, fecha, paquete e impresiones si aplica.
+                Gestión de sesiones, sincronización a Google Calendar, recordatorios a 24h y recibos oficiales.
               </p>
             </div>
-            <button
-              onClick={loadAllAdminData}
-              className="p-2 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 flex items-center gap-1 text-xs"
-            >
-              <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
-              <span>Actualizar</span>
-            </button>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {/* Selector de Vista: Lista vs Calendario */}
+              <div className="flex items-center bg-stone-950 p-1 rounded-xl border border-stone-800">
+                <button
+                  type="button"
+                  onClick={() => setBookingViewMode('list')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                    bookingViewMode === 'list'
+                      ? 'bg-amber-400 text-stone-950 shadow-md shadow-amber-400/20'
+                      : 'text-stone-400 hover:text-white'
+                  }`}
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span>Lista</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBookingViewMode('calendar')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                    bookingViewMode === 'calendar'
+                      ? 'bg-amber-400 text-stone-950 shadow-md shadow-amber-400/20'
+                      : 'text-stone-400 hover:text-white'
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Calendario</span>
+                </button>
+              </div>
+
+              <button
+                onClick={loadAllAdminData}
+                className="p-2 text-stone-400 hover:text-white rounded-xl hover:bg-stone-800 border border-stone-800 flex items-center gap-1 text-xs transition-colors"
+                title="Actualizar datos en tiempo real"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Actualizar</span>
+              </button>
+            </div>
           </div>
 
           {bookings.length === 0 ? (
             <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
               No hay reservas registradas todavía.
             </div>
+          ) : bookingViewMode === 'calendar' ? (
+            /* VISTA DE CALENDARIO MENSUAL INTERACTIVO */
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Cuadrícula del Calendario (2 Columnas) */}
+              <div className="lg:col-span-2 bg-stone-900 border border-stone-800 rounded-3xl p-4 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-lg sm:text-xl font-serif font-bold text-white capitalize">
+                      {calendarDate.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        setCalendarDate(now);
+                        const dayBookings = bookings.filter(b => {
+                          const d = parseBookingDate(b.dateTime);
+                          if (!d) return false;
+                          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+                        });
+                        setSelectedCalendarDay({ year: now.getFullYear(), month: now.getMonth(), day: now.getDate(), bookings: dayBookings });
+                      }}
+                      className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 transition-colors"
+                    >
+                      Hoy
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1))}
+                      className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white transition-colors"
+                      title="Mes anterior"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 1))}
+                      className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white transition-colors"
+                      title="Mes siguiente"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Cabecera Días de la Semana */}
+                <div className="grid grid-cols-7 gap-1 sm:gap-2 text-center text-[11px] font-bold text-stone-400 py-1 border-b border-stone-800">
+                  <span>Lun</span>
+                  <span>Mar</span>
+                  <span>Mié</span>
+                  <span>Jue</span>
+                  <span>Vie</span>
+                  <span>Sáb</span>
+                  <span>Dom</span>
+                </div>
+
+                {/* Celdas del Calendario */}
+                <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                  {(() => {
+                    const year = calendarDate.getFullYear();
+                    const month = calendarDate.getMonth();
+                    const firstDay = new Date(year, month, 1);
+                    const startOffset = (firstDay.getDay() + 6) % 7;
+                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    const prevMonthDays = new Date(year, month, 0).getDate();
+
+                    const today = new Date();
+                    const isCurrentMonthToday = today.getFullYear() === year && today.getMonth() === month;
+
+                    const cells = [];
+
+                    // Días previos de relleno
+                    for (let i = startOffset - 1; i >= 0; i--) {
+                      cells.push(
+                        <div
+                          key={`prev-${i}`}
+                          className="min-h-[64px] sm:min-h-[85px] p-1.5 rounded-xl bg-stone-950/20 border border-stone-800/30 text-stone-700 text-xs select-none flex flex-col justify-between"
+                        >
+                          <span>{prevMonthDays - i}</span>
+                        </div>
+                      );
+                    }
+
+                    // Días activos del mes
+                    for (let day = 1; day <= daysInMonth; day++) {
+                      const dayBookings = bookings.filter(b => {
+                        const d = parseBookingDate(b.dateTime);
+                        if (!d) return false;
+                        return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+                      });
+
+                      const isToday = isCurrentMonthToday && today.getDate() === day;
+                      const isSelected = selectedCalendarDay && selectedCalendarDay.year === year && selectedCalendarDay.month === month && selectedCalendarDay.day === day;
+
+                      cells.push(
+                        <div
+                          key={`day-${day}`}
+                          onClick={() => setSelectedCalendarDay({ year, month, day, bookings: dayBookings })}
+                          className={`min-h-[64px] sm:min-h-[85px] p-1.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none ${
+                            isSelected
+                              ? 'bg-amber-950/40 border-amber-400 ring-2 ring-amber-400/40'
+                              : isToday
+                              ? 'bg-stone-950 border-amber-500/50 shadow-sm'
+                              : 'bg-stone-950/80 border-stone-800/80 hover:border-stone-700 hover:bg-stone-800/40'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className={`text-xs font-bold ${isToday ? 'text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded-md' : 'text-stone-300'}`}>
+                              {day}
+                            </span>
+                            {dayBookings.length > 0 && (
+                              <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-amber-400 text-stone-950 shadow-sm">
+                                {dayBookings.length}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="space-y-1 mt-1 overflow-hidden">
+                            {dayBookings.slice(0, 2).map((b, idx) => (
+                              <div
+                                key={idx}
+                                className={`text-[9px] truncate px-1 py-0.5 rounded font-medium ${
+                                  b.status === 'confirmed'
+                                    ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-500/30'
+                                    : 'bg-amber-950/90 text-amber-300 border border-amber-500/30'
+                                }`}
+                                title={`${b.clientName} (${formatDateTime12Hour(b.dateTime)})`}
+                              >
+                                {b.clientName.split(' ')[0]}
+                              </div>
+                            ))}
+                            {dayBookings.length > 2 && (
+                              <div className="text-[9px] text-stone-400 text-center font-bold">
+                                +{dayBookings.length - 2} más
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Días posteriores de relleno
+                    const totalRendered = cells.length;
+                    const remaining = (7 - (totalRendered % 7)) % 7;
+                    for (let i = 1; i <= remaining; i++) {
+                      cells.push(
+                        <div
+                          key={`next-${i}`}
+                          className="min-h-[64px] sm:min-h-[85px] p-1.5 rounded-xl bg-stone-950/20 border border-stone-800/30 text-stone-700 text-xs select-none flex flex-col justify-between"
+                        >
+                          <span>{i}</span>
+                        </div>
+                      );
+                    }
+
+                    return cells;
+                  })()}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-stone-800 text-[11px] text-stone-400">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                    <span>Sesión Confirmada</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                    <span>Sesión Pendiente</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-md border border-amber-400"></span>
+                    <span>Día de Hoy</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Columna Detalle del Día & Google Calendar */}
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl p-5 space-y-4">
+                {(() => {
+                  const sel = selectedCalendarDay || (() => {
+                    const now = new Date();
+                    const dayBookings = bookings.filter(b => {
+                      const d = parseBookingDate(b.dateTime);
+                      if (!d) return false;
+                      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+                    });
+                    return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate(), bookings: dayBookings };
+                  })();
+
+                  const selDate = new Date(sel.year, sel.month, sel.day);
+                  const dayBookings = bookings.filter(b => {
+                    const d = parseBookingDate(b.dateTime);
+                    if (!d) return false;
+                    return d.getFullYear() === sel.year && d.getMonth() === sel.month && d.getDate() === sel.day;
+                  });
+
+                  return (
+                    <>
+                      <div className="border-b border-stone-800 pb-3">
+                        <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider block">
+                          Agenda del Día Seleccionado
+                        </span>
+                        <h4 className="text-base sm:text-lg font-serif font-bold text-white capitalize mt-0.5">
+                          {selDate.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                        </h4>
+                        <p className="text-xs text-stone-400 mt-0.5">
+                          {dayBookings.length === 0 ? 'Sin citas para este día' : `${dayBookings.length} ${dayBookings.length === 1 ? 'sesión programada' : 'sesiones programadas'}`}
+                        </p>
+                      </div>
+
+                      {dayBookings.length === 0 ? (
+                        <div className="p-8 text-center bg-stone-950/60 rounded-2xl border border-stone-800/80 space-y-2">
+                          <Calendar className="w-8 h-8 text-stone-600 mx-auto" />
+                          <p className="text-xs text-stone-300 font-medium">No hay sesiones para esta fecha.</p>
+                          <p className="text-[11px] text-stone-500">Toca cualquier otro día del calendario para revisar sus citas agendadas.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 max-h-[580px] overflow-y-auto pr-1">
+                          {dayBookings.map((booking) => {
+                            let clientPhoneClean = (booking.clientWhatsApp || '').replace(/\D/g, '');
+                            if (clientPhoneClean.length === 10 && !clientPhoneClean.startsWith('57')) {
+                              clientPhoneClean = '57' + clientPhoneClean;
+                            }
+
+                            return (
+                              <div
+                                key={booking.id}
+                                className="bg-stone-950 border border-stone-800 rounded-2xl p-4 space-y-3 hover:border-amber-500/40 transition-colors"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span
+                                    className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-lg ${
+                                      booking.status === 'confirmed'
+                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                    }`}
+                                  >
+                                    {booking.status === 'confirmed' ? 'Confirmada' : 'Pendiente'}
+                                  </span>
+                                  <span className="text-xs font-mono font-bold text-amber-400">
+                                    {formatDateTime12Hour(booking.dateTime).split(' a las ')[1] || formatDateTime12Hour(booking.dateTime)}
+                                  </span>
+                                </div>
+
+                                <div>
+                                  <h5 className="font-serif font-bold text-white text-base">
+                                    {booking.clientName}
+                                  </h5>
+                                  <p className="text-xs text-stone-300 truncate mt-0.5">
+                                    {booking.packageName}
+                                  </p>
+                                  <p className="text-[11px] text-stone-400 truncate">
+                                    📍 {booking.specificLocation || 'San Antero'}
+                                  </p>
+                                </div>
+
+                                {/* Botón 1-Clic: Sincronizar con Google Calendar */}
+                                <a
+                                  href={getGoogleCalendarUrl(booking)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="w-full py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 bg-blue-950/80 hover:bg-blue-900 text-blue-200 border border-blue-500/40 transition-all shadow-sm active:scale-95"
+                                  title="Guardar cita directamente en Google Calendar"
+                                >
+                                  <Calendar className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                  <span>📅 Añadir a Google Calendar</span>
+                                </a>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSendReminder(booking)}
+                                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 bg-stone-900 hover:bg-stone-800 text-amber-300 border border-amber-500/30 transition-colors"
+                                    title="Enviar recordatorio 24h por WhatsApp"
+                                  >
+                                    <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                                    <span className="truncate">Recordar 24h</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenReceipt(booking)}
+                                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 bg-stone-900 hover:bg-stone-800 text-stone-200 border border-stone-700 transition-colors"
+                                    title="Generar recibo de pago digital"
+                                  >
+                                    <FileText className="w-3 h-3 text-amber-400 shrink-0" />
+                                    <span className="truncate">Recibo PDF</span>
+                                  </button>
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-1 border-t border-stone-800/80">
+                                  <a
+                                    href={`https://wa.me/${clientPhoneClean}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center justify-center gap-1"
+                                  >
+                                    <MessageCircle className="w-3 h-3 shrink-0" />
+                                    <span>WhatsApp</span>
+                                  </a>
+
+                                  {booking.status !== 'confirmed' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenConfirmBookingModal(booking)}
+                                      className="py-1.5 px-2.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-stone-950 text-[11px] font-black flex items-center justify-center gap-1"
+                                    >
+                                      <CheckCircle2 className="w-3 h-3 shrink-0" />
+                                      <span>Confirmar</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
           ) : (
+            /* VISTA DE LISTA DE RESERVAS */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {bookings.map((booking) => {
                 const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
@@ -2225,123 +2758,161 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       )}
                     </div>
 
-                    <div className="pt-3 border-t border-stone-800 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={booking.status}
-                          onChange={(e) => handleStatusChange(booking.id, e.target.value)}
-                          className="bg-stone-950 border border-stone-700 text-xs rounded-lg px-2 py-1.5 text-stone-300"
-                        >
-                          <option value="pending">Pendiente</option>
-                          <option value="confirmed">Confirmar</option>
-                          <option value="completed">Sesión Realizada</option>
-                        </select>
+                    <div className="space-y-2.5 pt-3 border-t border-stone-800">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={booking.status}
+                            onChange={(e) => handleStatusChange(booking.id, e.target.value)}
+                            className="bg-stone-950 border border-stone-700 text-xs rounded-lg px-2 py-1.5 text-stone-300"
+                          >
+                            <option value="pending">Pendiente</option>
+                            <option value="confirmed">Confirmar</option>
+                            <option value="completed">Sesión Realizada</option>
+                          </select>
 
+                          <button
+                            type="button"
+                            onClick={() => setEditingBooking({ ...booking })}
+                            className="px-2 py-1.5 bg-stone-800 hover:bg-stone-700 text-amber-400 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
+                            title="Editar detalles de la reserva"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span className="text-[11px]">Editar</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBooking(booking.id, booking.clientName)}
+                            className="p-1.5 bg-stone-800/80 hover:bg-red-950 text-stone-400 hover:text-red-400 rounded-lg text-xs transition-colors"
+                            title="Eliminar reserva"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <a
+                            href={getGoogleCalendarUrl(booking)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 bg-stone-800 hover:bg-blue-950 text-stone-300 hover:text-blue-300 text-xs font-semibold px-2 py-1.5 rounded-lg border border-stone-700 transition-colors"
+                            title="Añadir a Google Calendar"
+                          >
+                            <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                            <span className="hidden sm:inline">Google Cal</span>
+                          </a>
+
+                          <a
+                            href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-stone-700"
+                            title="Abrir chat regular de WhatsApp"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Chat</span>
+                          </a>
+                        </div>
+                      </div>
+
+                      {/* BOTÓN PROMINENTE DE CONFIRMACIÓN OFICIAL POR WHATSAPP */}
+                      <div>
                         <button
                           type="button"
-                          onClick={() => setEditingBooking({ ...booking })}
-                          className="px-2 py-1.5 bg-stone-800 hover:bg-stone-700 text-amber-400 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"
-                          title="Editar detalles de la reserva"
+                          onClick={() => handleOpenConfirmBookingModal(booking)}
+                          className={`w-full py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${
+                            booking.status === 'confirmed'
+                              ? 'bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300'
+                              : 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 shadow-amber-500/25 ring-2 ring-amber-400/40 animate-pulse'
+                          }`}
+                          title="Enviar mensaje oficial por WhatsApp confirmando la fecha y hora de la sesión"
                         >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span className="text-[11px]">Editar</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteBooking(booking.id, booking.clientName)}
-                          className="p-1.5 bg-stone-800/80 hover:bg-red-950 text-stone-400 hover:text-red-400 rounded-lg text-xs transition-colors"
-                          title="Eliminar reserva"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>
+                            {booking.status === 'confirmed'
+                              ? '✓ Confirmada • Re-enviar WhatsApp'
+                              : '⚡ Confirmar Sesión por WhatsApp'}
+                          </span>
                         </button>
                       </div>
 
-                      <a
-                        href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-stone-700"
-                        title="Abrir chat regular de WhatsApp"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Chat</span>
-                      </a>
-                    </div>
-
-                    {/* BOTÓN PROMINENTE DE CONFIRMACIÓN OFICIAL POR WHATSAPP */}
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenConfirmBookingModal(booking)}
-                        className={`w-full py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${
-                          booking.status === 'confirmed'
-                            ? 'bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300'
-                            : 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 shadow-amber-500/25 ring-2 ring-amber-400/40 animate-pulse'
-                        }`}
-                        title="Enviar mensaje oficial por WhatsApp confirmando la fecha y hora de la sesión"
-                      >
-                        <CheckCircle2 className="w-4 h-4 shrink-0" />
-                        <span>
-                          {booking.status === 'confirmed'
-                            ? '✓ Confirmada • Re-enviar WhatsApp'
-                            : '⚡ Confirmar Sesión por WhatsApp'}
-                        </span>
-                      </button>
-                    </div>
-
-                    {/* BOTÓN DIRECTO DE ENTREGA FULL HD PARA ESTA RESERVA */}
-                    <div className="pt-2.5 border-t border-stone-800 space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const matchingSession = safeSessions.find(
-                            s => (s.clientWhatsApp && s.clientWhatsApp.replace(/\D/g, '') === clientPhoneClean) ||
-                                 (s.clientName && s.clientName.toLowerCase().trim() === booking.clientName?.toLowerCase().trim())
-                          );
-                          handleOpenDelivery(matchingSession || {
-                            id: `book-${booking.id}`,
-                            token: booking.id,
-                            clientName: booking.clientName,
-                            clientWhatsApp: booking.clientWhatsApp,
-                            packageType: booking.packageName,
-                            status: booking.finalDeliveryUrl ? 'delivered' : 'pending',
-                            finalDeliveryUrl: booking.finalDeliveryUrl || '',
-                            deliveryService: booking.deliveryService || 'wetransfer',
-                            deliveryNotes: booking.deliveryNotes || ''
-                          });
-                        }}
-                        className={`w-full font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
-                          booking.finalDeliveryUrl
-                            ? 'bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/40'
-                            : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:opacity-95 text-white shadow-md shadow-purple-950/40 font-extrabold'
-                        }`}
-                      >
-                        <PackageCheck className="w-4 h-4" />
-                        <span>
-                          {booking.finalDeliveryUrl
-                            ? '✓ Editar / Re-enviar Entrega Full HD'
-                            : '📦 Entregar Fotos en Calidad Original (Full HD)'}
-                        </span>
-                      </button>
-
-                      {booking.finalDeliveryUrl && (
-                        <a
-                          href={getDeliveryWhatsAppUrl({
-                            clientName: booking.clientName,
-                            clientWhatsApp: booking.clientWhatsApp,
-                            finalDeliveryUrl: booking.finalDeliveryUrl,
-                            deliveryService: booking.deliveryService,
-                            deliveryNotes: booking.deliveryNotes
-                          })}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full font-bold text-xs py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1.5 shadow transition-colors"
+                      {/* BOTONES ADICIONALES: RECORDATORIO 24H Y RECIBO DIGITAL */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSendReminder(booking)}
+                          className="py-2 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 bg-stone-950 hover:bg-stone-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 transition-all shadow-sm"
+                          title="Enviar recordatorio formal por WhatsApp a 24 horas de la cita"
                         >
-                          <MessageCircle className="w-3.5 h-3.5" />
-                          <span>📲 Enviar Enlace Full HD al WhatsApp</span>
-                        </a>
-                      )}
+                          <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span className="truncate">⏰ Recordar 24h</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenReceipt(booking)}
+                          className="py-2 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 bg-stone-950 hover:bg-stone-800 text-stone-200 border border-stone-700 hover:border-stone-500 transition-all shadow-sm"
+                          title="Generar comprobante de pago digital para imprimir o compartir"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span className="truncate">🧾 Recibo PDF</span>
+                        </button>
+                      </div>
+
+                      {/* BOTÓN DIRECTO DE ENTREGA FULL HD PARA ESTA RESERVA */}
+                      <div className="pt-2 border-t border-stone-800 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const matchingSession = safeSessions.find(
+                              s => (s.clientWhatsApp && s.clientWhatsApp.replace(/\D/g, '') === clientPhoneClean) ||
+                                  (s.clientName && s.clientName.toLowerCase().trim() === booking.clientName?.toLowerCase().trim())
+                            );
+                            handleOpenDelivery(matchingSession || {
+                              id: `book-${booking.id}`,
+                              token: booking.id,
+                              clientName: booking.clientName,
+                              clientWhatsApp: booking.clientWhatsApp,
+                              packageType: booking.packageName,
+                              status: booking.finalDeliveryUrl ? 'delivered' : 'pending',
+                              finalDeliveryUrl: booking.finalDeliveryUrl || '',
+                              deliveryService: booking.deliveryService || 'wetransfer',
+                              deliveryNotes: booking.deliveryNotes || ''
+                            });
+                          }}
+                          className={`w-full font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
+                            booking.finalDeliveryUrl
+                              ? 'bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/40'
+                              : 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:opacity-95 text-white shadow-md shadow-purple-950/40 font-extrabold'
+                          }`}
+                        >
+                          <PackageCheck className="w-4 h-4" />
+                          <span>
+                            {booking.finalDeliveryUrl
+                              ? '✓ Editar / Re-enviar Entrega Full HD'
+                              : '📦 Entregar Fotos en Calidad Original (Full HD)'}
+                          </span>
+                        </button>
+
+                        {booking.finalDeliveryUrl && (
+                          <a
+                            href={getDeliveryWhatsAppUrl({
+                              clientName: booking.clientName,
+                              clientWhatsApp: booking.clientWhatsApp,
+                              finalDeliveryUrl: booking.finalDeliveryUrl,
+                              deliveryService: booking.deliveryService,
+                              deliveryNotes: booking.deliveryNotes
+                            })}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full font-bold text-xs py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1.5 shadow transition-colors"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>📲 Enviar Enlace Full HD al WhatsApp</span>
+                          </a>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -4906,6 +5477,219 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE RECIBO DIGITAL & COMPROBANTE OFICIAL (IMPRIMIBLE / PDF / WHATSAPP) */}
+      {receiptBooking && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="relative max-w-2xl w-full bg-stone-900 border border-amber-500/40 rounded-3xl shadow-2xl p-5 sm:p-7 space-y-5 my-6 text-left">
+            {/* Cabecera del Modal (No se imprime) */}
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3 no-print">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                  <FileText className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white">Comprobante de Pago Digital • Sebastian G</h3>
+                  <p className="text-xs text-stone-400">Genera recibos de abono o pago total para descargar en PDF o enviar por WhatsApp</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptBooking(null)}
+                className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Controles de Configuración del Comprobante (No se imprime) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-stone-950 rounded-2xl border border-stone-800 text-xs no-print">
+              <div>
+                <label className="block text-stone-400 font-semibold mb-1">Tipo de Comprobante:</label>
+                <select
+                  value={receiptType}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setReceiptType(val);
+                    const total = Number(receiptBooking.totalPrice || 0);
+                    if (val === 'deposit') {
+                      setReceiptPaidAmount(Math.round(total * 0.5));
+                      setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
+                    } else if (val === 'total') {
+                      setReceiptPaidAmount(total);
+                      setReceiptNotes('Pago total del 100% de la sesión fotográfica.');
+                    }
+                  }}
+                  className="w-full bg-stone-900 border border-stone-700 rounded-lg px-2.5 py-1.5 text-white"
+                >
+                  <option value="deposit">Abono (50%)</option>
+                  <option value="total">Pago Total (100%)</option>
+                  <option value="custom">Monto Personalizado</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-stone-400 font-semibold mb-1">Monto Recibido ($ COP):</label>
+                <input
+                  type="number"
+                  value={receiptPaidAmount}
+                  onChange={(e) => setReceiptPaidAmount(e.target.value)}
+                  className="w-full bg-stone-900 border border-stone-700 rounded-lg px-2.5 py-1.5 text-white font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-stone-400 font-semibold mb-1">Método de Pago:</label>
+                <select
+                  value={receiptPaymentMethod}
+                  onChange={(e) => setReceiptPaymentMethod(e.target.value)}
+                  className="w-full bg-stone-900 border border-stone-700 rounded-lg px-2.5 py-1.5 text-white font-semibold"
+                >
+                  <option value="Nequi">Nequi</option>
+                  <option value="DaviPlata">DaviPlata</option>
+                  <option value="Dale!">Dale!</option>
+                  <option value="Bancolombia">Bancolombia</option>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Recibo Oficial Imprimible y Compartible */}
+            <div id="sebastian-g-digital-receipt" className="bg-stone-950 text-white border border-amber-500/30 rounded-2xl p-5 sm:p-7 space-y-4 shadow-inner">
+              {/* Encabezado Corporativo */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-stone-800 pb-3.5 gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Camera className="w-5 h-5 text-amber-400" />
+                    <h2 className="text-xl font-serif font-black tracking-wide text-white">SEBASTIAN G</h2>
+                  </div>
+                  <p className="text-[11px] text-amber-400/90 font-medium tracking-widest uppercase">Fotografía & Retoque Profesional</p>
+                  <p className="text-[10px] text-stone-400 mt-0.5">San Antero, Córdoba, Colombia • Tel: +57 324 4725167 • sebastiang.app</p>
+                </div>
+                <div className="text-left sm:text-right">
+                  <span className="inline-block px-3 py-1 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono text-xs font-black">
+                    REC-{String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}
+                  </span>
+                  <p className="text-[10px] text-stone-400 mt-1">
+                    Fecha de Emisión: {new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+
+              {/* Datos Cliente & Cita */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1 bg-stone-900/60 p-3 rounded-xl border border-stone-800/80">
+                  <span className="text-[10px] uppercase font-bold text-amber-400/80 block">Cliente Titular</span>
+                  <p className="font-bold text-stone-100 text-sm">{receiptBooking.clientName}</p>
+                  <p className="text-stone-300">WhatsApp: <span className="font-mono text-emerald-400">{receiptBooking.clientWhatsApp}</span></p>
+                  {receiptBooking.clientEmail && (
+                    <p className="text-stone-300 truncate">Correo: <span className="text-stone-200">{receiptBooking.clientEmail}</span></p>
+                  )}
+                </div>
+
+                <div className="space-y-1 bg-stone-900/60 p-3 rounded-xl border border-stone-800/80">
+                  <span className="text-[10px] uppercase font-bold text-amber-400/80 block">Detalles de la Cita</span>
+                  <p className="font-bold text-stone-100">{formatDateTime12Hour(receiptBooking.dateTime)}</p>
+                  <p className="text-stone-300 truncate">Locación: <span className="text-stone-200">{receiptBooking.specificLocation || 'San Antero'}</span></p>
+                  <p className="text-stone-300 truncate">Paquete: <span className="text-amber-300">{receiptBooking.packageName}</span></p>
+                </div>
+              </div>
+
+              {/* Desglose Financiero */}
+              <div className="border border-stone-800 rounded-xl overflow-hidden text-xs">
+                <div className="bg-stone-900/80 px-4 py-2 border-b border-stone-800 flex justify-between font-bold text-stone-300">
+                  <span>Concepto</span>
+                  <span>Importe</span>
+                </div>
+                <div className="p-3.5 space-y-2 bg-stone-950">
+                  <div className="flex justify-between text-stone-300">
+                    <span>Sesión Fotográfica ({receiptBooking.packageName})</span>
+                    <span className="font-mono font-semibold">${Number(receiptBooking.totalPrice || 0).toLocaleString('es-CO')} COP</span>
+                  </div>
+                  {Number(receiptBooking.printedPhotosCount) > 0 && (
+                    <div className="flex justify-between text-stone-400 text-[11px]">
+                      <span>+ {receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico</span>
+                      <span>Incluido</span>
+                    </div>
+                  )}
+                  <div className="border-t border-stone-800 pt-2 flex justify-between text-stone-200">
+                    <span className="font-bold">Total Pactado:</span>
+                    <span className="font-mono font-bold">${Number(receiptBooking.totalPrice || 0).toLocaleString('es-CO')} COP</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-400 font-bold bg-emerald-950/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
+                    <span>Monto Recibido ({receiptPaymentMethod}):</span>
+                    <span className="font-mono">${Number(receiptPaidAmount || 0).toLocaleString('es-CO')} COP</span>
+                  </div>
+                  <div className="flex justify-between text-amber-400 font-bold px-2.5 py-1">
+                    <span>Saldo Pendiente de Pago en la Sesión:</span>
+                    <span className="font-mono">
+                      ${Math.max(0, Number(receiptBooking.totalPrice || 0) - Number(receiptPaidAmount || 0)).toLocaleString('es-CO')} COP
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cláusula de Garantía de Clima */}
+              <div className="p-3 bg-stone-900/40 rounded-xl border border-stone-800/60 text-[11px] space-y-1 text-stone-400">
+                <p className="text-amber-300 font-semibold flex items-center gap-1.5">
+                  <span>⛅ Garantía de Clima en San Antero:</span>
+                </p>
+                <p>En caso de lluvia o clima adverso en la playa, la sesión se reprograma sin ningún costo ni penalidad.</p>
+                <p className="pt-0.5 text-stone-500">Documento electrónico emitido en sebastiang.app • Válido como soporte oficial de reserva.</p>
+              </div>
+
+              {/* Firma del Fotógrafo */}
+              <div className="flex justify-between items-end pt-3 border-t border-stone-800 text-[11px]">
+                <div>
+                  <p className="font-serif italic text-amber-400 text-sm font-bold">Sebastian G</p>
+                  <p className="text-stone-400 text-[10px]">Fotógrafo Profesional Titular</p>
+                </div>
+                <div className="text-right">
+                  <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    Math.max(0, Number(receiptBooking.totalPrice || 0) - Number(receiptPaidAmount || 0)) === 0
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                  }`}>
+                    {Math.max(0, Number(receiptBooking.totalPrice || 0) - Number(receiptPaidAmount || 0)) === 0
+                      ? '✓ PAGADO TOTAL (100%)'
+                      : '✓ ABONO CONFIRMADO (50%)'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Botones de Acción (No se imprimen) */}
+            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 no-print">
+              <button
+                type="button"
+                onClick={handlePrintReceipt}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95"
+              >
+                <Printer className="w-4 h-4" />
+                <span>🖨️ Imprimir / Guardar en PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSendReceiptWhatsApp}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>📲 Enviar Recibo por WhatsApp</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setReceiptBooking(null)}
+                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}
