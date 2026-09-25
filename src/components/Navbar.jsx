@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Menu, X, Sparkles, Lock } from 'lucide-react';
+import { ShieldCheck, Menu, X, Sparkles, Lock, MessageCircle } from 'lucide-react';
 
 export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setCurrentView, photographerName = "Sebastian G" }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -76,26 +76,30 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           )}
         </nav>
 
-        {/* Botón Acción Principal Desktop */}
+        {/* Contacto Directo WhatsApp Desktop */}
         <div className="hidden md:flex items-center gap-4">
-          <button
-            onClick={onOpenBooking}
-            className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-sm px-5 py-2.5 rounded-xl shadow-lg shadow-amber-500/25 hover:from-amber-400 hover:to-amber-300 active:scale-95 transition-all"
+          <a
+            href="https://wa.me/573244725167?text=Hola%20Sebastian,%20estoy%20viendo%20tu%20sitio%20web%20y%20me%20gustar%C3%ADa%20hacerte%20una%20consulta."
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 bg-stone-900 border border-stone-800 hover:border-emerald-500/50 text-stone-300 hover:text-emerald-400 font-semibold text-xs px-4 py-2.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-sm"
           >
-            <Sparkles className="w-4 h-4 text-white fill-white" />
-            <span>Reservar Sesión</span>
-          </button>
+            <MessageCircle className="w-4 h-4 text-emerald-400" />
+            <span>WhatsApp Directo</span>
+          </a>
         </div>
 
-        {/* Acciones Móviles: Reservar Rápido y Menú */}
+        {/* Acciones Móviles: Menú Limpio sin saturación de botones */}
         <div className="flex md:hidden items-center gap-2">
-          <button
-            onClick={onOpenBooking}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs px-3.5 py-2 rounded-xl shadow-md shadow-amber-500/20 active:scale-95 transition-all"
+          <a
+            href="https://wa.me/573244725167?text=Hola%20Sebastian,%20estoy%20viendo%20tu%20sitio%20web%20y%20me%20gustar%C3%ADa%20hacerte%20una%20consulta."
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-2 text-stone-300 hover:text-emerald-400 rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-center"
+            title="WhatsApp Directo"
           >
-            <Sparkles className="w-3.5 h-3.5 text-white fill-white" />
-            <span>Reservar</span>
-          </button>
+            <MessageCircle className="w-5 h-5 text-emerald-400" />
+          </a>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 text-stone-300 hover:text-white rounded-xl bg-stone-900 border border-stone-800"
@@ -140,13 +144,16 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           )}
 
           <div className="pt-3 border-t border-stone-800">
-            <button
-              onClick={() => { setMobileMenuOpen(false); onOpenBooking(); }}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-base py-3 rounded-xl shadow-lg shadow-amber-500/20"
+            <a
+              href="https://wa.me/573244725167?text=Hola%20Sebastian,%20estoy%20viendo%20tu%20sitio%20web%20y%20me%20gustar%C3%ADa%20hacerte%20una%20consulta."
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMobileMenuOpen(false)}
+              className="w-full flex items-center justify-center gap-2 bg-stone-950 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 font-bold text-sm py-3 rounded-xl shadow-lg"
             >
-              <Sparkles className="w-5 h-5 text-white fill-white" />
-              <span>Reservar Sesión Ahora</span>
-            </button>
+              <MessageCircle className="w-4 h-4 text-emerald-400" />
+              <span>Escribir por WhatsApp</span>
+            </a>
           </div>
         </div>
       )}

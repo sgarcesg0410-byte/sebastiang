@@ -60,6 +60,7 @@ export default function App() {
   });
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
+  const [selectedPhotoForBooking, setSelectedPhotoForBooking] = useState(null);
 
   // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin)
   const [showIntro, setShowIntro] = useState(() => {
@@ -208,8 +209,14 @@ export default function App() {
     }
   };
 
-  const handleOpenBooking = (pkg = null) => {
-    setSelectedPackageForBooking(pkg);
+  const handleOpenBooking = (pkgOrPhoto = null) => {
+    if (pkgOrPhoto && (pkgOrPhoto.url || pkgOrPhoto.category)) {
+      setSelectedPhotoForBooking(pkgOrPhoto);
+      setSelectedPackageForBooking(null);
+    } else {
+      setSelectedPackageForBooking(pkgOrPhoto);
+      setSelectedPhotoForBooking(null);
+    }
     setIsBookingOpen(true);
   };
 
@@ -258,19 +265,11 @@ export default function App() {
               <Catalog
                 catalog={catalog}
                 packages={packages}
-                onOpenBooking={() => handleOpenBooking(null)}
+                onOpenBooking={(photo) => handleOpenBooking(photo)}
                 onNavigateToAdmin={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
               />
-              <div id="packages-section" className="border-t border-stone-800/80 bg-stone-900/40">
-                <PackagesSection
-                  packages={packages}
-                  onSelectPackage={(pkg) => handleOpenBooking(pkg)}
-                />
-              </div>
               <div id="testimonials-section">
-                <TestimonialsSection
-                  onOpenBooking={() => handleOpenBooking(null)}
-                />
+                <TestimonialsSection />
               </div>
             </>
           )}
@@ -319,9 +318,14 @@ export default function App() {
       {/* MODAL DE RESERVA DIRECTA SIN REGISTRO */}
       <BookingModal
         isOpen={isBookingOpen}
-        onClose={() => setIsBookingOpen(false)}
+        onClose={() => {
+          setIsBookingOpen(false);
+          setSelectedPhotoForBooking(null);
+          setSelectedPackageForBooking(null);
+        }}
         packages={packages}
         preselectedPackage={selectedPackageForBooking}
+        preselectedPhoto={selectedPhotoForBooking}
         settings={settings}
       />
 
@@ -537,33 +541,23 @@ export default function App() {
                 </div>
               </div>
 
-              {/* COLUMNA 4 (3 cols): Reserva Directa & Respaldo */}
+              {/* COLUMNA 4 (3 cols): Contacto Directo */}
               <div className="lg:col-span-3 space-y-3.5">
                 <span className="text-xs font-bold text-amber-400 uppercase tracking-widest block">
-                  Reserva & Contacto
+                  Contacto Directo
                 </span>
                 <p className="text-xs text-stone-400 leading-relaxed">
-                  ¿Tienes una fecha en mente? Agenda directamente o escríbenos para coordinar tu hora ideal de puesta de sol.
+                  ¿Tienes alguna duda o locación personalizada? Escríbenos directamente para coordinar tu fecha y hora ideal.
                 </p>
 
-                <div className="flex flex-col gap-2 pt-1">
-                  <button
-                    onClick={() => {
-                      setSelectedPackageForBooking(null);
-                      setIsBookingOpen(true);
-                    }}
-                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs shadow-lg shadow-amber-500/20 hover:scale-[1.02] transition-all cursor-pointer"
-                  >
-                    <span>📅 Reservar Sesión Online</span>
-                  </button>
-
+                <div className="pt-1">
                   <a
                     href="https://wa.me/573244725167?text=Hola%20Sebastian,%20quiero%20cotizar%20y%20agendar%20una%20sesi%C3%B3n%20fotogr%C3%A1fica%20en%20la%20playa."
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-stone-900 border border-stone-800 hover:border-emerald-500/40 text-stone-300 hover:text-emerald-300 text-xs font-semibold transition-all hover:bg-emerald-500/5"
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 transition-all hover:scale-[1.02]"
                   >
-                    <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <MessageCircle className="w-4 h-4 text-white" />
                     <span>Escribir por WhatsApp</span>
                   </a>
                 </div>
