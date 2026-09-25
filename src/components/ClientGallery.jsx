@@ -758,33 +758,20 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     src={photo.url}
                     alt={photo.title}
                     objectFit="cover"
-                    watermark={true}
-                    watermarkText={`${watermarkText} • MUESTRA`}
+                    watermark={false}
                   />
 
-                  {/* MALLA DE MARCA DE AGUA REPETIDA EN TODA LA FOTO */}
-                  <div className="absolute inset-0 z-15 pointer-events-none overflow-hidden opacity-35 select-none flex flex-wrap gap-5 items-center justify-around -rotate-12 scale-125">
-                    {Array.from({ length: 20 }).map((_, i) => (
-                      <span key={i} className="text-[10px] font-black tracking-wider text-white/60 uppercase whitespace-nowrap drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)]">
-                        {watermarkText} • PROHIBIDA SU DESCARGA
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* MARCA DE AGUA GIGANTE CENTRAL CON EL LOGOTIPO OFICIAL DE SEBASTIAN G */}
+                  {/* MARCA DE AGUA: 1 SOLO LOGOTIPO TRANSPARENTE EN EL CENTRO */}
                   <div className="watermark-overlay z-20 pointer-events-none">
-                    <div className="watermark-content animate-watermark flex flex-col items-center justify-center text-center">
+                    <div className="watermark-content">
                       <img
                         src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
                         alt="Sebastian G"
-                        className="h-14 w-14 sm:h-20 sm:w-20 rounded-2xl object-cover shadow-2xl border border-white/30 drop-shadow-[0_4px_12px_rgba(0,0,0,0.95)] opacity-95 mb-1.5"
+                        className="w-14 h-14 sm:w-18 sm:h-18 object-contain rounded-2xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]"
                       />
-                      <span className="text-xs sm:text-sm font-black tracking-widest text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] uppercase block">
+                      <span className="text-[10px] sm:text-xs font-serif tracking-[0.25em] text-white/90 uppercase mt-1">
                         {watermarkText}
                       </span>
-                      <p className="text-[10px] sm:text-[11px] font-black tracking-widest text-white/90 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)] uppercase mt-0.5">
-                        {watermarkSubtext}
-                      </p>
                     </div>
                   </div>
 

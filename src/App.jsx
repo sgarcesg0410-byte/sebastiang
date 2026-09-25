@@ -12,7 +12,7 @@ import SecurityOverlay from './components/SecurityOverlay';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG } from './services/api';
 import { trackPageVisit } from './services/analytics';
 import { supabase } from './services/supabase';
-import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock } from 'lucide-react';
+import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
 export default function App() {
@@ -547,18 +547,16 @@ export default function App() {
                   Contacto Directo
                 </span>
                 <p className="text-xs text-stone-400 leading-relaxed">
-                  ¿Tienes alguna duda o locación personalizada? Escríbenos directamente para coordinar tu fecha y hora ideal.
+                  ¿Tienes alguna duda o locación personalizada? Escríbenos directamente a nuestro correo oficial de reservas:
                 </p>
 
                 <div className="pt-1">
                   <a
-                    href="https://wa.me/573244725167?text=Hola%20Sebastian,%20quiero%20cotizar%20y%20agendar%20una%20sesi%C3%B3n%20fotogr%C3%A1fica%20en%20la%20playa."
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs shadow-lg shadow-emerald-600/20 transition-all hover:scale-[1.02]"
+                    href="mailto:reservas@sebastiang.app"
+                    className="w-full inline-flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-stone-900/90 border border-amber-500/30 hover:border-amber-400 text-stone-200 hover:text-white font-bold text-xs shadow-md shadow-black/40 transition-all hover:scale-[1.02] group"
                   >
-                    <MessageCircle className="w-4 h-4 text-white" />
-                    <span>Escribir por WhatsApp</span>
+                    <Mail className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+                    <span className="font-mono text-amber-300 group-hover:text-amber-200">reservas@sebastiang.app</span>
                   </a>
                 </div>
               </div>

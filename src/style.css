@@ -70,7 +70,7 @@ html.security-blackout [role="dialog"] img {
   }
 }
 
-/* Marca de Agua Gigante Diagonal y Central */
+/* Marca de Agua Elegante y Sutil (Logo Central Transparente) */
 .watermark-overlay {
   position: absolute;
   inset: 0;
@@ -84,24 +84,15 @@ html.security-blackout [role="dialog"] img {
 }
 
 .watermark-content {
-  transform: rotate(-25deg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  border: 3px dashed rgba(255, 255, 255, 0.45);
-  background: rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(1px);
-  padding: 18px 32px;
-  border-radius: 12px;
-  box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
-}
-
-/* Animación sutil de pulso */
-@keyframes softPulse {
-  0%, 100% { opacity: 0.9; }
-  50% { opacity: 0.65; }
-}
-
-.animate-watermark {
-  animation: softPulse 4s ease-in-out infinite;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.22;
+  transition: opacity 0.3s ease;
 }
 
 @keyframes shimmer {
