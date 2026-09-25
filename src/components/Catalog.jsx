@@ -84,16 +84,19 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             Sesiones de retratos, campo, eventos, bodas y parejas en cualquier locación o destino que elijas.
           </p>
 
-          {/* BOTONES DE ACCIÓN: RESERVA Y COMPARTIR PORTAFOLIO */}
+          {/* BOTONES DE ACCIÓN: EXPLORAR CATÁLOGO Y COMPARTIR PORTAFOLIO */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
-              onClick={onOpenBooking}
-              className="w-full sm:w-auto flex items-center justify-center gap-3 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-lg px-8 py-4 rounded-2xl shadow-xl shadow-amber-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              onClick={() => {
+                const el = document.getElementById('catalog-gallery-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="w-full sm:w-auto flex items-center justify-center gap-3 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-base sm:text-lg px-8 py-4 rounded-2xl shadow-xl shadow-amber-500/30 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <div className="w-8 h-8 rounded-xl bg-white/20 border border-white/40 flex items-center justify-center shadow-inner">
-                <Calendar className="w-5 h-5 text-white stroke-[2.5]" />
+                <Camera className="w-5 h-5 text-stone-950 stroke-[2.5]" />
               </div>
-              <span className="text-stone-950 font-black">Reservar Mi Sesión Ahora</span>
+              <span className="text-stone-950 font-black">Explorar Catálogo de Fotos</span>
               <ArrowRight className="w-5 h-5 ml-1 text-stone-950 stroke-[2.5]" />
             </button>
 
@@ -117,13 +120,13 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             </button>
           </div>
           <p className="text-xs text-stone-400 mt-3">
-            ⚡ Sin registro previo • Respuesta inmediata por WhatsApp
+            ✨ Toca cualquier fotografía del portafolio para verla en detalle y agendar tu sesión.
           </p>
         </div>
       </section>
 
       {/* CATÁLOGO Y PORTAFOLIO */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12">
+      <section id="catalog-gallery-section" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12">
         
         {/* Cabecera de Catálogo y Filtros */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
@@ -216,7 +219,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                       <span className="truncate">{photo.location}</span>
                     </span>
                     <span className="text-amber-400 font-semibold group-hover:underline text-[10px] sm:text-xs shrink-0">
-                      Ver detalle
+                      Ver foto & reservar
                     </span>
                   </div>
                 </div>
@@ -226,21 +229,16 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         )}
 
         {/* Banner informativo de cierre */}
-        <div className="mt-16 bg-gradient-to-r from-amber-950/30 via-stone-900 to-amber-950/30 border border-amber-500/20 rounded-3xl p-6 sm:p-10 text-center">
+        <div className="mt-16 bg-gradient-to-r from-amber-950/20 via-stone-900 to-amber-950/20 border border-amber-500/20 rounded-3xl p-6 sm:p-10 text-center">
           <span className="text-xs font-bold uppercase tracking-widest text-amber-400 block mb-1">
             Sebastian G • Fotografía & Edición Profesional
           </span>
-          <p className="text-sm text-stone-300 font-light max-w-xl mx-auto mb-6">
-            "Capturamos momentos, creamos recuerdos. ♡" • Explora nuestros paquetes para ver precios y agendar tu fecha.
+          <p className="text-sm text-stone-300 font-light max-w-xl mx-auto mb-3">
+            "Capturamos momentos, creamos recuerdos. ♡"
           </p>
-
-          <button
-            onClick={onOpenBooking}
-            className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-sm px-6 py-3 rounded-xl shadow-lg shadow-amber-500/20 hover:from-amber-400 hover:to-amber-300 transition-all active:scale-95"
-          >
-            <Sparkles className="w-4 h-4 fill-stone-950" />
-            <span>Agendar Mi Sesión</span>
-          </button>
+          <p className="text-xs text-stone-400 max-w-md mx-auto">
+            💡 Toca cualquiera de las fotos de arriba para verla en pantalla completa y reservar tu sesión con esa temática o locación.
+          </p>
         </div>
       </section>
 
@@ -293,10 +291,15 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 </p>
               </div>
               <button
-                onClick={() => { setPreviewPhoto(null); onOpenBooking(); }}
-                className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs px-5 py-2.5 rounded-xl shadow-md active:scale-95 transition-transform"
+                onClick={() => {
+                  const chosenPhoto = previewPhoto;
+                  setPreviewPhoto(null);
+                  if (onOpenBooking) onOpenBooking(chosenPhoto);
+                }}
+                className="w-full sm:w-auto bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs sm:text-sm px-6 py-3 rounded-xl shadow-lg shadow-amber-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
-                Reservar sesión similar
+                <Sparkles className="w-4 h-4 fill-stone-950 text-stone-950" />
+                <span>Reservar sesión con esta foto</span>
               </button>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote } from 'lucide-react';
+import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote, Camera } from 'lucide-react';
 import { getReviews, REAL_DEFAULT_REVIEWS } from '../services/api';
 
 export default function TestimonialsSection({ onOpenBooking }) {
@@ -155,26 +155,27 @@ export default function TestimonialsSection({ onOpenBooking }) {
       <div className="mt-14 p-8 rounded-3xl bg-gradient-to-r from-stone-900 via-stone-900/90 to-stone-900 border border-stone-800 text-center flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl">
         <div className="text-left">
           <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400 block mb-1">
-            ¿Listo para tu sesión?
+            Explora Nuestro Portafolio
           </span>
           <h3 className="text-xl sm:text-2xl font-serif font-bold text-white">
             Tú también puedes vivir una experiencia inolvidable frente al lente
           </h3>
           <p className="text-xs text-stone-400 mt-1 max-w-xl">
-            Reserva hoy tu fecha con 2 fotos gratis incluidas en todos nuestros paquetes. Sin registros molestos, directo a WhatsApp.
+            Toca cualquiera de las fotos de nuestro catálogo para conocer las locaciones y agendar tu fecha con esa temática.
           </p>
         </div>
 
-        {onOpenBooking && (
-          <button
-            type="button"
-            onClick={onOpenBooking}
-            className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-extrabold text-sm shadow-xl shadow-amber-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all shrink-0 flex items-center justify-center gap-2"
-          >
-            <Sparkles className="w-4 h-4 text-white fill-white" />
-            <span>Reservar Mi Sesión Ahora</span>
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => {
+            const el = document.getElementById('catalog-gallery-section') || document.querySelector('main');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-stone-900 border border-amber-500/40 hover:border-amber-400 text-amber-300 hover:text-white font-bold text-sm shadow-xl active:scale-[0.98] transition-all shrink-0 flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <Camera className="w-4 h-4 text-amber-400" />
+          <span>Ver Fotos del Catálogo</span>
+        </button>
       </div>
     </section>
   );

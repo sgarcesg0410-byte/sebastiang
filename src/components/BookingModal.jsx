@@ -3,7 +3,7 @@ import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, Check
 import confetti from 'canvas-confetti';
 import { createBooking, checkClientLoyalty, formatTo12Hour } from '../services/api';
 
-export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, settings = {} }) {
+export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, settings = {} }) {
   if (!isOpen) return null;
 
   const scrollRef = useRef(null);
@@ -58,6 +58,19 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
       setFormData(prev => ({ ...prev, packageId: preselectedPackage.id }));
     }
   }, [preselectedPackage]);
+
+  useEffect(() => {
+    if (preselectedPhoto) {
+      const loc = preselectedPhoto.location || '';
+      const isOutside = loc.toLowerCase().includes('coveñas') || loc.toLowerCase().includes('tolú') || loc.toLowerCase().includes('playa blanca');
+      setFormData(prev => ({
+        ...prev,
+        description: `Sesión inspirada en foto: "${preselectedPhoto.title}" (${preselectedPhoto.category || 'Catálogo'})`,
+        specificLocation: loc || prev.specificLocation,
+        locationType: isOutside ? 'outside' : 'san_antero'
+      }));
+    }
+  }, [preselectedPhoto]);
 
   const currentPackage = packages.find(p => p.id === formData.packageId) || packages[0];
 
@@ -308,6 +321,26 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
             /* FORMULARIO DE RESERVA */
             <form onSubmit={handleSubmit} className="space-y-4">
               
+              {preselectedPhoto && (
+                <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+                  <img
+                    src={preselectedPhoto.url}
+                    alt={preselectedPhoto.title}
+                    className="w-12 h-12 rounded-xl object-cover border border-amber-500/40 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                      Inspirado en foto del catálogo
+                    </span>
+                    <h4 className="text-xs font-bold text-white truncate">{preselectedPhoto.title}</h4>
+                    <span className="text-[11px] text-stone-400 flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span>{preselectedPhoto.location}</span>
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {errorMessage && (
                 <div className="p-3.5 bg-red-950/80 border border-red-500/50 rounded-xl text-red-200 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
