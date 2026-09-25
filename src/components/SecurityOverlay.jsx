@@ -1,56 +1,37 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { ShieldAlert, Lock, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
 
+/**
+ * SecurityOverlay - Escudo de Seguridad Silencioso e Invisible
+ * Protege las fotografías contra capturas de pantalla (PrintScreen, atajos de recortes,
+ * cambio de aplicación en Android/iOS, arrastre de imágenes e inspección DevTools)
+ * sin mostrar alertas, letreros ni avisos que interrumpan o molesten al cliente.
+ * Si alguien intenta capturar, la captura se guarda 100% en negro, pero al volver
+ * a la pantalla el usuario continúa viendo la web de forma inmediata y fluida.
+ */
 export default function SecurityOverlay({ children, enabled = true }) {
-  const [warningMessage, setWarningMessage] = useState(null);
   const releaseTimeoutRef = useRef(null);
   const isBlurredRef = useRef(false);
   const isBlackoutActiveRef = useRef(false);
-  const lastFocusTimeRef = useRef(Date.now());
-  const toastTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!enabled) return;
 
-    const triggerWarningToast = (msg, duration = 3000) => {
-      setWarningMessage(msg);
-      if (navigator.vibrate) {
-        try {
-          navigator.vibrate([60, 40, 60]);
-        } catch (e) {}
-      }
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-      toastTimeoutRef.current = setTimeout(() => setWarningMessage(null), duration);
-    };
-
-    // APAGÓN SÍNCRONO INMEDIATO (0ms de latencia antes de que el SO tome la foto)
-    const triggerInstantBlackout = (reason) => {
+    // APAGÓN SÍNCRONO INMEDIATO (0ms de latencia: el SO solo captura negro absoluto)
+    const triggerInstantBlackout = () => {
       isBlackoutActiveRef.current = true;
       document.documentElement.classList.add('security-blackout');
       const shield = document.getElementById('anti-screenshot-shield');
       if (shield) {
-        shield.style.display = 'flex';
-      }
-      const reasonEl = document.getElementById('anti-screenshot-reason');
-      if (reasonEl && reason) {
-        reasonEl.textContent = reason;
+        shield.style.display = 'block';
       }
 
-      // Vaciar portapapeles sin emitir errores no controlados si el foco se perdió
+      // Vaciar portapapeles de manera silenciosa
       try {
         if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
-          navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba').catch(() => {});
+          navigator.clipboard.writeText('').catch(() => {});
         }
       } catch (err) {}
 
-      // Limpiar consola si abren inspección
-      try {
-        if (window.console && window.console.clear) {
-          window.console.clear();
-        }
-      } catch (e) {}
-
-      // CRÍTICO: NUNCA colocar un temporizador de auto-desbloqueo mientras la ventana no tenga foco.
       if (releaseTimeoutRef.current) {
         clearTimeout(releaseTimeoutRef.current);
         releaseTimeoutRef.current = null;
@@ -81,21 +62,19 @@ export default function SecurityOverlay({ children, enabled = true }) {
     const handleTouchStart = (e) => {
       if (!e.touches || e.touches.length === 0) return;
 
-      // Gesto de 2 o 3 dedos (Xiaomi MIUI captura con 3 dedos, Samsung con palma/2 dedos)
+      // Gestos de 2 o más dedos (captura en MIUI / Samsung)
       if (e.touches.length >= 2) {
         try {
           e.preventDefault();
           e.stopPropagation();
         } catch (err) {}
-        triggerInstantBlackout('Gesto multi-táctil detectado. Capturas bloqueadas.');
-        triggerWarningToast('🚫 Gesto de captura bloqueado por seguridad.');
+        triggerInstantBlackout();
         return;
       }
 
       touchStartY = e.touches[0].clientY;
-      // Solo si el toque se originó en la extrema parte superior del panel del sistema (0 a 15px)
       if (touchStartY <= 15) {
-        triggerInstantBlackout('Panel de notificaciones del sistema detectado');
+        triggerInstantBlackout();
       }
     };
 
@@ -107,114 +86,102 @@ export default function SecurityOverlay({ children, enabled = true }) {
           e.preventDefault();
           e.stopPropagation();
         } catch (err) {}
-        triggerInstantBlackout('Gesto multi-táctil bloqueado');
+        triggerInstantBlackout();
         return;
       }
 
-      // Si el movimiento comenzó en el borde superior (<= 25px) y arrastra hacia abajo (> 40px)
       const currentY = e.touches[0].clientY;
       if (touchStartY <= 25 && currentY - touchStartY > 40) {
         if (!isBlackoutActiveRef.current) {
-          triggerInstantBlackout('Panel de notificaciones del sistema detectado');
+          triggerInstantBlackout();
         }
       }
     };
 
     // 2. APAGÓN POR PÉRDIDA DE FOCO (Panel de notificaciones, cambio de app, botones físicos)
     const handleBlur = () => {
-      // En dispositivos móviles y táctiles, el evento blur ocurre comúnmente al tocar la pantalla fuera de un input.
-      // Solo consideramos pérdida de foco real en móviles si el documento está oculto.
       if (isTouchDevice && !document.hidden) {
         return;
       }
       isBlurredRef.current = true;
-      triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');
+      triggerInstantBlackout();
     };
 
-    // 3. RECUPERACIÓN DE FOCO (Cuando Android retrae la cortina antes de disparar el screenshot)
+    // 3. RECUPERACIÓN DE FOCO INMEDIATA (Restauración fluida para el usuario en 50ms)
     const handleFocus = () => {
       isBlurredRef.current = false;
-      lastFocusTimeRef.current = Date.now();
-
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       releaseTimeoutRef.current = setTimeout(() => {
         const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
-        if (hasFocusOrActive && !isBlurredRef.current) {
+        if (hasFocusOrActive) {
           releaseInstantBlackout();
         }
-      }, isTouchDevice ? 300 : 2500);
+      }, 50);
     };
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
         isBlurredRef.current = true;
-        triggerInstantBlackout('Pantalla oculta o cambio de aplicación');
+        triggerInstantBlackout();
       } else {
         isBlurredRef.current = false;
-        lastFocusTimeRef.current = Date.now();
         if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
         releaseTimeoutRef.current = setTimeout(() => {
           const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
-          if (hasFocusOrActive && !isBlurredRef.current) {
+          if (hasFocusOrActive) {
             releaseInstantBlackout();
           }
-        }, isTouchDevice ? 300 : 2500);
+        }, 50);
       }
     };
 
-    // 4. MONITOR DE SEGURIDAD Y PROTECCIÓN DE FOCO (Cero consumo de batería y máxima respuesta)
+    // 4. MONITOR DE SEGURIDAD (Silencioso)
     const focusCheckInterval = setInterval(() => {
       const shouldTrigger = isTouchDevice ? document.hidden : (!document.hasFocus() || document.hidden);
       if (shouldTrigger) {
         if (!isBlackoutActiveRef.current) {
           isBlurredRef.current = true;
-          triggerInstantBlackout('Captura de pantalla o panel del sistema detectado');
+          triggerInstantBlackout();
+        }
+      } else {
+        if (isBlackoutActiveRef.current && !isBlurredRef.current) {
+          releaseInstantBlackout();
         }
       }
-    }, 250);
+    }, 200);
 
-    // MUTATION OBSERVER ANTI-MANIPULACIÓN: Si borran el escudo o la clase blackout en DevTools, restaurar escudo (sin recargar la página)
-    const domTamperObserver = new MutationObserver(() => {
-      if (isBlackoutActiveRef.current) {
-        if (!document.documentElement.classList.contains('security-blackout')) {
-          document.documentElement.classList.add('security-blackout');
-        }
-        const shield = document.getElementById('anti-screenshot-shield');
-        if (shield && shield.style.display !== 'flex') {
-          shield.style.display = 'flex';
-        }
-      }
-    });
-    domTamperObserver.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
-
-    // 5. BLOQUEO DE CLIC DERECHO Y PULSACIÓN PROLONGADA
+    // 5. BLOQUEO DE CLIC DERECHO SILENCIOSO
     const handleContextMenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      triggerWarningToast('Las opciones de descarga y clic derecho están deshabilitadas.');
       return false;
     };
 
     // 6. BLOQUEO DE TECLAS DE CAPTURA EN PC / TABLETS
     const handleKeyDown = (e) => {
-      // Tecla PrintScreen (keydown en algunos navegadores)
+      // PrintScreen
       if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
         e.preventDefault();
         e.stopPropagation();
-        triggerInstantBlackout('Captura con PrintScreen bloqueada.');
-        triggerWarningToast('🚫 Captura de pantalla bloqueada.');
+        triggerInstantBlackout();
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
-            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba').catch(() => {});
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('').catch(() => {});
           }
         } catch (err) {}
+        setTimeout(() => {
+          releaseInstantBlackout();
+        }, 180);
         return false;
       }
 
       // Windows + Shift + S / Command + Shift + 3/4/5
       if ((e.metaKey || e.ctrlKey || e.shiftKey) && (e.key === 's' || e.key === 'S' || e.code === 'KeyS')) {
         if (e.shiftKey) {
-          triggerInstantBlackout('Herramienta de recortes de Windows bloqueada.');
+          triggerInstantBlackout();
+          setTimeout(() => {
+            releaseInstantBlackout();
+          }, 250);
         }
       }
 
@@ -222,8 +189,6 @@ export default function SecurityOverlay({ children, enabled = true }) {
       if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'i' || e.key === 'I' || e.key === 'j' || e.key === 'J' || e.key === 'c' || e.key === 'C'))) {
         e.preventDefault();
         e.stopPropagation();
-        triggerInstantBlackout('Herramientas de inspección deshabilitadas');
-        triggerWarningToast('El modo inspección está deshabilitado.');
         return false;
       }
 
@@ -231,29 +196,25 @@ export default function SecurityOverlay({ children, enabled = true }) {
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P' || e.key === 'u' || e.key === 'U')) {
         e.preventDefault();
         e.stopPropagation();
-        triggerWarningToast('Guardar o imprimir fotos está restringido.');
         return false;
       }
     };
 
-    // En Windows Chromium / Edge, PrintScreen dispara 'keyup'
     const handleKeyUp = (e) => {
       if (e.key === 'PrintScreen' || e.code === 'PrintScreen' || e.keyCode === 44) {
-        triggerInstantBlackout('Captura con Impr Pant bloqueada.');
-        triggerWarningToast('🚫 Captura con Impr Pant bloqueada.');
+        triggerInstantBlackout();
         try {
-          if (navigator.clipboard && navigator.clipboard.writeText && document.hasFocus()) {
-            navigator.clipboard.writeText('⚠️ FOTOGRAFÍA PROTEGIDA - Prohibida su captura. Sebastian G • San Antero, Córdoba').catch(() => {});
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('').catch(() => {});
           }
         } catch (err) {}
-      }
-
-      if (e.shiftKey && (e.key === 's' || e.key === 'S' || e.code === 'KeyS')) {
-        triggerInstantBlackout('Herramienta de recortes de Windows bloqueada.');
+        setTimeout(() => {
+          releaseInstantBlackout();
+        }, 180);
       }
     };
 
-    // 7. BLOQUEO DE COPIA Y ARRASTRE DE IMÁGENES
+    // 7. BLOQUEO DE COPIA Y ARRASTRE DE IMÁGENES SILENCIOSO
     const handleDragStart = (e) => {
       if (e.target.tagName === 'IMG' || e.target.tagName === 'CANVAS') {
         e.preventDefault();
@@ -264,13 +225,11 @@ export default function SecurityOverlay({ children, enabled = true }) {
       e.preventDefault();
       try {
         if (e.clipboardData) {
-          e.clipboardData.setData('text/plain', '⚠️ FOTOGRAFÍA PROTEGIDA - Sebastian G • San Antero, Córdoba');
+          e.clipboardData.setData('text/plain', '');
         }
       } catch (err) {}
-      triggerWarningToast('Copiar fotos está restringido.');
     };
 
-    // Registrar escuchadores globales
     window.addEventListener('touchstart', handleTouchStart, { passive: false });
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('blur', handleBlur);
@@ -284,9 +243,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     return () => {
       clearInterval(focusCheckInterval);
-      domTamperObserver.disconnect();
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('blur', handleBlur);
@@ -300,70 +257,15 @@ export default function SecurityOverlay({ children, enabled = true }) {
     };
   }, [enabled]);
 
-  // Manejador del toque en el escudo para desbloquear manualmente
-  const handleShieldUnlock = (e) => {
-    e.stopPropagation();
-    // Prevenir desbloqueo si la ventana aún no tiene foco o está oculta
-    if (!document.hasFocus() || document.hidden || isBlurredRef.current) {
-      return;
-    }
-    // Si el foco acaba de regresar hace menos de 1000ms, esperar (la captura del SO aún se está ejecutando)
-    if (Date.now() - lastFocusTimeRef.current < 1000) {
-      return;
-    }
-    isBlackoutActiveRef.current = false;
-    document.documentElement.classList.remove('security-blackout');
-    const shield = document.getElementById('anti-screenshot-shield');
-    if (shield) shield.style.display = 'none';
-    if (releaseTimeoutRef.current) {
-      clearTimeout(releaseTimeoutRef.current);
-      releaseTimeoutRef.current = null;
-    }
-  };
-
   return (
     <div className="protected-photo-zone select-none relative min-h-screen">
-      {/* ESCUDO DOM INSTANTÁNEO DE APAGÓN NEGRO (0MS) */}
+      {/* ESCUDO DE APAGÓN NEGRO PURO 100% INVISIBLE Y SILENCIOSO (SIN TEXTO NI CANDADOS) */}
       <div
         id="anti-screenshot-shield"
-        onClick={handleShieldUnlock}
-        onTouchEnd={handleShieldUnlock}
-        className="fixed inset-0 z-[2147483647] bg-black flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer"
+        className="fixed inset-0 z-[2147483647] bg-black select-none pointer-events-none"
         style={{ display: 'none' }}
-      >
-        <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 flex items-center justify-center text-amber-400 mb-6 shadow-[0_0_50px_rgba(245,158,11,0.3)] animate-pulse">
-          <Lock className="w-10 h-10" />
-        </div>
-
-        <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white mb-2">
-          Vista Protegida contra Capturas
-        </h3>
-        <p className="text-sm text-amber-300 font-semibold max-w-md mx-auto mb-2">
-          Sebastian G • Propiedad Intelectual Protegida
-        </p>
-        <p id="anti-screenshot-reason" className="text-xs text-amber-400/80 font-mono mb-4">
-          Captura de pantalla o panel del sistema detectado
-        </p>
-        <div className="bg-stone-900 border border-stone-800 rounded-2xl p-4 max-w-sm text-xs text-stone-300 leading-relaxed">
-          Las fotografías están blindadas contra capturas de pantalla, paneles de notificaciones, herramientas de recorte y descargas.
-        </div>
-        <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-stone-900 border border-amber-500/40 text-amber-300 text-xs font-semibold animate-pulse">
-          <ShieldCheck className="w-4 h-4 text-amber-400" />
-          <span>Toca aquí para continuar viendo las fotos</span>
-        </div>
-      </div>
-
-      {/* ALERTA FLOTANTE EN CASO DE INTENTO BLOQUEADO */}
-      {warningMessage && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[999999] max-w-md w-[92%] bg-stone-900/95 border-2 border-amber-500/80 text-white px-5 py-3.5 rounded-2xl shadow-2xl backdrop-blur-md flex items-center gap-3 animate-bounce">
-          <ShieldAlert className="w-7 h-7 text-amber-400 shrink-0" />
-          <div>
-            <p className="font-bold text-xs uppercase tracking-wider text-amber-300">Protección Activa</p>
-            <p className="text-xs text-stone-200 leading-tight">{warningMessage}</p>
-          </div>
-        </div>
-      )}
-
+        aria-hidden="true"
+      />
       {children}
     </div>
   );

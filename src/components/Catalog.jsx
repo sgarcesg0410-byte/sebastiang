@@ -252,17 +252,14 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             onClick={(e) => e.stopPropagation()}
             className="bg-stone-900 border border-stone-700 rounded-3xl max-w-xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[92vh]"
           >
-            {/* Cabecera de Seguridad */}
-            <div className="px-4 py-2.5 bg-stone-950 border-b border-stone-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
-                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-300">
-                  Vista Protegida contra Capturas • Sebastian G
-                </span>
-              </div>
+            {/* Cabecera Limpia del Visor */}
+            <div className="px-5 py-3 bg-stone-950/90 border-b border-stone-800 flex items-center justify-between">
+              <span className="text-xs font-serif font-bold text-white tracking-wider">
+                Sebastian G
+              </span>
               <button
                 onClick={() => setPreviewPhoto(null)}
-                className="p-1 text-stone-400 hover:text-white rounded-lg transition-colors"
+                className="p-1.5 text-stone-400 hover:text-white rounded-xl bg-stone-900 hover:bg-stone-800 transition-colors"
                 title="Cerrar vista previa"
               >
                 <X className="w-4 h-4" />
