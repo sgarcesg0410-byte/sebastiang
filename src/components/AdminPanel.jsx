@@ -295,6 +295,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const knownBookingIdsRef = useRef(null);
   const knownPaymentIdsRef = useRef(null);
   const knownSubmittedSessionTokensRef = useRef(null);
+  const knownReviewIdsRef = useRef(null);
 
   useEffect(() => {
     const handlePushChange = () => {
@@ -325,22 +326,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   const handleTestPush = async () => {
+    const testWhatsApp = 'https://wa.me/573244725167';
     await sendSystemPushNotification({
       title: '📸 ¡Prueba de Reserva en Tiempo Real!',
-      body: 'Camila acaba de reservar: 8 Fotos Digitales (+ 2 Fotos Gratis) para el 28 de Septiembre.',
+      body: 'Camila acaba de reservar: 8 Fotos Digitales (+ 2 Fotos Gratis) para el 28 de Septiembre.\n📍 Playa Blanca, San Antero ($75.000 COP)',
       tag: 'test-push-sample',
-      data: { type: 'booking' }
+      data: { type: 'booking' },
+      whatsappUrl: testWhatsApp
     });
     setRealtimeAlert({
       type: 'booking',
-      clientName: 'Camila (Prueba)',
+      bookingId: 'test-sample-id',
+      clientName: 'Camila (Prueba en Vivo)',
       packageName: '8 Fotos Digitales (+ 2 Fotos Gratis)',
       dateTime: '28 de Septiembre a las 4:00 p. m.',
       location: 'Playa Blanca, San Antero',
       totalPrice: 75000,
+      whatsappUrl: testWhatsApp,
       targetTab: 'bookings'
     });
-    setTimeout(() => setRealtimeAlert(null), 10000);
+    setTimeout(() => setRealtimeAlert(null), 12000);
   };
   const [sessions, setSessions] = useState([]);
   const [catalog, setCatalog] = useState(() => {
@@ -736,11 +741,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const freshPayments = payData.filter(p => p?.id && !knownPaymentIdsRef.current.has(p.id));
         if (freshPayments.length > 0) {
           const latestPay = freshPayments[0];
+          let cleanPhone = (latestPay.clientWhatsApp || '').replace(/\D/g, '');
+          if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) cleanPhone = '57' + cleanPhone;
+          const waUrl = cleanPhone ? `https://wa.me/${cleanPhone}` : null;
+
           sendSystemPushNotification({
             title: `💰 ¡Nuevo Pago: ${latestPay.clientName || 'Cliente'}!`,
             body: `Pagó $${Number(latestPay.amount || 0).toLocaleString('es-CO')} COP vía ${latestPay.method?.toUpperCase() || 'transferencia'}. Comprobante disponible para verificar.`,
             tag: `payment-${latestPay.id}`,
-            data: { type: 'payment', targetTab: 'payments', paymentId: latestPay.id }
+            data: { type: 'payment', targetTab: 'payments', paymentId: latestPay.id },
+            whatsappUrl: waUrl
           });
 
           setRealtimeAlert({
@@ -748,6 +758,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             clientName: latestPay.clientName || 'Un cliente',
             amount: latestPay.amount,
             method: latestPay.method,
+            whatsappUrl: waUrl,
             targetTab: 'payments'
           });
           setTimeout(() => setRealtimeAlert(null), 14000);
@@ -763,17 +774,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         if (freshSubmitted.length > 0) {
           const latestSess = freshSubmitted[0];
           const count = latestSess.selectedCount || (latestSess.photos ? latestSess.photos.filter(p => p.selected).length : 0);
+          let cleanPhone = (latestSess.clientWhatsApp || '').replace(/\D/g, '');
+          if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) cleanPhone = '57' + cleanPhone;
+          const waUrl = cleanPhone ? `https://wa.me/${cleanPhone}` : null;
+
           sendSystemPushNotification({
-            title: `📸 ¡Selección Lista: ${latestSess.clientName || 'Cliente'}!`,
+            title: `🖼️ ¡Selección Lista: ${latestSess.clientName || 'Cliente'}!`,
             body: `El cliente eligió sus ${count} fotos para edición. ¡Lista para procesar!`,
             tag: `session-${latestSess.token}`,
-            data: { type: 'session', targetTab: 'sessions', token: latestSess.token }
+            data: { type: 'session', targetTab: 'sessions', token: latestSess.token },
+            whatsappUrl: waUrl
           });
 
           setRealtimeAlert({
             type: 'session',
             clientName: latestSess.clientName || 'Cliente',
-            packageName: latestSess.packageTitle || 'Sesión Fotográfica',
+            packageName: `${latestSess.packageTitle || 'Sesión'} (${count} fotos)`,
+            whatsappUrl: waUrl,
             targetTab: 'sessions'
           });
           setTimeout(() => setRealtimeAlert(null), 14000);
@@ -782,6 +799,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       knownSubmittedSessionTokensRef.current = new Set(
         (cleanSessions || []).filter(s => s?.token && s.status === 'submitted').map(s => s.token)
       );
+
+      // Detección exacta de nuevas calificaciones y reseñas en tiempo real
+      if (knownReviewIdsRef.current !== null && Array.isArray(revData)) {
+        const freshReviews = revData.filter(r => r?.id && !knownReviewIdsRef.current.has(r.id));
+        if (freshReviews.length > 0) {
+          const latestRev = freshReviews[0];
+          sendSystemPushNotification({
+            title: `⭐ ¡Nueva Calificación: ${latestRev.clientName || 'Cliente'}!`,
+            body: `Calificó con ${latestRev.rating || 5} estrellas ★: "${latestRev.comment || 'Excelente servicio'}"`,
+            tag: `review-${latestRev.id}`,
+            data: { type: 'review', targetTab: 'reviews', reviewId: latestRev.id }
+          });
+
+          setRealtimeAlert({
+            type: 'review',
+            clientName: latestRev.clientName || 'Cliente',
+            packageName: `Calificación: ${latestRev.rating || 5} Estrellas ★★★★★`,
+            comment: latestRev.comment || '',
+            targetTab: 'reviews'
+          });
+          setTimeout(() => setRealtimeAlert(null), 14000);
+        }
+      }
+      knownReviewIdsRef.current = new Set((revData || []).map(r => r?.id).filter(Boolean));
     } catch (err) {
       console.error('Error cargando datos de administración:', err);
     } finally {
@@ -1977,17 +2018,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>🔔 Activar Notificaciones Push</span>
             </button>
           ) : (
-            <div className="flex items-center gap-1 bg-stone-950/90 border border-emerald-500/40 px-2.5 py-1.5 rounded-xl">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-1" />
-              <span className="text-[11px] font-bold text-emerald-300">Push Activo</span>
+            <div className="flex items-center gap-1.5 bg-stone-950/90 border border-emerald-500/40 px-3 py-1.5 rounded-xl">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-0.5" />
+              <span className="text-[11px] font-bold text-emerald-300">Push Flotante Activo</span>
               <button
                 type="button"
                 onClick={handleTestPush}
-                className="ml-1 text-[10px] text-stone-400 hover:text-amber-300 underline font-semibold"
-                title="Hacer sonar y probar una notificación de prueba"
+                className="ml-1 text-[11px] text-stone-300 hover:text-amber-300 underline font-semibold"
+                title="Hacer sonar y probar una notificación flotante de prueba"
               >
-                (Probar)
+                (Probar Alerta)
               </button>
+              {typeof window !== 'undefined' && window.AndroidNotificationBridge?.openNotificationSettings && (
+                <button
+                  type="button"
+                  onClick={() => window.AndroidNotificationBridge.openNotificationSettings()}
+                  className="ml-1 text-[11px] text-amber-400 hover:text-amber-200 underline font-bold"
+                  title="Configurar permisos de notificaciones flotantes en los ajustes de Android"
+                >
+                  ⚙️ Ajustes Android
+                </button>
+              )}
             </div>
           )}
 
@@ -2029,13 +2080,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           <div className="bg-stone-950/95 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 shadow-[0_20px_60px_rgba(245,158,11,0.4)] backdrop-blur-2xl text-left text-white ring-4 ring-amber-400/20">
             <div className="flex items-start gap-3.5">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center shrink-0 text-stone-950 text-2xl shadow-lg shadow-amber-500/30">
-                {realtimeAlert.type === 'payment' ? '💰' : '📸'}
+                {realtimeAlert.type === 'payment' ? '💰' : realtimeAlert.type === 'session' ? '🖼️' : realtimeAlert.type === 'review' ? '⭐' : '📸'}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                    {realtimeAlert.type === 'payment' ? '¡Nuevo Pago Recibido!' : '¡Nueva Reserva en Vivo!'}
+                    {realtimeAlert.type === 'payment'
+                      ? '¡Nuevo Pago Recibido!'
+                      : realtimeAlert.type === 'session'
+                      ? '¡Selección de Fotos Lista!'
+                      : realtimeAlert.type === 'review'
+                      ? '¡Nueva Calificación de Cliente!'
+                      : '¡Nueva Reserva en Vivo!'}
                   </span>
                   <button
                     onClick={() => setRealtimeAlert(null)}
@@ -2053,9 +2110,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <br />
                     <span className="text-amber-300/90 font-medium">📍 {realtimeAlert.location} (${Number(realtimeAlert.totalPrice || 0).toLocaleString('es-CO')} COP)</span>
                   </p>
-                ) : (
+                ) : realtimeAlert.type === 'payment' ? (
                   <p className="text-xs text-stone-300 mt-0.5">
                     Monto: <strong className="text-emerald-400 font-bold">${Number(realtimeAlert.amount || 0).toLocaleString('es-CO')} COP</strong> ({realtimeAlert.method?.toUpperCase()})
+                  </p>
+                ) : realtimeAlert.type === 'session' ? (
+                  <p className="text-xs text-stone-300 mt-0.5">
+                    {realtimeAlert.packageName || 'Sesión Fotográfica'} elegida por el cliente. ¡Lista para descargar y editar!
+                  </p>
+                ) : (
+                  <p className="text-xs text-stone-300 mt-0.5">
+                    <span className="text-amber-400 font-bold">{realtimeAlert.packageName}</span>
+                    {realtimeAlert.comment ? <><br /><span className="italic text-stone-300">"{realtimeAlert.comment}"</span></> : null}
                   </p>
                 )}
 
@@ -2068,7 +2134,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
                   >
                     <Eye className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Ver {realtimeAlert.type === 'payment' ? 'Pago' : 'Reserva'}</span>
+                    <span>Ver {realtimeAlert.type === 'payment' ? 'Pago' : realtimeAlert.type === 'session' ? 'Fotos' : realtimeAlert.type === 'review' ? 'Reseñas' : 'Reserva'}</span>
                   </button>
 
                   {realtimeAlert.type === 'booking' && (
@@ -2101,7 +2167,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       rel="noreferrer"
                       className="px-3 py-1.5 rounded-xl bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
                     >
-                      <span>💬 Chat</span>
+                      <span>💬 Chat WhatsApp</span>
                     </a>
                   )}
                 </div>

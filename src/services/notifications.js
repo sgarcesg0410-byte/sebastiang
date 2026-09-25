@@ -146,12 +146,22 @@ export async function sendSystemPushNotification({
   // 3. Puente Nativo Android APK (Prioridad Máxima si se ejecuta dentro de la App de Android)
   if (typeof window !== 'undefined' && window.AndroidNotificationBridge) {
     try {
-      window.AndroidNotificationBridge.showNotification(
-        title,
-        body,
-        tag,
-        data.type || 'booking'
-      );
+      if (typeof window.AndroidNotificationBridge.showNotificationWithAction === 'function') {
+        window.AndroidNotificationBridge.showNotificationWithAction(
+          title,
+          body,
+          tag,
+          data.type || 'booking',
+          whatsappUrl || ''
+        );
+      } else {
+        window.AndroidNotificationBridge.showNotification(
+          title,
+          body,
+          tag,
+          data.type || 'booking'
+        );
+      }
       return true;
     } catch (errBridge) {
       console.warn('Puente nativo Android falló:', errBridge);
