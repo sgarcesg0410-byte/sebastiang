@@ -274,10 +274,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const knownBookingIdsRef = useRef(null);
   const knownPaymentIdsRef = useRef(null);
 
+  useEffect(() => {
+    const handlePushChange = () => {
+      setPushPermission(getPushPermissionState());
+    };
+    window.addEventListener('push-permission-changed', handlePushChange);
+    window.addEventListener('focus', handlePushChange);
+    return () => {
+      window.removeEventListener('push-permission-changed', handlePushChange);
+      window.removeEventListener('focus', handlePushChange);
+    };
+  }, []);
+
   const handleEnablePush = async () => {
+    // Desbloquear contexto de audio con interacción del usuario
+    playPushNotificationChime('booking');
     const res = await requestPushPermission();
     setPushPermission(res);
-    if (res === 'granted') {
+    if (res === 'granted' || (typeof window !== 'undefined' && window.AndroidNotificationBridge)) {
+      setPushPermission('granted');
       await sendSystemPushNotification({
         title: '🔔 ¡Notificaciones Push Activas!',
         body: 'Listo Sebastian G. Las alertas de reservas y pagos sonarán al instante como en WhatsApp.',

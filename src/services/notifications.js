@@ -86,6 +86,13 @@ export function flashDocumentTitle(alertText) {
 
 // Obtener estado actual del permiso de notificaciones
 export function getPushPermissionState() {
+  if (typeof window !== 'undefined' && window.AndroidNotificationBridge) {
+    try {
+      return window.AndroidNotificationBridge.areNotificationsEnabled() ? 'granted' : 'default';
+    } catch (e) {
+      return 'default';
+    }
+  }
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return 'unsupported';
   }
@@ -94,6 +101,15 @@ export function getPushPermissionState() {
 
 // Solicitar permiso de notificaciones Push al usuario
 export async function requestPushPermission() {
+  if (typeof window !== 'undefined' && window.AndroidNotificationBridge) {
+    try {
+      window.AndroidNotificationBridge.requestNotificationPermission();
+      const enabled = window.AndroidNotificationBridge.areNotificationsEnabled();
+      return enabled ? 'granted' : 'default';
+    } catch (e) {
+      return 'granted';
+    }
+  }
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return 'unsupported';
   }
@@ -127,7 +143,22 @@ export async function sendSystemPushNotification({
   // 2. Parpadeo en pestaña si no está en foco
   flashDocumentTitle(`🔔 ${title}`);
 
-  // 3. Si no tiene permiso de notificaciones de sistema, salir (la alerta in-app visual se mostrará de todos modos)
+  // 3. Puente Nativo Android APK (Prioridad Máxima si se ejecuta dentro de la App de Android)
+  if (typeof window !== 'undefined' && window.AndroidNotificationBridge) {
+    try {
+      window.AndroidNotificationBridge.showNotification(
+        title,
+        body,
+        tag,
+        data.type || 'booking'
+      );
+      return true;
+    } catch (errBridge) {
+      console.warn('Puente nativo Android falló:', errBridge);
+    }
+  }
+
+  // 4. Si no tiene soporte o permiso de notificaciones de navegador, salir (la alerta in-app visual siempre se muestra)
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return false;
   }
