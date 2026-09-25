@@ -6,6 +6,7 @@ import TestimonialsSection from './components/TestimonialsSection';
 import BookingModal from './components/BookingModal';
 import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
+import PublicReceiptView from './components/PublicReceiptView';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG } from './services/api';
@@ -15,19 +16,37 @@ import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock } from 'lucide-
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
 export default function App() {
+  const [activeReceiptId, setActiveReceiptId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash || '';
+      const urlParams = new URLSearchParams(window.location.search);
+      if (hash.startsWith('#recibo=')) {
+        return hash.replace('#recibo=', '').split('&')[0];
+      }
+      if (urlParams.get('recibo')) {
+        return urlParams.get('recibo');
+      }
+    }
+    return null;
+  });
+
   const [currentView, setCurrentView] = useState(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname;
+      const hash = window.location.hash || '';
       const urlParams = new URLSearchParams(window.location.search);
+      if (hash.startsWith('#recibo=') || urlParams.get('recibo')) {
+        return 'receipt';
+      }
       if (path.startsWith('/galeria/')) {
         return 'gallery';
       }
-      if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/') {
+      if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/' || hash === '#admin') {
         return 'admin';
       }
     }
     return 'home';
-  }); // 'home' | 'packages' | 'gallery' | 'admin'
+  }); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt'
 
   const [activeGalleryToken, setActiveGalleryToken] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -272,6 +291,19 @@ export default function App() {
             />
           )}
 
+          {currentView === 'receipt' && (
+            <PublicReceiptView
+              bookingId={activeReceiptId}
+              onBack={() => {
+                setCurrentView('home');
+                if (typeof window !== 'undefined') {
+                  window.history.pushState(null, '', '/');
+                }
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
+          )}
+
           {currentView === 'admin' && (
             <AdminPanel
               onOpenGalleryToken={handleOpenGalleryToken}
@@ -293,8 +325,8 @@ export default function App() {
         settings={settings}
       />
 
-      {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD) */}
-      {currentView !== 'admin' && (
+      {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD Y DEL RECIBO) */}
+      {currentView !== 'admin' && currentView !== 'receipt' && (
         <footer className="border-t border-stone-800/80 bg-stone-950 py-12 px-4 sm:px-6 lg:px-8">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
             <div className="flex items-center gap-3">
@@ -351,8 +383,8 @@ export default function App() {
               <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">
                 <span className="text-xl">⛅</span>
                 <div>
-                  <span className="text-xs font-bold text-sky-300 block">Garantía de Clima</span>
-                  <span className="text-[11px] text-stone-400">Si llueve en San Antero, reprogramamos tu sesión sin costo.</span>
+                  <span className="text-xs font-bold text-sky-300 block">Garantía de Clima en tu Locación</span>
+                  <span className="text-[11px] text-stone-400">Si llueve en tu locación o playa, reprogramamos tu sesión sin costo.</span>
                 </div>
               </div>
               <div className="flex items-center gap-3 p-3 rounded-2xl bg-stone-900/60 border border-stone-800">

@@ -89,6 +89,8 @@ import {
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
 import { NequiLogo, DaviPlataLogo, DaleLogo, WalletAccountCard } from './PaymentLogos';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 import {
   sendSystemPushNotification,
@@ -276,6 +278,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [receiptPaidAmount, setReceiptPaidAmount] = useState('');
   const [receiptPaymentMethod, setReceiptPaymentMethod] = useState('Nequi');
   const [receiptNotes, setReceiptNotes] = useState('Abono para reserva de fecha y cupo garantizado.');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [payments, setPayments] = useState([]);
   const [copiedWalletKey, setCopiedWalletKey] = useState(null);
   const handleCopyWalletKey = (val, keyName) => {
@@ -903,8 +906,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       navigator.serviceWorker.addEventListener('message', swMessageListener);
     }
 
+    // Sondeo de respaldo en tiempo real cada 3.5 segundos (Garantiza sincronización permanente en la APK y PC)
+    const realtimeInterval = setInterval(() => {
+      loadAllAdminData(true);
+    }, 3500);
+
+    // Actualización instantánea al cambiar de pestaña o volver a enfocar la app/APK
+    const handleVisibilityAndFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        loadAllAdminData(true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityAndFocus);
+    window.addEventListener('focus', handleVisibilityAndFocus);
+
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      clearInterval(realtimeInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityAndFocus);
+      window.removeEventListener('focus', handleVisibilityAndFocus);
       supabase.removeChannel(channel);
       if (bcCatalog) bcCatalog.close();
       if (bcBookings) bcBookings.close();
@@ -1169,14 +1189,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startIso}/${endIso}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(loc)}`;
   };
 
-  // 3. Recordatorio inteligente a 24 Horas de la Sesión vía WhatsApp
+  // 3. Recordatorio inteligente a 24 Horas de la Sesión vía WhatsApp con locación dinámica
   const handleSendReminder = (booking) => {
     let clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
     if (clientPhone.length === 10 && !clientPhone.startsWith('57')) {
       clientPhone = '57' + clientPhone;
     }
     const dateFormatted = formatDateTime12Hour(booking.dateTime);
-    const loc = booking.specificLocation || 'Playa Blanca, San Antero';
+    const loc = booking.specificLocation || (booking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
     const rawName = (booking.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
@@ -1191,7 +1211,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `1. Llegar con 10 a 15 minutos de anticipación para aprovechar al máximo la luz natural (la "Golden Hour" del atardecer caribeño es mágica).\n` +
       `2. Traer los cambios de ropa planchados o listos para usar.\n` +
       `3. Hidratarte bien y llevar bloqueador solar o repelente según la locación.\n` +
-      `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en San Antero, reprogramamos tu sesión sin ningún costo adicional.\n\n` +
+      `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en ${loc}, reprogramamos tu sesión sin ningún costo adicional.\n\n` +
       `¿Tienes alguna duda previa o cambio de última hora? ¡Quedo muy atento! Nos vemos muy pronto para crear fotos inolvidables 📸✨`;
 
     const url = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
@@ -1203,7 +1223,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // 4. Modal de Recibo Digital Oficial y Voucher
+  // 4. Modal de Recibo Digital Oficial y Voucher con Generación PDF Real
   const handleOpenReceipt = (booking) => {
     setReceiptBooking(booking);
     const total = Number(booking.totalPrice || 0);
@@ -1214,12 +1234,55 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
   };
 
+  const generateReceiptPdfBlob = async () => {
+    const element = document.getElementById('sebastian-g-digital-receipt');
+    if (!element) return null;
+
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#0c0a09',
+      logging: false
+    });
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const imgWidth = 210;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+    return pdf;
+  };
+
+  const handleDownloadReceiptPdf = async () => {
+    if (!receiptBooking) return;
+    setIsGeneratingPdf(true);
+    try {
+      const pdf = await generateReceiptPdfBlob();
+      if (pdf) {
+        const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
+        pdf.save(`Comprobante-SebastianG-${voucherNum}.pdf`);
+      }
+    } catch (err) {
+      console.error('Error generando PDF:', err);
+      window.print();
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   const handlePrintReceipt = () => {
     window.print();
   };
 
-  const handleSendReceiptWhatsApp = () => {
+  const handleSendReceiptWhatsApp = async () => {
     if (!receiptBooking) return;
+    setIsGeneratingPdf(true);
+
     let clientPhone = (receiptBooking.clientWhatsApp || '').replace(/\D/g, '');
     if (clientPhone.length === 10 && !clientPhone.startsWith('57')) {
       clientPhone = '57' + clientPhone;
@@ -1230,6 +1293,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
     const rawName = (receiptBooking.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
+    const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+
+    const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.id}&paid=${paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
     const text =
       `🧾 *COMPROBANTE DE PAGO OFICIAL • SEBASTIAN G* 📸✨\n\n` +
@@ -1237,24 +1303,51 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `*Fecha de Emisión:* ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}\n` +
       `*Cliente:* ${receiptBooking.clientName}\n` +
       `*Sesión:* ${formatDateTime12Hour(receiptBooking.dateTime)}\n` +
-      `*Locación:* ${receiptBooking.specificLocation || 'San Antero'}\n` +
+      `*Locación:* ${loc}\n` +
       `*Paquete:* ${receiptBooking.packageName}\n\n` +
       `────────────────────────\n` +
       `💰 *Total del Paquete:* $${total.toLocaleString('es-CO')} COP\n` +
       `✅ *Valor Recibido / Abonado:* $${paid.toLocaleString('es-CO')} COP (${receiptPaymentMethod})\n` +
       `⏳ *Saldo Pendiente:* $${balance.toLocaleString('es-CO')} COP\n` +
       `────────────────────────\n` +
-      `📌 *Estado:* ${balance === 0 ? 'PAGADO TOTALMENTE (100%)' : 'ABONO REGISTRADO (Cupo Reservado)'}\n` +
+      `📌 *Estado:* ${balance === 0 ? 'PAGADO TOTALMENTE (100%)' : 'ABONO CONFIRMADO (Cupo Reservado)'}\n` +
       `📝 *Concepto:* ${receiptNotes}\n` +
-      `⛅ *Garantía:* Respaldo de clima en San Antero sin recargo por reprogramación.\n\n` +
-      `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está formalmente agendada. Nos vemos muy pronto 📸`;
+      `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en ${loc}, tu sesión se reprograma sin ningún costo ni penalidad.\n\n` +
+      `📄 *DESCARGA O VISUALIZA TU RECIBO EN PDF AQUÍ:*\n${voucherOnlineUrl}\n\n` +
+      `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está agendada. Nos vemos muy pronto 📸`;
 
-    const url = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
+    try {
+      const pdf = await generateReceiptPdfBlob();
+      if (pdf) {
+        const pdfBlob = pdf.output('blob');
+        const pdfFile = new File([pdfBlob], `Comprobante-SebastianG-${voucherNum}.pdf`, { type: 'application/pdf' });
+
+        // Intentar compartir el archivo PDF nativamente en Android/WhatsApp
+        if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Comprobante de Pago Oficial • ${receiptBooking.clientName}`,
+            text: text
+          });
+          setIsGeneratingPdf(false);
+          return;
+        }
+
+        // Descarga el archivo PDF y abre WhatsApp con el enlace de respaldo
+        pdf.save(`Comprobante-SebastianG-${voucherNum}.pdf`);
+      }
+    } catch (e) {
+      console.warn('Fallback a WhatsApp regular:', e);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+
+    const waUrl = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
     const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     if (isMobile) {
-      window.location.href = url;
+      window.location.href = waUrl;
     } else {
-      window.open(url, '_blank');
+      window.open(waUrl, '_blank');
     }
   };
 
@@ -5633,14 +5726,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </div>
               </div>
 
-              {/* Cláusula de Garantía de Clima */}
-              <div className="p-3 bg-stone-900/40 rounded-xl border border-stone-800/60 text-[11px] space-y-1 text-stone-400">
-                <p className="text-amber-300 font-semibold flex items-center gap-1.5">
-                  <span>⛅ Garantía de Clima en San Antero:</span>
-                </p>
-                <p>En caso de lluvia o clima adverso en la playa, la sesión se reprograma sin ningún costo ni penalidad.</p>
-                <p className="pt-0.5 text-stone-500">Documento electrónico emitido en sebastiang.app • Válido como soporte oficial de reserva.</p>
-              </div>
+              {/* Cláusula de Garantía de Clima Adaptada a la Locación */}
+              {(() => {
+                const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+                return (
+                  <div className="p-3 bg-stone-900/40 rounded-xl border border-stone-800/60 text-[11px] space-y-1 text-stone-400">
+                    <p className="text-amber-300 font-semibold flex items-center gap-1.5">
+                      <span>⛅ Garantía de Clima en {loc}:</span>
+                    </p>
+                    <p>En caso de lluvia o clima adverso en {loc}, tu sesión se reprograma para una nueva fecha sin ningún costo ni penalidad adicional.</p>
+                    <p className="pt-0.5 text-stone-500">Documento electrónico emitido en sebastiang.app • Válido como soporte oficial de reserva.</p>
+                  </div>
+                );
+              })()}
 
               {/* Firma del Fotógrafo */}
               <div className="flex justify-between items-end pt-3 border-t border-stone-800 text-[11px]">
@@ -5666,26 +5764,38 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 no-print">
               <button
                 type="button"
-                onClick={handlePrintReceipt}
-                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95"
+                onClick={handleDownloadReceiptPdf}
+                disabled={isGeneratingPdf}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all active:scale-95 disabled:opacity-50"
               >
-                <Printer className="w-4 h-4" />
-                <span>🖨️ Imprimir / Guardar en PDF</span>
+                <DownloadCloud className="w-4 h-4" />
+                <span>{isGeneratingPdf ? 'Generando PDF...' : '📥 Descargar Archivo PDF'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleSendReceiptWhatsApp}
-                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+                disabled={isGeneratingPdf}
+                className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95 disabled:opacity-50"
               >
                 <MessageCircle className="w-4 h-4" />
-                <span>📲 Enviar Recibo por WhatsApp</span>
+                <span>{isGeneratingPdf ? 'Preparando...' : '📲 Enviar Archivo PDF a WhatsApp'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrintReceipt}
+                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold flex items-center justify-center gap-1.5"
+                title="Imprimir copia"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimir</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setReceiptBooking(null)}
-                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold"
+                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-white text-xs font-semibold border border-stone-800"
               >
                 Cerrar
               </button>
