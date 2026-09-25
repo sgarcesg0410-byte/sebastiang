@@ -3191,7 +3191,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               {(() => {
                 const sessionBaseUrl = (typeof window !== 'undefined' && window.location.origin && window.location.origin.startsWith('http'))
                   ? window.location.origin
-                  : 'https://sebastiang.vercel.app';
+                  : 'https://sebastiang.app';
                 const galleryFullUrl = `${sessionBaseUrl}/galeria/${createdSessionResult.session.token}`;
                 let clientPhoneDigits = (createdSessionResult.session.clientWhatsApp || '').replace(/\D/g, '');
                 if (clientPhoneDigits.length === 10 && !clientPhoneDigits.startsWith('57')) {
