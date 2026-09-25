@@ -475,6 +475,21 @@ function saveLocalSettings(st) {
 }
 
 export async function getSettings() {
+  try {
+    const { data: supaSt } = await supabase
+      .from('catalog')
+      .select('url')
+      .eq('id', 'system_settings')
+      .maybeSingle();
+    if (supaSt && supaSt.url) {
+      const parsed = JSON.parse(supaSt.url);
+      if (parsed && typeof parsed === 'object') {
+        saveLocalSettings(parsed);
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      }
+    }
+  } catch (e) {}
+
   const localSt = getLocalSettings();
   try {
     const res = await fetch(`${API_BASE}/settings`);
@@ -496,13 +511,21 @@ export async function updateSettings(newSettings) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newSettings)
     });
-    if (res.ok) {
-      const data = await res.json();
-      return data.settings;
-    }
   } catch (err) {
     console.warn('Servidor offline al guardar settings, guardado localmente:', err);
   }
+
+  // Sincronizar en Supabase para que la APK y la Web se actualicen al instante
+  try {
+    await supabase.from('catalog').upsert({
+      id: 'system_settings',
+      title: 'Configuración del Sistema',
+      category: 'settings_data',
+      location: 'system',
+      url: JSON.stringify(newSettings)
+    });
+  } catch (e) {}
+
   return newSettings;
 }
 
@@ -621,6 +644,22 @@ export async function getCatalog() {
 }
 
 export async function getPackages() {
+  // 1. Probar en Supabase Cloud primero (para sincronización instantánea entre APK y Web)
+  try {
+    const { data: supaPkgs } = await supabase
+      .from('catalog')
+      .select('url')
+      .eq('id', 'system_packages')
+      .maybeSingle();
+    if (supaPkgs && supaPkgs.url) {
+      const parsed = JSON.parse(supaPkgs.url);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        saveLocalPackages(parsed);
+        return parsed;
+      }
+    }
+  } catch (e) {}
+
   const localPkgs = getLocalPackages();
   try {
     const res = await fetch(`${API_BASE}/packages`);
@@ -647,13 +686,21 @@ export async function updatePackages(packages) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ packages })
     });
-    if (res.ok) {
-      const data = await res.json();
-      return data.packages;
-    }
   } catch (err) {
     console.warn('Servidor offline al guardar paquetes, guardado localmente:', err);
   }
+
+  // Sincronizar en Supabase para que la APK y la Web lo reciban al instante
+  try {
+    await supabase.from('catalog').upsert({
+      id: 'system_packages',
+      title: 'Paquetes de Fotografía',
+      category: 'package_data',
+      location: 'system',
+      url: JSON.stringify(packages)
+    });
+  } catch (e) {}
+
   return packages;
 }
 
@@ -696,8 +743,9 @@ export async function createBooking(data) {
   // Esto garantiza que la reserva quede grabada de por vida, nunca desaparezca,
   // y active en < 200 ms la notificación PUSH sonora en el PC y la APK móvil del fotógrafo.
   try {
+    const supaId = newBooking.id.startsWith('book-') ? newBooking.id : `book-${newBooking.id}`;
     await supabase.from('catalog').upsert({
-      id: `book-${newBooking.id}`,
+      id: supaId,
       title: newBooking.clientName || 'Reserva',
       category: 'booking_data',
       location: newBooking.specificLocation || '',
@@ -1045,7 +1093,7 @@ export async function getAdminBookings() {
 
   const localBookings = getLocalBookings();
   const map = new Map();
-  [...serverBookings, ...cloudBookings, ...localBookings].forEach(b => {
+  [...localBookings, ...serverBookings, ...cloudBookings].forEach(b => {
     if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       map.set(b.id, b);
     }
@@ -1116,8 +1164,9 @@ export async function updateAdminBooking(id, updates) {
   // Sincronizar actualización de reserva en la nube (Supabase)
   if (updatedBooking) {
     try {
+      const supaId = id.startsWith('book-') ? id : `book-${id}`;
       await supabase.from('catalog').upsert({
-        id: `book-${id}`,
+        id: supaId,
         title: updatedBooking.clientName || 'Reserva',
         category: 'booking_data',
         location: updatedBooking.specificLocation || '',
@@ -1125,6 +1174,16 @@ export async function updateAdminBooking(id, updates) {
       });
     } catch (e) {}
   }
+
+  // Notificar al instante a pestañas y dispositivos
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('bookings_realtime_sync');
+      bc.postMessage({ type: 'update_booking', booking: updatedBooking });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_bookings_last_sync', Date.now().toString());
+  } catch (e) {}
 
   return { success: true, booking: updatedBooking };
 }
@@ -1134,10 +1193,11 @@ export async function updateBookingStatus(id, status) {
 }
 
 export async function deleteAdminBooking(id) {
+  const supaId = id.startsWith('book-') ? id : `book-${id}`;
   try {
     const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
     rawDel.push(id);
-    rawDel.push(`book-${id}`);
+    rawDel.push(supaId);
     localStorage.setItem('sebastian_g_deleted_bookings', JSON.stringify([...new Set(rawDel)]));
   } catch (e) {}
 
@@ -1148,11 +1208,11 @@ export async function deleteAdminBooking(id) {
   }
 
   try {
-    await supabase.from('catalog').delete().eq('id', `book-${id}`);
+    await supabase.from('catalog').delete().eq('id', supaId);
     await supabase.from('catalog').delete().eq('id', id);
   } catch (e) {}
 
-  const list = getLocalBookings().filter(b => b.id !== id && b.id !== `book-${id}`);
+  const list = getLocalBookings().filter(b => b.id !== id && b.id !== supaId);
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
   } catch (e) {}
@@ -1163,6 +1223,7 @@ export async function deleteAdminBooking(id) {
       bc.postMessage({ type: 'delete_booking', id });
       setTimeout(() => bc.close(), 300);
     }
+    localStorage.setItem('sebastian_g_bookings_last_sync', Date.now().toString());
   } catch (e) {}
 
   return { success: true };
@@ -1196,10 +1257,16 @@ export async function getAdminPayments() {
 
   const localPayments = getLocalPayments();
   const map = new Map();
-  [...serverPayments, ...cloudPayments, ...localPayments].forEach(p => {
+  [...localPayments, ...serverPayments, ...cloudPayments].forEach(p => {
     if (p && p.id) map.set(p.id, p);
   });
-  return Array.from(map.values());
+  const combined = Array.from(map.values());
+  if (cloudPayments.length > 0) {
+    try {
+      localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(combined));
+    } catch (e) {}
+  }
+  return combined;
 }
 
 export async function createPayment(paymentData) {
@@ -1240,13 +1307,23 @@ export async function createPayment(paymentData) {
 
   // Sincronizar pago en la nube (Supabase) para avisar al instante al PC y a la APK
   try {
+    const supaId = newPayment.id.startsWith('pay-') ? newPayment.id : `pay-${newPayment.id}`;
     await supabase.from('catalog').upsert({
-      id: `pay-${newPayment.id}`,
+      id: supaId,
       title: newPayment.clientName || 'Pago',
       category: 'payment_data',
       location: newPayment.method || '',
       url: JSON.stringify(newPayment)
     });
+  } catch (e) {}
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('payments_realtime_sync');
+      bc.postMessage({ type: 'new_payment', payment: newPayment });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_payments_last_sync', Date.now().toString());
   } catch (e) {}
 
   const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
@@ -1302,14 +1379,24 @@ export async function updatePaymentStatus(id, status) {
   try {
     const target = local.find(p => p.id === id);
     if (target) {
+      const supaId = id.startsWith('pay-') ? id : `pay-${id}`;
       await supabase.from('catalog').upsert({
-        id: `pay-${id}`,
+        id: supaId,
         title: target.clientName || 'Pago',
         category: 'payment_data',
         location: target.method || '',
         url: JSON.stringify(target)
       });
     }
+  } catch (e) {}
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('payments_realtime_sync');
+      bc.postMessage({ type: 'update_payment', id, status });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_payments_last_sync', Date.now().toString());
   } catch (e) {}
 
   return { success: true };
@@ -1346,10 +1433,16 @@ export async function getReviews() {
 
   const localReviews = getLocalReviews().filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
   const map = new Map();
-  [...serverReviews, ...cloudReviews, ...localReviews].forEach(r => {
+  [...localReviews, ...serverReviews, ...cloudReviews].forEach(r => {
     if (r && r.id) map.set(r.id, r);
   });
-  return Array.from(map.values());
+  const combined = Array.from(map.values());
+  if (cloudReviews.length > 0) {
+    try {
+      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
+    } catch (e) {}
+  }
+  return combined;
 }
 
 export async function submitGalleryReview(token, reviewData) {
@@ -1491,7 +1584,7 @@ export async function getAdminSessions() {
 
   const localSessions = getLocalSessions();
   const map = new Map();
-  [...serverSessions, ...cloudSessions, ...localSessions].forEach(s => {
+  [...localSessions, ...serverSessions, ...cloudSessions].forEach(s => {
     if (s && s.token && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026') {
       const now = Date.now();
       const expiresTime = new Date(s.expiresAt).getTime();
@@ -1504,7 +1597,13 @@ export async function getAdminSessions() {
     }
   });
 
-  return Array.from(map.values());
+  const combined = Array.from(map.values());
+  if (cloudSessions.length > 0) {
+    try {
+      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(combined));
+    } catch (e) {}
+  }
+  return combined;
 }
 
 export async function deleteAdminSession(id, token) {
