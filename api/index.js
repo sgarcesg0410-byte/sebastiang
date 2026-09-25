@@ -3,6 +3,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sendNewBookingEmails, sendBookingConfirmedEmail, sendPhotoDeliveryEmail } from './emailService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -267,7 +268,7 @@ app.post('/api/settings', (req, res) => {
 });
 
 app.post('/api/bookings', (req, res) => {
-  const { clientName, clientWhatsApp, packageId, locationType, specificLocation, dateTime, description } = req.body;
+  const { clientName, clientWhatsApp, clientEmail, packageId, locationType, specificLocation, dateTime, description } = req.body;
   const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
 
   let finalPrice = pkg.price;
@@ -278,6 +279,7 @@ app.post('/api/bookings', (req, res) => {
     id: `book-${Date.now()}`,
     clientName: clientName.trim(),
     clientWhatsApp: clientWhatsApp.trim(),
+    clientEmail: (clientEmail || '').trim(),
     packageId: pkg.id,
     packageName: pkg.name,
     totalPrice: finalPrice,
@@ -300,12 +302,18 @@ app.post('/api/bookings', (req, res) => {
     }
   } catch (e) {}
 
+  // Disparo asíncrono de correos automáticos (a Sebastián y al cliente si suministró correo)
+  sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
+    console.error('Error enviando correos de nueva reserva:', err);
+  });
+
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
   const msgText = encodeURIComponent(
     `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
+    (newBooking.clientEmail ? `✉️ *Correo:* ${newBooking.clientEmail}\n` : '') +
     `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice.toLocaleString('es-CO')} COP)\n` +
     `📍 *Lugar:* ${newBooking.locationType === 'outside_san_antero' ? 'Locación Especial / Fuera (' + newBooking.specificLocation + ')' : 'Sesión Local (' + newBooking.specificLocation + ')'}\n` +
     `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
@@ -318,6 +326,35 @@ app.post('/api/bookings', (req, res) => {
     directWhatsAppUrl: `https://wa.me/${photogWhatsApp1}?text=${msgText}`,
     secondaryWhatsAppUrl: `https://wa.me/${photogWhatsApp2}?text=${msgText}`
   });
+});
+
+// Endpoint oficial de envío de correos desde el software
+app.post('/api/send-email', async (req, res) => {
+  const { type, data } = req.body || {};
+  try {
+    if (type === 'booking_confirmation') {
+      const ok = await sendBookingConfirmedEmail(data.booking, data.customNotes);
+      return res.json({ success: ok, message: ok ? 'Correo de confirmación enviado' : 'No se pudo enviar el correo' });
+    } else if (type === 'photo_delivery') {
+      const ok = await sendPhotoDeliveryEmail(data);
+      return res.json({ success: ok, message: ok ? 'Fotos enviadas por correo al cliente' : 'No se pudo enviar el correo' });
+    } else if (type === 'test') {
+      const ok = await sendNewBookingEmails(data?.booking || {
+        clientName: 'Cliente de Prueba',
+        clientWhatsApp: '+57 300 000 0000',
+        clientEmail: 'reservas@sebastiang.app',
+        packageName: '8 Fotos Digitales',
+        dateTime: 'Hoy a las 4:00 PM',
+        specificLocation: 'Playa San Antero',
+        totalPrice: 75000
+      }, runtimeDB.settings);
+      return res.json({ success: true, message: 'Correo de prueba enviado con éxito' });
+    }
+    return res.status(400).json({ error: 'Tipo de correo no soportado' });
+  } catch (err) {
+    console.error('Error en /api/send-email:', err);
+    return res.status(500).json({ error: err.message || 'Error interno al enviar correo' });
+  }
 });
 
 app.get('/api/gallery/:token', (req, res) => {

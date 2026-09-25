@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { createBooking, checkClientLoyalty, formatTo12Hour } from '../services/api';
 
@@ -14,6 +14,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   const [formData, setFormData] = useState({
     clientName: '',
     clientWhatsApp: '',
+    clientEmail: '',
     packageId: preselectedPackage ? preselectedPackage.id : (packages[2]?.id || packages[0]?.id || ''),
     locationType: 'san_antero',
     specificLocation: '',
@@ -121,6 +122,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
       const bookingPayload = {
         clientName: formData.clientName.trim(),
         clientWhatsApp: formData.clientWhatsApp.trim(),
+        clientEmail: (formData.clientEmail || '').trim(),
         packageId: formData.packageId,
         packageName: currentPackage ? `${currentPackage.name} (+ 2 Fotos Gratis)` : 'Sesión Fotográfica',
         totalPrice: calculatedPrice,
@@ -245,6 +247,12 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                   <span className="text-stone-400">WhatsApp de contacto:</span>
                   <span className="font-semibold text-white">{submittedBooking.clientWhatsApp}</span>
                 </div>
+                {submittedBooking.clientEmail && (
+                  <div className="flex justify-between text-stone-300">
+                    <span className="text-stone-400">Comprobante enviado a:</span>
+                    <span className="font-semibold text-amber-300">{submittedBooking.clientEmail}</span>
+                  </div>
+                )}
               </div>
 
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 text-left text-xs text-amber-200">
@@ -360,6 +368,25 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     </span>
                   </div>
                 )}
+              </div>
+
+              {/* CORREO ELECTRÓNICO (OPCIONAL VIP) */}
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Correo Electrónico (Opcional)</span>
+                </label>
+                <input
+                  type="email"
+                  name="clientEmail"
+                  value={formData.clientEmail}
+                  onChange={handleInputChange}
+                  placeholder="ejemplo@correo.com"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                />
+                <p className="text-[11px] text-stone-400 mt-1">
+                  ✉️ Te enviaremos un comprobante formal y recordatorios de tu sesión.
+                </p>
               </div>
 
               {/* 3. LUGAR DE LA SESIÓN (ESCENARIOS LIBRES Y ABIERTOS) */}

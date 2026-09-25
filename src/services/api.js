@@ -743,6 +743,22 @@ export async function createBooking(data) {
   };
 }
 
+export async function sendEmailNotification(payload) {
+  try {
+    const res = await fetch(`${API_BASE}/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Error enviando notificación por correo:', err);
+  }
+  return { success: false };
+}
+
 export async function getGalleryByToken(token) {
   // 1. Consultar servidor Vercel API
   try {
