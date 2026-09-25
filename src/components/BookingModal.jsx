@@ -442,12 +442,19 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                   />
                 )}
 
-                <div className="mt-2.5 bg-gradient-to-r from-sky-950/50 via-stone-900 to-sky-950/50 border border-sky-500/30 rounded-xl p-2.5 flex items-center gap-2">
-                  <span className="text-base shrink-0">⛅</span>
-                  <p className="text-[11px] text-sky-200/90 leading-tight">
-                    <strong>Garantía de Clima en San Antero:</strong> Si el clima (lluvia o tormenta) impide realizar la sesión frente al mar, se reprograma para una nueva fecha sin ningún costo adicional.
-                  </p>
-                </div>
+                {(() => {
+                  const customLoc = (formData.specificLocation || '').trim();
+                  const targetLocation = customLoc || (formData.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+
+                  return (
+                    <div className="mt-2.5 bg-gradient-to-r from-sky-950/50 via-stone-900 to-sky-950/50 border border-sky-500/30 rounded-xl p-2.5 flex items-center gap-2 transition-all">
+                      <span className="text-base shrink-0">⛅</span>
+                      <p className="text-[11px] text-sky-200/90 leading-tight">
+                        <strong>Garantía de Clima en {targetLocation}:</strong> Si el clima (lluvia o tormenta) impide realizar la sesión en {targetLocation}, se reprograma para una nueva fecha sin ningún costo adicional.
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* 4. FECHA Y HORA */}

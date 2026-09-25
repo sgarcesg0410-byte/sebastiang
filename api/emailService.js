@@ -250,7 +250,7 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
           <li>Llega con 10 o 15 minutos de anticipación al punto acordado.</li>
           <li>Lleva tus cambios de vestuario planchados y listos.</li>
           <li>Descansa bien la noche anterior y mantén una buena hidratación.</li>
-          <li>⛅ <strong>Garantía de Clima:</strong> Si el clima en San Antero (lluvia o tormenta) no permite hacer las fotos en la playa, reprogramamos para otra fecha sin costo.</li>
+          <li>⛅ <strong>Garantía de Clima en ${loc}:</strong> Si el clima en ${loc} (lluvia o tormenta) no permite realizar las fotos, reprogramamos para otra fecha sin costo.</li>
         </ul>
       </div>
 
