@@ -388,6 +388,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
   const [deliverySuccessMsg, setDeliverySuccessMsg] = useState('');
 
+  // Modal y confirmación de reserva por WhatsApp al cliente
+  const [confirmingBooking, setConfirmingBooking] = useState(null);
+  const [confirmNote, setConfirmNote] = useState('');
+  const [confirmSuccessMsg, setConfirmSuccessMsg] = useState('');
+  const [isConfirmingBookingStatus, setIsConfirmingBookingStatus] = useState(false);
+
   // Instalación nativa PWA en Android exclusiva para el fotógrafo
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [canInstallPwa, setCanInstallPwa] = useState(false);
@@ -936,10 +942,87 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
+  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '') => {
+    if (!b) return '#';
+    let cleanPhone = (b.clientWhatsApp || '').replace(/\D/g, '');
+    if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
+      cleanPhone = '57' + cleanPhone;
+    }
+    const rawName = (b.clientName || 'Cliente').trim();
+    const firstName = rawName.split(' ')[0] || rawName;
+    const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+    const isOutside = b.locationType === 'outside_san_antero' || b.locationType === 'outside';
+    const loc = b.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero');
+
+    const text = encodeURIComponent(
+      `📸 *¡Hola ${formattedFirstName}! Te saluda Sebastian G.* ✨\n\n` +
+      `¡Excelente noticia! Te confirmo con mucho gusto tu *Sesión Fotográfica Profesional* para el día que reservaste:\n\n` +
+      `🗓️ *Fecha y Hora:* ${formatDateTime12Hour(b.dateTime)}\n` +
+      `📦 *Paquete Confirmado:* ${b.packageName || 'Sesión Fotográfica'}\n` +
+      `💵 *Valor Total:* $${Number(b.totalPrice || 0).toLocaleString('es-CO')} COP\n` +
+      `📍 *Locación:* ${loc}\n\n` +
+      (customNotes && customNotes.trim() ? `📝 *Nota del Fotógrafo:* ${customNotes.trim()}\n\n` : '') +
+      `Ya tengo agendado tu espacio de manera exclusiva en mi calendario de trabajo. ✨\n\n` +
+      `💡 *Recomendaciones para el día de tu sesión:*\n` +
+      `• Te sugiero llegar con 10 o 15 minutos de anticipación.\n` +
+      `• Trae tus cambios de vestuario y la mejor energía para tus fotos.\n\n` +
+      `¡Será un verdadero placer capturar tus mejores momentos frente al lente! Si tienes cualquier inquietud sobre vestuarios, poses o detalles, puedes responderme directamente por aquí. 📸`
+    );
+
+    return `https://wa.me/${cleanPhone}?text=${text}`;
+  };
+
+  const handleOpenConfirmBookingModal = (booking) => {
+    setConfirmingBooking(booking);
+    setConfirmNote('');
+    setConfirmSuccessMsg('');
+  };
+
+  const handleSendBookingConfirmation = async (e) => {
+    if (e) e.preventDefault();
+    if (!confirmingBooking) return;
+    setIsConfirmingBookingStatus(true);
+    try {
+      // 1. Asegurar que el estado quede como 'confirmed' en Supabase y localmente
+      if (confirmingBooking.status !== 'confirmed') {
+        await updateBookingStatus(confirmingBooking.id, 'confirmed');
+        setBookings(prev => prev.map(b => b.id === confirmingBooking.id ? { ...b, status: 'confirmed' } : b));
+      }
+      // 2. Generar URL de WhatsApp y abrirla
+      const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote);
+      setConfirmSuccessMsg(`✓ ¡Reserva confirmada! Abriendo WhatsApp para enviar mensaje a ${confirmingBooking.clientName}...`);
+
+      const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = url;
+      } else {
+        const win = window.open(url, '_blank');
+        if (!win || win.closed || typeof win.closed === 'undefined') {
+          window.location.href = url;
+        }
+      }
+
+      setTimeout(() => {
+        setConfirmingBooking(null);
+        setConfirmSuccessMsg('');
+      }, 3500);
+    } catch (err) {
+      alert('Error al confirmar reserva: ' + err.message);
+    } finally {
+      setIsConfirmingBookingStatus(false);
+    }
+  };
+
   const handleStatusChange = async (bookingId, newStatus) => {
     try {
       await updateBookingStatus(bookingId, newStatus);
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
+      if (newStatus === 'confirmed') {
+        const b = bookings.find(item => item.id === bookingId);
+        if (b) {
+          handleOpenConfirmBookingModal(b);
+        }
+      }
     } catch (err) {
       alert('Error al actualizar estado');
     }
@@ -1700,19 +1783,43 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       setActiveTab(realtimeAlert.targetTab);
                       setRealtimeAlert(null);
                     }}
-                    className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                    className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
                   >
-                    <Eye className="w-3.5 h-3.5" />
+                    <Eye className="w-3.5 h-3.5 text-amber-400" />
                     <span>Ver {realtimeAlert.type === 'payment' ? 'Pago' : 'Reserva'}</span>
                   </button>
+
+                  {realtimeAlert.type === 'booking' && (
+                    <button
+                      onClick={() => {
+                        const targetBooking = bookings.find(b => b.id === realtimeAlert.bookingId) || {
+                          id: realtimeAlert.bookingId,
+                          clientName: realtimeAlert.clientName,
+                          clientWhatsApp: realtimeAlert.whatsappUrl ? realtimeAlert.whatsappUrl.replace('https://wa.me/', '') : '',
+                          packageName: realtimeAlert.packageName,
+                          dateTime: realtimeAlert.dateTime,
+                          specificLocation: realtimeAlert.location,
+                          totalPrice: realtimeAlert.totalPrice,
+                          status: 'pending'
+                        };
+                        handleOpenConfirmBookingModal(targetBooking);
+                        setRealtimeAlert(null);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-black flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Confirmar por WhatsApp</span>
+                    </button>
+                  )}
+
                   {realtimeAlert.whatsappUrl && (
                     <a
                       href={realtimeAlert.whatsappUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+                      className="px-3 py-1.5 rounded-xl bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
                     >
-                      <span>💬 Chat WhatsApp</span>
+                      <span>💬 Chat</span>
                     </a>
                   )}
                 </div>
@@ -2112,11 +2219,33 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`)}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg"
+                        className="flex items-center gap-1 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-stone-700"
+                        title="Abrir chat regular de WhatsApp"
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>WhatsApp</span>
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Chat</span>
                       </a>
+                    </div>
+
+                    {/* BOTÓN PROMINENTE DE CONFIRMACIÓN OFICIAL POR WHATSAPP */}
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenConfirmBookingModal(booking)}
+                        className={`w-full py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${
+                          booking.status === 'confirmed'
+                            ? 'bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300'
+                            : 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 shadow-amber-500/25 ring-2 ring-amber-400/40 animate-pulse'
+                        }`}
+                        title="Enviar mensaje oficial por WhatsApp confirmando la fecha y hora de la sesión"
+                      >
+                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        <span>
+                          {booking.status === 'confirmed'
+                            ? '✓ Confirmada • Re-enviar WhatsApp'
+                            : '⚡ Confirmar Sesión por WhatsApp'}
+                        </span>
+                      </button>
                     </div>
 
                     {/* BOTÓN DIRECTO DE ENTREGA FULL HD PARA ESTA RESERVA */}
@@ -4612,6 +4741,124 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             >
               Entendido
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMACIÓN DE SESIÓN POR WHATSAPP */}
+      {confirmingBooking && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative max-w-xl w-full bg-stone-900 border border-emerald-500/40 rounded-3xl p-6 shadow-2xl space-y-5 my-8 text-left">
+            {/* Encabezado */}
+            <div className="flex items-start justify-between border-b border-stone-800 pb-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </span>
+                  <h3 className="text-lg font-bold text-white">Confirmar Reserva de Sesión</h3>
+                </div>
+                <p className="text-xs text-stone-400">
+                  Cliente: <span className="font-bold text-amber-300">{confirmingBooking.clientName}</span> ({confirmingBooking.clientWhatsApp})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmingBooking(null)}
+                className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Resumen de la reserva */}
+            <div className="p-3.5 bg-stone-950 rounded-2xl border border-stone-800/80 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-stone-400">🗓️ Fecha y Hora Programada:</span>
+                <span className="font-bold text-white">{formatDateTime12Hour(confirmingBooking.dateTime)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-400">📦 Paquete:</span>
+                <span className="font-bold text-amber-300">{confirmingBooking.packageName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-400">📍 Locación:</span>
+                <span className="font-semibold text-stone-200">
+                  {confirmingBooking.specificLocation || (confirmingBooking.locationType === 'outside' ? 'Locación Fuera' : 'San Antero')}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-400">💵 Total Cobrado:</span>
+                <span className="font-black text-emerald-400 font-mono">
+                  ${Number(confirmingBooking.totalPrice || 0).toLocaleString('es-CO')} COP
+                </span>
+              </div>
+            </div>
+
+            {confirmSuccessMsg && (
+              <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{confirmSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSendBookingConfirmation} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1.5 uppercase tracking-wider">
+                  Nota o indicación especial para el cliente (opcional):
+                </label>
+                <input
+                  type="text"
+                  value={confirmNote}
+                  onChange={(e) => setConfirmNote(e.target.value)}
+                  placeholder="Ej: Nos vemos frente al muelle / Llevar ropa fresca blanca"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              {/* Vista previa del mensaje oficial de WhatsApp */}
+              <div>
+                <label className="block text-[11px] font-bold text-stone-400 mb-1.5 uppercase tracking-wider">
+                  Vista previa del mensaje que le llegará al WhatsApp del cliente:
+                </label>
+                <div className="p-3.5 bg-emerald-950/30 border border-emerald-500/30 rounded-2xl text-xs text-stone-200 font-sans space-y-2 whitespace-pre-line leading-relaxed">
+                  <p>📸 <strong>¡Hola {(confirmingBooking.clientName || 'Cliente').split(' ')[0]}! Te saluda Sebastian G.</strong> ✨</p>
+                  <p>¡Excelente noticia! Te confirmo con mucho gusto tu <strong>Sesión Fotográfica Profesional</strong> para el día que reservaste:</p>
+                  <p className="bg-stone-950/70 p-2.5 rounded-xl border border-stone-800 text-[11px]">
+                    🗓️ <strong>Fecha y Hora:</strong> {formatDateTime12Hour(confirmingBooking.dateTime)}<br />
+                    📦 <strong>Paquete Confirmado:</strong> {confirmingBooking.packageName}<br />
+                    💵 <strong>Valor Total:</strong> ${Number(confirmingBooking.totalPrice || 0).toLocaleString('es-CO')} COP<br />
+                    📍 <strong>Locación:</strong> {confirmingBooking.specificLocation || 'San Antero'}
+                    {confirmNote.trim() && (
+                      <><br />📝 <strong>Nota del Fotógrafo:</strong> {confirmNote.trim()}</>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-stone-400">
+                    💡 <em>Recomendaciones: Llega con 10 o 15 minutos de anticipación y trae tus cambios de vestuario listos. ¡Será un verdadero placer capturar tus mejores momentos frente al lente!</em>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={isConfirmingBookingStatus}
+                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>
+                    {isConfirmingBookingStatus ? 'Confirmando...' : '🚀 Enviar Confirmación por WhatsApp'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingBooking(null)}
+                  className="px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
