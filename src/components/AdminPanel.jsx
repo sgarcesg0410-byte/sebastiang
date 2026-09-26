@@ -451,6 +451,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [confirmNote, setConfirmNote] = useState('');
   const [confirmSuccessMsg, setConfirmSuccessMsg] = useState('');
   const [isConfirmingBookingStatus, setIsConfirmingBookingStatus] = useState(false);
+  const [confirmAutoRegisterPayment, setConfirmAutoRegisterPayment] = useState(true);
+  const [confirmPaymentType, setConfirmPaymentType] = useState('deposit'); // 'deposit' (50%) | 'total' (100%)
+  const [confirmPaymentMethod, setConfirmPaymentMethod] = useState('nequi'); // 'nequi' | 'daviplata' | 'dale'
 
   // Instalación nativa PWA en Android exclusiva para el fotógrafo
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -1143,6 +1146,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setConfirmingBooking(booking);
     setConfirmNote('');
     setConfirmSuccessMsg('');
+    setConfirmAutoRegisterPayment(true);
+    setConfirmPaymentType('deposit');
+    setConfirmPaymentMethod('nequi');
   };
 
   const handleSendBookingConfirmation = async (e) => {
@@ -1166,12 +1172,38 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         }).catch(err => console.error('Error enviando correo de confirmación:', err));
       }
 
-      // 3. Generar URL de WhatsApp y abrirla
+      // 3. Auto-registrar ingreso en saldo de fotografía si está activado
+      if (confirmAutoRegisterPayment) {
+        const total = Number(confirmingBooking.totalPrice || 0);
+        const amountToCredit = confirmPaymentType === 'deposit' ? Math.round(total * 0.5) : total;
+        const concept = confirmPaymentType === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
+        
+        try {
+          const resPay = await createPayment({
+            clientName: confirmingBooking.clientName,
+            clientWhatsApp: confirmingBooking.clientWhatsApp,
+            sessionToken: String(confirmingBooking.id),
+            packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
+            amount: amountToCredit,
+            method: confirmPaymentMethod,
+            reference: `Abono Reserva #${confirmingBooking.id}`,
+            concept: concept,
+            status: 'verified'
+          });
+          if (resPay && resPay.payment) {
+            setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
+          }
+        } catch (payErr) {
+          console.warn('Error al auto-registrar pago en saldo de fotos:', payErr);
+        }
+      }
+
+      // 4. Generar URL de WhatsApp y abrirla
       const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote);
       setConfirmSuccessMsg(
         confirmingBooking.clientEmail
-          ? `✓ ¡Reserva confirmada! Correo enviado a ${confirmingBooking.clientEmail} y abriendo WhatsApp...`
-          : `✓ ¡Reserva confirmada! Abriendo WhatsApp para enviar mensaje a ${confirmingBooking.clientName}...`
+          ? `✓ ¡Reserva confirmada y saldo acreditado! Correo enviado a ${confirmingBooking.clientEmail} y abriendo WhatsApp...`
+          : `✓ ¡Reserva confirmada y saldo acreditado! Abriendo WhatsApp para enviar mensaje a ${confirmingBooking.clientName}...`
       );
 
       const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
@@ -1192,6 +1224,58 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       alert('Error al confirmar reserva: ' + err.message);
     } finally {
       setIsConfirmingBookingStatus(false);
+    }
+  };
+
+  const handleQuickRegisterBookingPayment = async (booking, type = 'deposit', method = 'nequi') => {
+    const total = Number(booking.totalPrice || 0);
+    const amount = type === 'deposit' ? Math.round(total * 0.5) : total;
+    const concept = type === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
+    
+    try {
+      const resPay = await createPayment({
+        clientName: booking.clientName,
+        clientWhatsApp: booking.clientWhatsApp,
+        sessionToken: String(booking.id),
+        packageTitle: booking.packageName || 'Sesión Fotográfica',
+        amount,
+        method,
+        reference: `Reserva #${booking.id}`,
+        concept,
+        status: 'verified'
+      });
+      if (resPay && resPay.payment) {
+        setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
+      }
+      if (booking.status !== 'confirmed') {
+        await updateBookingStatus(booking.id, 'confirmed');
+        setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'confirmed' } : b));
+      }
+      alert(`✓ ¡Ingreso de $${amount.toLocaleString('es-CO')} COP acreditado con éxito en ${method.toUpperCase()} para ${booking.clientName}! Tu saldo de fotos se actualizó automáticamente.`);
+    } catch (err) {
+      alert('Error al registrar pago: ' + err.message);
+    }
+  };
+
+  const handleRegisterRemainingBookingPayment = async (booking, remainingAmount, method = 'nequi') => {
+    try {
+      const resPay = await createPayment({
+        clientName: booking.clientName,
+        clientWhatsApp: booking.clientWhatsApp,
+        sessionToken: String(booking.id),
+        packageTitle: booking.packageName || 'Sesión Fotográfica',
+        amount: remainingAmount,
+        method,
+        reference: `Saldo Final Reserva #${booking.id}`,
+        concept: 'Saldo Final 50% Sesión',
+        status: 'verified'
+      });
+      if (resPay && resPay.payment) {
+        setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
+      }
+      alert(`✓ ¡Saldo final de $${remainingAmount.toLocaleString('es-CO')} COP acreditado a ${method.toUpperCase()}! La sesión de ${booking.clientName} quedó pagada al 100%.`);
+    } catch (err) {
+      alert('Error al registrar saldo final: ' + err.message);
     }
   };
 
@@ -1459,6 +1543,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       console.warn('Fallback a WhatsApp regular:', e);
     } finally {
       setIsGeneratingPdf(false);
+    }
+
+    // Auto-registrar este pago en el saldo de fotos si no existe
+    try {
+      if (paid > 0) {
+        const existingPay = (payments || []).find(
+          p => String(p.sessionToken) === String(receiptBooking.id) && Number(p.amount) === paid
+        );
+        if (!existingPay) {
+          const methodKey = receiptPaymentMethod.toLowerCase().includes('davi') ? 'daviplata' : receiptPaymentMethod.toLowerCase().includes('dale') ? 'dale' : 'nequi';
+          const resPay = await createPayment({
+            clientName: receiptBooking.clientName,
+            clientWhatsApp: receiptBooking.clientWhatsApp,
+            sessionToken: String(receiptBooking.id),
+            packageTitle: receiptBooking.packageName,
+            amount: paid,
+            method: methodKey,
+            reference: voucherNum,
+            concept: paid >= total ? 'Pago Total 100% Sesión' : 'Abono 50% Sesión',
+            status: 'verified'
+          });
+          if (resPay && resPay.payment) {
+            setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error auto-registrando pago desde recibo:', e);
     }
 
     const waUrl = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
@@ -2986,6 +3098,38 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                                   </p>
                                 </div>
 
+                                {/* Estado de pago y Auto-Abono 1-Tap */}
+                                {(() => {
+                                  const bookingPayments = (payments || []).filter(p => String(p.sessionToken) === String(booking.id));
+                                  const totalPaid = bookingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                                  const totalPrice = Number(booking.totalPrice) || 0;
+                                  const isFullyPaid = totalPrice > 0 && totalPaid >= totalPrice;
+                                  const hasDeposit = totalPaid > 0 && !isFullyPaid;
+
+                                  return (
+                                    <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-xl bg-stone-900 border border-stone-800">
+                                      <span className="text-stone-400">Pago:</span>
+                                      {isFullyPaid ? (
+                                        <span className="font-bold text-emerald-400">✓ 100% Pagado (${totalPaid.toLocaleString('es-CO')})</span>
+                                      ) : hasDeposit ? (
+                                        <span className="font-bold text-purple-300">✓ Abono 50% (${totalPaid.toLocaleString('es-CO')})</span>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-amber-400 font-semibold">Pendiente</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'nequi')}
+                                            className="px-2 py-0.5 rounded-lg bg-purple-900/80 hover:bg-purple-800 text-purple-200 text-[10px] font-bold active:scale-95"
+                                            title="Acreditar 50% en Nequi"
+                                          >
+                                            +Abonar 50% Nequi
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
                                 {/* Botón 1-Clic: Sincronizar con Google Calendar */}
                                 <a
                                   href={getGoogleCalendarUrl(booking)}
@@ -3141,6 +3285,139 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           "{booking.description}"
                         </div>
                       )}
+
+                      {/* ESTADO DE PAGO INTELIGENTE Y AUTO-ABONO 1-TAP (SOLO FOTOGRAFÍA) */}
+                      {(() => {
+                        const bookingPayments = (payments || []).filter(
+                          p => String(p.sessionToken) === String(booking.id)
+                        );
+                        const totalPaid = bookingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                        const totalPrice = Number(booking.totalPrice) || 0;
+                        const deposit50 = Math.round(totalPrice * 0.5);
+                        const remaining = Math.max(0, totalPrice - totalPaid);
+                        const isFullyPaid = totalPrice > 0 && totalPaid >= totalPrice;
+                        const hasDeposit = totalPaid > 0 && !isFullyPaid;
+
+                        return (
+                          <div className="mt-3 p-3 rounded-2xl bg-stone-950/90 border border-stone-800 space-y-2 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] uppercase font-bold tracking-wider text-stone-400 flex items-center gap-1.5">
+                                <DollarSign className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Saldo Fotografía de la Sesión</span>
+                              </span>
+                              {isFullyPaid ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                  ✓ Pagado 100%
+                                </span>
+                              ) : hasDeposit ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                  ✓ Abono 50% Listo
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                  Pendiente de Abono
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between text-[11px] font-mono">
+                              <span className="text-stone-400">Acreditado en cuentas:</span>
+                              <span className="font-bold text-white">${totalPaid.toLocaleString('es-CO')} / ${totalPrice.toLocaleString('es-CO')} COP</span>
+                            </div>
+
+                            {/* Detalle si ya tiene pagos registrados */}
+                            {bookingPayments.length > 0 && (
+                              <div className="space-y-1 pt-1 border-t border-stone-800/60">
+                                {bookingPayments.map((p, idx) => (
+                                  <div key={p.id || idx} className="flex items-center justify-between text-[10px] text-stone-400">
+                                    <span className="capitalize text-stone-300 font-semibold flex items-center gap-1">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${p.method === 'nequi' ? 'bg-[#ff007a]' : p.method === 'daviplata' ? 'bg-[#ed1c24]' : 'bg-[#ffdd00]'}`} />
+                                      {p.method} • {p.concept || 'Pago'}
+                                    </span>
+                                    <span className="font-mono text-emerald-400 font-bold">+${Number(p.amount).toLocaleString('es-CO')}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* BOTONES RÁPIDOS 1-TAP (SIN DIGITAR NÚMEROS) */}
+                            {totalPaid === 0 && (
+                              <div className="pt-2 space-y-1.5 border-t border-stone-800">
+                                <span className="text-[10px] text-stone-400 block font-medium">
+                                  ⚡ Acreditar abono con 1 toque (sin digitar):
+                                </span>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'nequi')}
+                                    className="py-1.5 px-1 bg-purple-950/70 hover:bg-purple-900 border border-purple-500/40 text-purple-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center flex flex-col items-center justify-center gap-0.5"
+                                    title="Acreditar 50% de abono a Nequi automáticamente"
+                                  >
+                                    <span className="text-[#ff007a] font-extrabold text-[11px]">Nequi</span>
+                                    <span className="font-mono font-semibold">${deposit50.toLocaleString('es-CO')}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'daviplata')}
+                                    className="py-1.5 px-1 bg-red-950/70 hover:bg-red-900 border border-red-500/40 text-red-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center flex flex-col items-center justify-center gap-0.5"
+                                    title="Acreditar 50% de abono a DaviPlata automáticamente"
+                                  >
+                                    <span className="text-[#ed1c24] font-extrabold text-[11px]">DaviPlata</span>
+                                    <span className="font-mono font-semibold">${deposit50.toLocaleString('es-CO')}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'dale')}
+                                    className="py-1.5 px-1 bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center flex flex-col items-center justify-center gap-0.5"
+                                    title="Acreditar 50% de abono a Dale! automáticamente"
+                                  >
+                                    <span className="text-[#ffdd00] font-extrabold text-[11px]">Dale!</span>
+                                    <span className="font-mono font-semibold">${deposit50.toLocaleString('es-CO')}</span>
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickRegisterBookingPayment(booking, 'total', 'nequi')}
+                                  className="w-full py-1 text-[10px] text-stone-400 hover:text-emerald-400 text-center font-semibold hover:underline block"
+                                >
+                                  O registrar pago total 100% (${totalPrice.toLocaleString('es-CO')} COP)
+                                </button>
+                              </div>
+                            )}
+
+                            {hasDeposit && remaining > 0 && (
+                              <div className="pt-2 space-y-1.5 border-t border-stone-800">
+                                <span className="text-[10px] text-amber-300 block font-medium">
+                                  Cobrar saldo restante de ${remaining.toLocaleString('es-CO')} COP:
+                                </span>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRegisterRemainingBookingPayment(booking, remaining, 'nequi')}
+                                    className="py-1.5 px-1 bg-purple-950/70 hover:bg-purple-900 border border-purple-500/40 text-purple-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center"
+                                  >
+                                    🟣 Nequi
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRegisterRemainingBookingPayment(booking, remaining, 'daviplata')}
+                                    className="py-1.5 px-1 bg-red-950/70 hover:bg-red-900 border border-red-500/40 text-red-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center"
+                                  >
+                                    🔴 DaviPlata
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRegisterRemainingBookingPayment(booking, remaining, 'dale')}
+                                    className="py-1.5 px-1 bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center"
+                                  >
+                                    🟡 Dale!
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div className="space-y-2.5 pt-3 border-t border-stone-800">
@@ -3457,10 +3734,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div>
                 <h3 className="text-xl font-serif font-bold text-white flex items-center gap-2.5">
                   <CreditCard className="w-5 h-5 text-emerald-400" />
-                  <span>Registro de Pagos y Saldos en Tiempo Real</span>
+                  <span>📸 Saldo Real de Ingresos • Sebastian G Fotografía</span>
                 </h3>
                 <p className="text-xs text-stone-400">
-                  Tus pasarelas oficiales de cobro digital (Nequi, DaviPlata, Dale!) sincronizadas con tu APK y WhatsApp en tiempo real.
+                  Saldos generados exclusivamente por tus sesiones, abonos de reservas, fotos extra e impresiones. <span className="text-emerald-400 font-semibold">No mezcla transferencias personales ni gastos ajenos al negocio.</span>
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -3475,10 +3752,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     setIsAdjustingBalances(true);
                   }}
                   className="px-3.5 py-2 bg-stone-800 hover:bg-stone-700 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md active:scale-95"
-                  title="Calibrar saldos base para que coincidan con tus cuentas bancarias reales"
+                  title="Calibrar saldos base exclusivos de tu negocio de fotografía"
                 >
                   <DollarSign className="w-4 h-4" />
-                  <span>Calibrar Saldos Reales</span>
+                  <span>Calibrar Base Fotografía</span>
                 </button>
                 <button
                   onClick={loadAllAdminData}
@@ -3497,14 +3774,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <div>
                   <div className="flex items-center gap-2 text-stone-400 text-xs font-bold uppercase tracking-wider mb-1">
                     <TrendingUp className="w-4 h-4 text-emerald-400" />
-                    <span>Saldo Total Consolidado en Software</span>
+                    <span>Saldo Total Recaudado por Fotografía</span>
                   </div>
                   <div className="text-3xl sm:text-4xl font-black text-white font-mono tracking-tight flex items-baseline gap-2">
                     ${Number(totalSoftwareBalance).toLocaleString('es-CO')}
                     <span className="text-sm font-bold text-emerald-400">COP</span>
                   </div>
                   <p className="text-[11px] text-stone-400 mt-1">
-                    Suma en tiempo real de tus 3 billeteras (Saldos bancarios reales + {payments.length} transferencias registradas)
+                    Suma en tiempo real de tus ingresos fotográficos en Nequi, DaviPlata y Dale! ({payments.length} transacciones de sesiones registradas)
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
@@ -3790,7 +4067,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <div className="flex items-center gap-2">
                       <DollarSign className="w-5 h-5 text-amber-400" />
                       <h4 className="text-lg font-serif font-bold text-white">
-                        Calibrar Saldos Bancarios Reales
+                        Calibrar Saldos Base de Fotografía
                       </h4>
                     </div>
                     <button
@@ -3803,7 +4080,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   </div>
 
                   <p className="text-xs text-stone-400 leading-relaxed">
-                    Ingresa el saldo real que tienes actualmente en cada una de tus cuentas bancarias. El software sumará automáticamente los nuevos pagos que tus clientes realicen.
+                    Ingresa el saldo base que tienes destinado a la fotografía en cada cuenta (puedes dejar en $0 si deseas iniciar desde cero). El software sumará automáticamente los nuevos pagos y abonos de sesiones de tus clientes, manteniendo el dinero de tu negocio 100% separado de transferencias o gastos personales.
                   </p>
 
                   <div className="space-y-3.5">
@@ -5931,6 +6208,56 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     💡 <em>Recomendaciones: Llega con 10 o 15 minutos de anticipación y trae tus cambios de vestuario listos. ¡Será un verdadero placer capturar tus mejores momentos frente al lente!</em>
                   </p>
                 </div>
+              </div>
+              {/* AUTO-ACREDITAR PAGO EN SALDO DE FOTOS */}
+              <div className="p-3.5 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-emerald-300 select-none">
+                    <input
+                      type="checkbox"
+                      checked={confirmAutoRegisterPayment}
+                      onChange={(e) => setConfirmAutoRegisterPayment(e.target.checked)}
+                      className="w-4 h-4 rounded text-emerald-500 bg-stone-950 border-stone-700 focus:ring-emerald-400 cursor-pointer"
+                    />
+                    <span>Acreditar automáticamente este pago al Saldo de Fotos</span>
+                  </label>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Auto-Cálculo
+                  </span>
+                </div>
+
+                {confirmAutoRegisterPayment && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-stone-400 mb-1">
+                        Tipo de Ingreso:
+                      </label>
+                      <select
+                        value={confirmPaymentType}
+                        onChange={(e) => setConfirmPaymentType(e.target.value)}
+                        className="w-full bg-stone-950 border border-stone-700 text-stone-200 text-xs rounded-xl px-3 py-2 font-bold focus:outline-none focus:border-emerald-400"
+                      >
+                        <option value="deposit">Abono del 50% (${Math.round(Number(confirmingBooking.totalPrice || 0) * 0.5).toLocaleString('es-CO')} COP)</option>
+                        <option value="total">Pago Total 100% (${Number(confirmingBooking.totalPrice || 0).toLocaleString('es-CO')} COP)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-stone-400 mb-1">
+                        Cuenta donde recibiste el dinero:
+                      </label>
+                      <select
+                        value={confirmPaymentMethod}
+                        onChange={(e) => setConfirmPaymentMethod(e.target.value)}
+                        className="w-full bg-stone-950 border border-stone-700 text-stone-200 text-xs rounded-xl px-3 py-2 font-bold focus:outline-none focus:border-emerald-400"
+                      >
+                        <option value="nequi">🟣 Nequi (324 472 5167)</option>
+                        <option value="daviplata">🔴 DaviPlata (@PLATA3244725167)</option>
+                        <option value="dale">🟡 Dale! (@SGG04)</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-3 pt-2">

@@ -531,7 +531,7 @@ app.get('/api/admin/payments', (req, res) => {
 });
 
 app.post('/api/payments', (req, res) => {
-  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount } = req.body;
+  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount, status, concept } = req.body;
   const newPayment = {
     id: `pay-${Date.now()}`,
     clientName: (clientName || 'Cliente').trim(),
@@ -544,7 +544,8 @@ app.post('/api/payments', (req, res) => {
     voucherUrl: voucherUrl || null,
     extraPhotosCount: Number(extraPhotosCount) || 0,
     printedPhotosCount: Number(printedPhotosCount) || 0,
-    status: 'pending', // 'pending' | 'verified'
+    concept: concept || 'Sesión Fotográfica',
+    status: status || 'verified',
     createdAt: new Date().toISOString()
   };
 
