@@ -1512,7 +1512,8 @@ export async function createPayment(paymentData) {
     voucherUrl: paymentData.voucherUrl || null,
     extraPhotosCount: Number(paymentData.extraPhotosCount) || 0,
     printedPhotosCount: Number(paymentData.printedPhotosCount) || 0,
-    status: 'pending',
+    concept: paymentData.concept || 'Sesión Fotográfica',
+    status: paymentData.status || 'verified',
     createdAt: new Date().toISOString()
   };
   saveLocalPayment(newPayment);
@@ -1528,6 +1529,19 @@ export async function createPayment(paymentData) {
       url: JSON.stringify(newPayment)
     });
   } catch (e) {}
+
+  // Notificación exclusiva de ingresos de fotografía en Android APK
+  if (typeof window !== 'undefined' && window.AndroidNotificationBridge && typeof window.AndroidNotificationBridge.showNotification === 'function') {
+    try {
+      const pMethodName = newPayment.method === 'daviplata' ? 'DaviPlata' : newPayment.method === 'dale' ? 'Dale!' : 'Nequi';
+      window.AndroidNotificationBridge.showNotification(
+        `📸 Ingreso por Fotografía: +$${Number(newPayment.amount).toLocaleString('es-CO')} COP`,
+        `${newPayment.concept || 'Pago recibido'} • ${newPayment.clientName} (${pMethodName})`,
+        'photo_payment',
+        'payment'
+      );
+    } catch (e) {}
+  }
 
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
