@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X, Share2, Check, ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X, Share2, Check } from 'lucide-react';
 import { trackLinkShare } from '../services/analytics';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 
@@ -22,6 +22,16 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     };
   }, [previewPhoto]);
 
+  // Cerrar con tecla Escape
+  useEffect(() => {
+    if (!previewPhoto) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setPreviewPhoto(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewPhoto]);
+
   const categories = ['Todas', 'Retratos', 'Playas & Atardeceres', 'Campo & Naturaleza', 'Parejas & Bodas', 'Quinceañeras & Eventos'];
 
   const safeCatalog = Array.isArray(catalog) ? catalog.filter(Boolean) : [];
@@ -29,34 +39,6 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
   const filteredPhotos = selectedCategory === 'Todas'
     ? safeCatalog
     : safeCatalog.filter(photo => photo && photo.category === selectedCategory);
-
-  const previewIndex = previewPhoto ? filteredPhotos.findIndex(p => p.id === previewPhoto.id) : -1;
-
-  const handlePrevPhoto = useCallback((e) => {
-    if (e) e.stopPropagation();
-    if (filteredPhotos.length === 0) return;
-    const newIdx = previewIndex > 0 ? previewIndex - 1 : filteredPhotos.length - 1;
-    setPreviewPhoto(filteredPhotos[newIdx]);
-  }, [previewIndex, filteredPhotos]);
-
-  const handleNextPhoto = useCallback((e) => {
-    if (e) e.stopPropagation();
-    if (filteredPhotos.length === 0) return;
-    const newIdx = previewIndex < filteredPhotos.length - 1 ? previewIndex + 1 : 0;
-    setPreviewPhoto(filteredPhotos[newIdx]);
-  }, [previewIndex, filteredPhotos]);
-
-  // Soporte de navegación por teclado en el visor: Flechas y Escape
-  useEffect(() => {
-    if (!previewPhoto) return;
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') setPreviewPhoto(null);
-      if (e.key === 'ArrowLeft') handlePrevPhoto();
-      if (e.key === 'ArrowRight') handleNextPhoto();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [previewPhoto, handlePrevPhoto, handleNextPhoto]);
 
   const toggleLike = (id, e) => {
     e.stopPropagation();
@@ -101,37 +83,6 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
     window.open(waUrl, '_blank');
     trackLinkShare('whatsapp_direct');
-  };
-
-  // Consultar directamente por una fotografía específica en WhatsApp
-  const handleInquirePhotoWhatsApp = (photo) => {
-    if (!photo) return;
-    const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
-    const text = 
-      `📸 *Consulta sobre Sesión Fotográfica • Sebastian G*\n` +
-      `¡Hola Sebastian! Me encantó esta fotografía de tu portafolio:\n` +
-      `✨ *"${photo.title}"*\n` +
-      `📍 *Locación:* ${photo.location || 'San Antero / Coveñas'}\n` +
-      `📁 *Categoría:* ${photo.category}\n` +
-      `🌐 *Portafolio:* ${shareUrl}\n\n` +
-      `Me gustaría consultar disponibilidad y tarifas para una sesión similar. ¡Muchas gracias!`;
-
-    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
-      window.AndroidNotificationBridge.shareToWhatsApp(text);
-      return;
-    }
-
-    if (typeof navigator !== 'undefined' && navigator.share && /mobile|android|iphone/i.test(navigator.userAgent)) {
-      navigator.share({
-        title: photo.title,
-        text: text,
-        url: shareUrl
-      }).catch(() => {});
-      return;
-    }
-
-    const waUrl = `https://api.whatsapp.com/send?phone=573244725167&text=${encodeURIComponent(text)}`;
-    window.open(waUrl, '_blank');
   };
 
   return (
@@ -298,13 +249,13 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         </div>
       </section>
 
-      {/* MODAL LIGHTBOX PROFESIONAL DE FOTOGRAFÍA (INMERSIVO, RESPONSIVE, ANTI-DISTORSIÓN) */}
+      {/* MODAL DE VISTA PREVIA INDIVIDUAL DE FOTO (PROTEGIDO Y EN ALTA RESOLUCIÓN) */}
       {previewPhoto && (
         <div 
           onClick={() => setPreviewPhoto(null)}
           className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col justify-between p-3 sm:p-5 select-none animate-fadeIn cursor-pointer"
         >
-          {/* 1. BARRA SUPERIOR: BRANDING, CONTADOR Y BOTÓN DE CERRAR */}
+          {/* 1. BARRA SUPERIOR: BRANDING Y BOTÓN DE CERRAR */}
           <div 
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-7xl mx-auto flex items-center justify-between gap-3 text-white pb-3 border-b border-stone-800/80 cursor-default flex-shrink-0"
@@ -323,12 +274,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              {filteredPhotos.length > 0 && previewIndex >= 0 && (
-                <span className="text-[11px] font-mono font-medium text-stone-400 bg-stone-900 border border-stone-800 px-2.5 py-1 rounded-full hidden sm:inline-block">
-                  {previewIndex + 1} / {filteredPhotos.length}
-                </span>
-              )}
+            <div>
               <button
                 type="button"
                 onClick={() => setPreviewPhoto(null)}
@@ -336,36 +282,23 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 title="Cerrar vista (Escape o toca afuera)"
               >
                 <X className="w-4 h-4 text-stone-300" />
-                <span className="hidden sm:inline">Cerrar</span>
+                <span>Cerrar</span>
               </button>
             </div>
           </div>
 
-          {/* 2. ÁREA CENTRAL DE VISUALIZACIÓN DE FOTO CON BOTONES DE NAVEGACIÓN ANTERIOR / SIGUIENTE */}
+          {/* 2. ÁREA CENTRAL: VISUALIZACIÓN DE LA FOTO INDIVIDUAL EN PROPORCIÓN 100% PERFECTA */}
           <div 
             className="relative w-full flex-1 flex items-center justify-center my-auto overflow-hidden py-2"
           >
-            {/* Flecha Anterior */}
-            {filteredPhotos.length > 1 && (
-              <button
-                type="button"
-                onClick={handlePrevPhoto}
-                className="absolute left-1 sm:left-4 z-30 p-2.5 sm:p-3.5 rounded-full bg-stone-950/70 hover:bg-stone-900 border border-stone-700/80 text-white hover:text-amber-400 hover:scale-110 active:scale-95 transition-all shadow-xl backdrop-blur-md cursor-pointer"
-                title="Foto anterior (Flecha izquierda)"
-              >
-                <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
-              </button>
-            )}
-
-            {/* Contenedor Protegido de la Foto en Proporción Original Perfecta */}
             <div 
               onClick={(e) => e.stopPropagation()}
-              className="relative max-h-[72vh] sm:max-h-[78vh] max-w-[94vw] sm:max-w-[85vw] flex items-center justify-center cursor-default"
+              className="relative max-h-[75vh] sm:max-h-[80vh] max-w-[95vw] sm:max-w-[88vw] flex items-center justify-center cursor-default"
             >
               <img
                 src={previewPhoto.url}
                 alt={previewPhoto.title}
-                className="max-h-[72vh] sm:max-h-[78vh] max-w-[94vw] sm:max-w-[85vw] w-auto h-auto object-contain rounded-xl sm:rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] border border-stone-800/80 select-none pointer-events-none"
+                className="max-h-[75vh] sm:max-h-[80vh] max-w-[95vw] sm:max-w-[88vw] w-auto h-auto object-contain rounded-xl sm:rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] border border-stone-800/80 select-none pointer-events-none"
                 draggable={false}
                 onContextMenu={(e) => e.preventDefault()}
               />
@@ -385,21 +318,9 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 />
               </div>
             </div>
-
-            {/* Flecha Siguiente */}
-            {filteredPhotos.length > 1 && (
-              <button
-                type="button"
-                onClick={handleNextPhoto}
-                className="absolute right-1 sm:right-4 z-30 p-2.5 sm:p-3.5 rounded-full bg-stone-950/70 hover:bg-stone-900 border border-stone-700/80 text-white hover:text-amber-400 hover:scale-110 active:scale-95 transition-all shadow-xl backdrop-blur-md cursor-pointer"
-                title="Foto siguiente (Flecha derecha)"
-              >
-                <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
-              </button>
-            )}
           </div>
 
-          {/* 3. BARRA INFERIOR: TÍTULO, LOCACIÓN Y BOTÓN DIRECTO DE WHATSAPP */}
+          {/* 3. BARRA INFERIOR: TÍTULO, LOCACIÓN Y BOTÓN VOLVER AL CATÁLOGO */}
           <div 
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-7xl mx-auto pt-3 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs flex-shrink-0 cursor-default"
@@ -417,20 +338,10 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             <div className="flex items-center gap-2.5 w-full sm:w-auto justify-center">
               <button
                 type="button"
-                onClick={() => handleInquirePhotoWhatsApp(previewPhoto)}
-                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/40 active:scale-95 transition-all cursor-pointer"
-                title="Preguntar o cotizar esta sesión por WhatsApp"
-              >
-                <MessageCircle className="w-4 h-4 fill-white text-white" />
-                <span>Consultar por WhatsApp</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setPreviewPhoto(null)}
-                className="px-3.5 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-300 hover:text-white font-semibold text-xs transition-colors shrink-0 cursor-pointer"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-300 hover:text-white font-semibold text-xs transition-colors shrink-0 cursor-pointer shadow-md text-center"
               >
-                Volver
+                Volver al Catálogo
               </button>
             </div>
           </div>
