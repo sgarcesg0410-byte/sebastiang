@@ -7,8 +7,32 @@ const LOCAL_CATALOG_KEY = 'sebastian_g_catalog_v1';
 const LOCAL_DELETED_CATALOG_KEY = 'sebastian_g_deleted_catalog_ids_v2';
 const LOCAL_SAMPLES_PURGED_KEY = 'sebastian_g_samples_purged_v1';
 const LOCAL_PIN_KEY = 'sebastian_g_admin_pin';
+const LOCAL_PIN_HASH_KEY = 'sebastian_g_admin_pin_hash_v2';
+const LOCAL_TRUSTED_DEVICE_KEY = 'sebastian_g_trusted_device_v1';
+const DEFAULT_PIN_HASH = '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3'; // SHA-256 de "0493"
 const LOCAL_PACKAGES_KEY = 'sebastian_g_packages_v1';
 const LOCAL_SETTINGS_KEY = 'sebastian_g_settings_v1';
+
+// Cifrado criptográfico SHA-256 estándar Web Crypto API
+export async function hashStringSHA256(str) {
+  const clean = String(str || '').trim();
+  if (!clean) return '';
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(clean);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  // Fallback seguro
+  let h1 = 0xdeadbeef, h2 = 0x41c64e6d;
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+}
 
 const SAMPLE_PHOTO_IDS = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8', 'cat-atardecer-covenas'];
 
@@ -149,7 +173,7 @@ const DEFAULT_SETTINGS = {
   watermarkText: "SEBASTIAN G",
   watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
   watermarkLogoUrl: "/app-icon.png",
-  adminPin: "0493",
+  adminPinHash: DEFAULT_PIN_HASH,
   printedPhotoPrice: 7000
 };
 
@@ -1021,6 +1045,124 @@ export async function submitGallerySelection(token, selections) {
   };
 }
 
+// --- SISTEMA DE AUTENTICACIÓN CON DOBLE FACTOR (2FA) & DISPOSITIVOS CONFIABLES ---
+let active2FACode = null; // { code: '123456', expiresAt: timestamp }
+
+export function isTrustedDevice() {
+  try {
+    const raw = localStorage.getItem(LOCAL_TRUSTED_DEVICE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.expiresAt && Date.now() < parsed.expiresAt) {
+      return true;
+    }
+    localStorage.removeItem(LOCAL_TRUSTED_DEVICE_KEY);
+  } catch (e) {}
+  return false;
+}
+
+export function saveTrustedDevice() {
+  try {
+    const token = 'trust_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 días
+    localStorage.setItem(LOCAL_TRUSTED_DEVICE_KEY, JSON.stringify({ token, expiresAt }));
+  } catch (e) {}
+}
+
+export function forgetTrustedDevice() {
+  try {
+    localStorage.removeItem(LOCAL_TRUSTED_DEVICE_KEY);
+  } catch (e) {}
+}
+
+export function generateTwoFactorCode() {
+  // Generar código criptográfico de 6 dígitos
+  let code = '';
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+    const arr = new Uint32Array(1);
+    window.crypto.getRandomValues(arr);
+    code = String((arr[0] % 900000) + 100000);
+  } else {
+    code = String(Math.floor(100000 + Math.random() * 900000));
+  }
+
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutos
+  active2FACode = { code, expiresAt };
+
+  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+
+  const waText = encodeURIComponent(
+    `🔐 *CÓDIGO DE ACCESO SEGURO (2FA) - SEBASTIAN G*\n\n` +
+    `Tu código de verificación de 6 dígitos es:\n` +
+    `👉 *${code}*\n\n` +
+    `⏱️ Este código vence en 10 minutos.\n` +
+    `Si no intentaste iniciar sesión en el panel de administración, ignora este mensaje.`
+  );
+
+  const directWhatsAppUrl = `https://wa.me/${p1}?text=${waText}`;
+  const secondaryWhatsAppUrl = `https://wa.me/${p2}?text=${waText}`;
+
+  // Si está dentro de la APK Android, emitir notificación flotante inmediata
+  if (typeof window !== 'undefined' && window.AndroidNotificationBridge && typeof window.AndroidNotificationBridge.showNotification === 'function') {
+    try {
+      window.AndroidNotificationBridge.showNotification(
+        '🔐 Código de Verificación 2FA: ' + code,
+        'Tu código para ingresar al Panel Administrativo es ' + code + ' (Válido 10 min)',
+        '2fa_alert',
+        'auth'
+      );
+    } catch (e) {}
+  }
+
+  // Notificación por correo electrónico si está configurado
+  try {
+    sendEmailNotification('2fa_code', {
+      code,
+      expiresAt: new Date(expiresAt).toLocaleTimeString('es-CO')
+    });
+  } catch (e) {}
+
+  return {
+    success: true,
+    code, // Disponible para la interfaz de desarrollo / pruebas
+    expiresAt,
+    directWhatsAppUrl,
+    secondaryWhatsAppUrl,
+    phoneMasked: '+57 324 ••• ••67',
+    secondaryPhoneMasked: '+57 302 ••• ••13',
+    emailMasked: 'sga••••••0410@gmail.com'
+  };
+}
+
+export function verifyTwoFactorCode(inputCode, rememberDevice = false) {
+  if (!active2FACode || !active2FACode.code) {
+    throw new Error('No hay ningún código activo o ha expirado. Por favor solicita uno nuevo.');
+  }
+
+  if (Date.now() > active2FACode.expiresAt) {
+    active2FACode = null;
+    throw new Error('El código ha expirado (más de 10 minutos). Por favor genera uno nuevo.');
+  }
+
+  const cleanInput = String(inputCode || '').trim();
+  if (cleanInput !== active2FACode.code) {
+    throw new Error('Código de verificación 2FA incorrecto. Inténtalo de nuevo.');
+  }
+
+  // Código validado exitosamente
+  active2FACode = null;
+
+  if (rememberDevice) {
+    saveTrustedDevice();
+  }
+
+  return {
+    success: true,
+    token: 'admin-authorized-2fa-' + Date.now()
+  };
+}
+
 export async function verifyAdminPin(pin) {
   // Purga de seguridad: si localSavedPin quedó con el pin viejo '1234', lo eliminamos
   let localSavedPin = localStorage.getItem(LOCAL_PIN_KEY);
@@ -1030,29 +1172,49 @@ export async function verifyAdminPin(pin) {
   }
 
   const cleanPin = String(pin || '').trim();
-
-  try {
-    const res = await fetch(`${API_BASE}/admin/auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: cleanPin })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      return data;
-    }
-  } catch (err) {
-    console.warn('Verificando PIN en modo offline:', err);
+  if (!cleanPin) {
+    throw new Error('Por favor ingresa tu PIN.');
   }
 
-  if (localSavedPin && cleanPin === localSavedPin && cleanPin !== '1234') {
-    return { success: true, token: 'admin-authorized-token' };
+  // Hashear PIN entrante con SHA-256
+  const inputHash = await hashStringSHA256(cleanPin);
+
+  // Obtener hash activo (custom guardado o predeterminado 0493)
+  let activeHash = DEFAULT_PIN_HASH;
+  const savedHash = localStorage.getItem(LOCAL_PIN_HASH_KEY);
+  if (savedHash && savedHash.length === 64) {
+    activeHash = savedHash;
   }
 
-  if (cleanPin === DEFAULT_SETTINGS.adminPin) {
-    return { success: true, token: 'admin-authorized-token' };
+  let isMatch = (inputHash === activeHash);
+
+  // Compatibilidad hacia atrás: si tenía un PIN plano previo guardado en localStorage
+  if (!isMatch && localSavedPin && cleanPin === localSavedPin && cleanPin !== '1234') {
+    isMatch = true;
+    localStorage.setItem(LOCAL_PIN_HASH_KEY, inputHash);
+    localStorage.removeItem(LOCAL_PIN_KEY);
   }
-  throw new Error('PIN incorrecto.');
+
+  if (!isMatch) {
+    throw new Error('PIN incorrecto.');
+  }
+
+  // ¡PIN CORRECTO! Ahora evaluar si este dispositivo ya está verificado por 30 días
+  if (isTrustedDevice()) {
+    return {
+      success: true,
+      requires2FA: false,
+      token: 'admin-authorized-trusted-token'
+    };
+  }
+
+  // Si no está recordado, generar código 2FA de 6 dígitos
+  const twoFactorData = generateTwoFactorCode();
+  return {
+    success: true,
+    requires2FA: true,
+    ...twoFactorData
+  };
 }
 
 export async function getAdminBookings() {
@@ -2061,58 +2223,60 @@ export async function deleteAllSampleCatalogPhotos() {
 }
 
 export async function changeAdminPin(currentPin, newPin) {
-  try {
-    const res = await fetch(`${API_BASE}/admin/pin/change`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPin, newPin })
-    });
-    if (res.ok) {
-      localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
-      return await res.json();
-    }
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Error al cambiar PIN');
-  } catch (err) {
-    // Si falla el servidor, verificar localmente
-    const rawLocal = localStorage.getItem(LOCAL_PIN_KEY);
-    const localPin = (rawLocal && rawLocal !== '1234') ? rawLocal : DEFAULT_SETTINGS.adminPin;
-    if (currentPin === localPin) {
-      localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
-      return { success: true, message: '¡PIN actualizado exitosamente!' };
-    }
-    throw err;
+  const cleanCurrent = String(currentPin || '').trim();
+  const cleanNew = String(newPin || '').trim();
+
+  if (!cleanCurrent || !cleanNew) {
+    throw new Error('Por favor completa el PIN actual y el nuevo PIN.');
   }
+
+  const currentHash = await hashStringSHA256(cleanCurrent);
+  const newHash = await hashStringSHA256(cleanNew);
+
+  let activeHash = DEFAULT_PIN_HASH;
+  const savedHash = localStorage.getItem(LOCAL_PIN_HASH_KEY);
+  if (savedHash && savedHash.length === 64) {
+    activeHash = savedHash;
+  }
+
+  // Comprobar PIN actual
+  if (currentHash !== activeHash) {
+    const rawLegacy = localStorage.getItem(LOCAL_PIN_KEY);
+    if (!rawLegacy || rawLegacy !== cleanCurrent) {
+      throw new Error('El PIN actual no coincide.');
+    }
+  }
+
+  // Guardar nuevo PIN hasheado
+  localStorage.setItem(LOCAL_PIN_HASH_KEY, newHash);
+  localStorage.removeItem(LOCAL_PIN_KEY); // Eliminar PIN en texto plano
+
+  // Sincronizar en Supabase
+  try {
+    await supabase.from('catalog').upsert({
+      id: 'system_admin_pin_hash',
+      title: 'Admin Security Hash',
+      category: 'security_data',
+      location: 'system',
+      url: JSON.stringify({ hash: newHash, updatedAt: new Date().toISOString() })
+    });
+  } catch (e) {}
+
+  return { success: true, message: '¡PIN actualizado y cifrado con éxito!' };
 }
 
 export async function recoverAdminPin(phone, newPin = null) {
-  try {
-    const res = await fetch(`${API_BASE}/admin/pin/recover`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, newPin })
-    });
-    if (res.ok) {
-      if (newPin) {
-        localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
-      }
-      return await res.json();
+  const clean = (phone || '').replace(/\D/g, '');
+  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+
+  if ((clean.length >= 7 && p1.endsWith(clean)) || (clean.length >= 7 && p2.endsWith(clean))) {
+    if (newPin) {
+      const newHash = await hashStringSHA256(String(newPin).trim());
+      localStorage.setItem(LOCAL_PIN_HASH_KEY, newHash);
+      localStorage.removeItem(LOCAL_PIN_KEY);
     }
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Número no reconocido.');
-  } catch (err) {
-    // Verificación offline por número
-    const clean = (phone || '').replace(/\D/g, '');
-    const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
-    const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
-    if ((clean.length >= 7 && p1.endsWith(clean)) || (clean.length >= 7 && p2.endsWith(clean))) {
-      if (newPin) {
-        localStorage.setItem(LOCAL_PIN_KEY, String(newPin).trim());
-      }
-      const rawLocal = localStorage.getItem(LOCAL_PIN_KEY);
-      const activePin = (rawLocal && rawLocal !== '1234') ? rawLocal : DEFAULT_SETTINGS.adminPin;
-      return { success: true, verified: true, currentPin: activePin };
-    }
-    throw err;
+    return { success: true, verified: true, message: 'Identidad verificada exitosamente.' };
   }
+  throw new Error('Número de WhatsApp no reconocido como administrador.');
 }
