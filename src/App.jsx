@@ -7,6 +7,7 @@ import BookingModal from './components/BookingModal';
 import ClientGallery from './components/ClientGallery';
 import AdminPanel from './components/AdminPanel';
 import PublicReceiptView from './components/PublicReceiptView';
+import AboutSection from './components/AboutSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG } from './services/api';
@@ -259,6 +260,13 @@ export default function App() {
                 onOpenBooking={(photo) => handleOpenBooking(photo)}
                 onNavigateToAdmin={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
               />
+              <AboutSection
+                onNavigateToPackages={() => {
+                  setCurrentView('packages');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onOpenBooking={(photo) => handleOpenBooking(photo)}
+              />
               <div id="testimonials-section">
                 <TestimonialsSection />
               </div>
@@ -468,6 +476,25 @@ export default function App() {
                       className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
                     >
                       <span>Catálogo & Galería</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      onClick={() => {
+                        if (currentView !== 'home') {
+                          setCurrentView('home');
+                          setTimeout(() => {
+                            const el = document.getElementById('about-section');
+                            if (el) el.scrollIntoView({ behavior: 'smooth' });
+                          }, 100);
+                        } else {
+                          const el = document.getElementById('about-section');
+                          if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        }
+                      }}
+                      className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
+                    >
+                      <span>Sobre Mí (¿Quién soy?)</span>
                     </button>
                   </li>
                   <li>
