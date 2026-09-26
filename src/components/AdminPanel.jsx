@@ -2208,6 +2208,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     s => s && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026'
   );
 
+  const handleSharePortfolioWhatsApp = () => {
+    const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
+    const text = 
+      `📸 *Sebastian G • Fotografía & Edición Profesional*\n` +
+      `¡Hola! Te comparto mi portafolio oficial y catálogo de sesiones fotográficas en Coveñas, San Antero y playas privadas.\n\n` +
+      `✨ *Conoce mis paquetes, fotos en alta resolución y cotiza tu fecha aquí:*\n` +
+      `👉 ${shareUrl}\n\n` +
+      `📞 WhatsApp de reservas: +57 324 472 5167\n` +
+      `¡Será un gusto capturar tus mejores momentos! 🌊📸`;
+
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
+      window.AndroidNotificationBridge.shareToWhatsApp(text);
+      return;
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.share && /mobile|android|iphone/i.test(navigator.userAgent)) {
+      navigator.share({
+        title: 'Sebastian G • Fotografía Profesional',
+        text: text,
+        url: shareUrl
+      }).catch(() => {});
+      return;
+    }
+
+    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    window.open(waUrl, '_blank');
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       
@@ -2278,6 +2306,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>📲 Instalar App en Android</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={handleSharePortfolioWhatsApp}
+            className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md active:scale-95 shadow-emerald-950/40 cursor-pointer"
+            title="Compartir enlace de tu web y catálogo por WhatsApp a tus clientes"
+          >
+            <MessageCircle className="w-3.5 h-3.5 fill-white text-white" />
+            <span>📲 Compartir Web por WhatsApp</span>
+          </button>
 
           {onBackToHome && (
             <button

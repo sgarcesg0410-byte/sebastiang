@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X, Share2, Check } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X, Share2, Check, ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
 import { trackLinkShare } from '../services/analytics';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 
@@ -9,18 +9,16 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
   const [previewPhoto, setPreviewPhoto] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
 
-  // Si la ventana pierde foco, se minimiza o detecta captura/DevTools, cerrar vista previa de inmediato
+  // Cerrar vista previa exclusivamente cuando la pestaña se minimiza u oculta
   useEffect(() => {
-    const handleBlackoutOrBlur = () => {
-      if (previewPhoto) {
+    const handleVisibility = () => {
+      if (document.hidden && previewPhoto) {
         setPreviewPhoto(null);
       }
     };
-    window.addEventListener('blur', handleBlackoutOrBlur);
-    document.addEventListener('visibilitychange', handleBlackoutOrBlur);
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
-      window.removeEventListener('blur', handleBlackoutOrBlur);
-      document.removeEventListener('visibilitychange', handleBlackoutOrBlur);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [previewPhoto]);
 
@@ -32,6 +30,34 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     ? safeCatalog
     : safeCatalog.filter(photo => photo && photo.category === selectedCategory);
 
+  const previewIndex = previewPhoto ? filteredPhotos.findIndex(p => p.id === previewPhoto.id) : -1;
+
+  const handlePrevPhoto = useCallback((e) => {
+    if (e) e.stopPropagation();
+    if (filteredPhotos.length === 0) return;
+    const newIdx = previewIndex > 0 ? previewIndex - 1 : filteredPhotos.length - 1;
+    setPreviewPhoto(filteredPhotos[newIdx]);
+  }, [previewIndex, filteredPhotos]);
+
+  const handleNextPhoto = useCallback((e) => {
+    if (e) e.stopPropagation();
+    if (filteredPhotos.length === 0) return;
+    const newIdx = previewIndex < filteredPhotos.length - 1 ? previewIndex + 1 : 0;
+    setPreviewPhoto(filteredPhotos[newIdx]);
+  }, [previewIndex, filteredPhotos]);
+
+  // Soporte de navegación por teclado en el visor: Flechas y Escape
+  useEffect(() => {
+    if (!previewPhoto) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setPreviewPhoto(null);
+      if (e.key === 'ArrowLeft') handlePrevPhoto();
+      if (e.key === 'ArrowRight') handleNextPhoto();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewPhoto, handlePrevPhoto, handleNextPhoto]);
+
   const toggleLike = (id, e) => {
     e.stopPropagation();
     setLikes(prev => ({
@@ -40,15 +66,30 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     }));
   };
 
+  // Compartir portafolio oficial por WhatsApp (soporte para APK nativa Android y web)
   const handleShareApp = async () => {
-    const shareUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
     const shareTitle = 'Sebastian G • Fotografía & Edición Profesional';
+    const shareText = 
+      `📸 *Sebastian G • Fotografía Profesional*\n` +
+      `Capturamos tus mejores momentos en Coveñas, San Antero y playas privadas.\n\n` +
+      `✨ Mira el portafolio oficial completo, fotos en alta resolución y paquetes aquí:\n` +
+      `👉 ${shareUrl}\n\n` +
+      `📞 WhatsApp de reservas: +57 324 472 5167`;
 
-    if (navigator.share && /mobile|android|iphone/i.test(navigator.userAgent)) {
+    // 1. Enlace nativo dentro de la APK de Android
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
+      window.AndroidNotificationBridge.shareToWhatsApp(shareText);
+      trackLinkShare('apk_whatsapp');
+      return;
+    }
+
+    // 2. Si el dispositivo tiene Web Share API nativo
+    if (typeof navigator !== 'undefined' && navigator.share && /mobile|android|iphone/i.test(navigator.userAgent)) {
       try {
         await navigator.share({
           title: shareTitle,
-          text: 'Capturamos tus mejores momentos. Mira el portafolio de Sebastian G:',
+          text: shareText,
           url: shareUrl
         });
         trackLinkShare('native');
@@ -56,12 +97,41 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
       } catch (e) {}
     }
 
-    if (navigator.clipboard) {
-      await navigator.clipboard.writeText(shareUrl);
-      trackLinkShare('copy_link');
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 2500);
+    // 3. Fallback directo a WhatsApp Web / app
+    const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+    window.open(waUrl, '_blank');
+    trackLinkShare('whatsapp_direct');
+  };
+
+  // Consultar directamente por una fotografía específica en WhatsApp
+  const handleInquirePhotoWhatsApp = (photo) => {
+    if (!photo) return;
+    const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
+    const text = 
+      `📸 *Consulta sobre Sesión Fotográfica • Sebastian G*\n` +
+      `¡Hola Sebastian! Me encantó esta fotografía de tu portafolio:\n` +
+      `✨ *"${photo.title}"*\n` +
+      `📍 *Locación:* ${photo.location || 'San Antero / Coveñas'}\n` +
+      `📁 *Categoría:* ${photo.category}\n` +
+      `🌐 *Portafolio:* ${shareUrl}\n\n` +
+      `Me gustaría consultar disponibilidad y tarifas para una sesión similar. ¡Muchas gracias!`;
+
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
+      window.AndroidNotificationBridge.shareToWhatsApp(text);
+      return;
     }
+
+    if (typeof navigator !== 'undefined' && navigator.share && /mobile|android|iphone/i.test(navigator.userAgent)) {
+      navigator.share({
+        title: photo.title,
+        text: text,
+        url: shareUrl
+      }).catch(() => {});
+      return;
+    }
+
+    const waUrl = `https://api.whatsapp.com/send?phone=573244725167&text=${encodeURIComponent(text)}`;
+    window.open(waUrl, '_blank');
   };
 
   return (
@@ -228,70 +298,139 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         </div>
       </section>
 
-      {/* MODAL DE VISTA PREVIA DE FOTO DEL CATÁLOGO (PROTEGIDO) */}
+      {/* MODAL LIGHTBOX PROFESIONAL DE FOTOGRAFÍA (INMERSIVO, RESPONSIVE, ANTI-DISTORSIÓN) */}
       {previewPhoto && (
         <div 
           onClick={() => setPreviewPhoto(null)}
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 cursor-pointer select-none"
+          className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col justify-between p-3 sm:p-5 select-none animate-fadeIn cursor-pointer"
         >
+          {/* 1. BARRA SUPERIOR: BRANDING, CONTADOR Y BOTÓN DE CERRAR */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="bg-stone-950 border border-stone-800 rounded-2xl sm:rounded-3xl max-w-4xl sm:max-w-5xl md:max-w-6xl w-full overflow-hidden shadow-2xl cursor-default flex flex-col max-h-[95vh] relative"
+            className="w-full max-w-7xl mx-auto flex items-center justify-between gap-3 text-white pb-3 border-b border-stone-800/80 cursor-default flex-shrink-0"
           >
-            {/* Cabecera Limpia del Visor */}
-            <div className="px-4 sm:px-6 py-2.5 sm:py-3 bg-stone-950/95 border-b border-stone-800 flex items-center justify-between">
-              <span className="text-xs font-serif font-bold text-white tracking-wider">
-                Sebastian G • Fotografía Profesional
-              </span>
-              <button
-                onClick={() => setPreviewPhoto(null)}
-                className="p-1.5 text-stone-400 hover:text-white rounded-xl bg-stone-900 hover:bg-stone-800 transition-colors"
-                title="Cerrar vista (o toca afuera)"
-              >
-                <X className="w-4 h-4" />
-              </button>
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center">
+                <Camera className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <span className="text-xs sm:text-sm font-serif font-bold text-white tracking-wide block">
+                  Sebastian G • Fotografía Profesional
+                </span>
+                <span className="text-[10px] text-amber-400/90 font-medium">
+                  {previewPhoto.category}
+                </span>
+              </div>
             </div>
 
-            {/* Contenedor de Imagen Amplia en Alta Definición con Canvas Anti-Inspección */}
-            <div 
-              onClick={() => setPreviewPhoto(null)}
-              className="relative w-full bg-black flex items-center justify-center min-h-[350px] sm:min-h-[500px] max-h-[75vh] sm:max-h-[82vh] overflow-hidden select-none cursor-pointer"
-              title="Toca afuera o en la foto para volver al catálogo"
-            >
-              <div 
-                onClick={(e) => e.stopPropagation()} 
-                className="w-full h-full flex items-center justify-center max-h-[75vh] sm:max-h-[82vh] cursor-default"
+            <div className="flex items-center gap-3">
+              {filteredPhotos.length > 0 && previewIndex >= 0 && (
+                <span className="text-[11px] font-mono font-medium text-stone-400 bg-stone-900 border border-stone-800 px-2.5 py-1 rounded-full hidden sm:inline-block">
+                  {previewIndex + 1} / {filteredPhotos.length}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setPreviewPhoto(null)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-200 hover:text-white text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-lg"
+                title="Cerrar vista (Escape o toca afuera)"
               >
-                <ProtectedCanvasImage
-                  src={previewPhoto.url}
-                  alt={previewPhoto.title}
-                  objectFit="contain"
-                  className="max-h-[75vh] sm:max-h-[82vh]"
+                <X className="w-4 h-4 text-stone-300" />
+                <span className="hidden sm:inline">Cerrar</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 2. ÁREA CENTRAL DE VISUALIZACIÓN DE FOTO CON BOTONES DE NAVEGACIÓN ANTERIOR / SIGUIENTE */}
+          <div 
+            className="relative w-full flex-1 flex items-center justify-center my-auto overflow-hidden py-2"
+          >
+            {/* Flecha Anterior */}
+            {filteredPhotos.length > 1 && (
+              <button
+                type="button"
+                onClick={handlePrevPhoto}
+                className="absolute left-1 sm:left-4 z-30 p-2.5 sm:p-3.5 rounded-full bg-stone-950/70 hover:bg-stone-900 border border-stone-700/80 text-white hover:text-amber-400 hover:scale-110 active:scale-95 transition-all shadow-xl backdrop-blur-md cursor-pointer"
+                title="Foto anterior (Flecha izquierda)"
+              >
+                <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            )}
+
+            {/* Contenedor Protegido de la Foto en Proporción Original Perfecta */}
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              className="relative max-h-[72vh] sm:max-h-[78vh] max-w-[94vw] sm:max-w-[85vw] flex items-center justify-center cursor-default"
+            >
+              <img
+                src={previewPhoto.url}
+                alt={previewPhoto.title}
+                className="max-h-[72vh] sm:max-h-[78vh] max-w-[94vw] sm:max-w-[85vw] w-auto h-auto object-contain rounded-xl sm:rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] border border-stone-800/80 select-none pointer-events-none"
+                draggable={false}
+                onContextMenu={(e) => e.preventDefault()}
+              />
+
+              {/* Escudo protector invisible anti-descarga */}
+              <div 
+                className="absolute inset-0 z-10 bg-transparent select-none"
+                onContextMenu={(e) => e.preventDefault()}
+              />
+
+              {/* Marca de agua central transparente */}
+              <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none select-none opacity-20">
+                <img 
+                  src="/logo-white.png" 
+                  alt="" 
+                  className="w-20 sm:w-28 opacity-25 select-none pointer-events-none"
                 />
               </div>
             </div>
 
-            {/* Pie de foto limpio y compacto (sin botones de reserva) */}
-            <div className="px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-4 bg-stone-950 border-t border-stone-800 text-xs">
-              <div className="min-w-0">
-                <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider block">
-                  {previewPhoto.category}
-                </span>
-                <h4 className="text-xs sm:text-sm font-serif font-bold text-white truncate">
-                  {previewPhoto.title}
-                </h4>
-                <p className="text-[11px] text-stone-400 flex items-center gap-1 mt-0.5 truncate">
-                  <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                  <span className="truncate">{previewPhoto.location}</span>
-                </p>
-              </div>
+            {/* Flecha Siguiente */}
+            {filteredPhotos.length > 1 && (
+              <button
+                type="button"
+                onClick={handleNextPhoto}
+                className="absolute right-1 sm:right-4 z-30 p-2.5 sm:p-3.5 rounded-full bg-stone-950/70 hover:bg-stone-900 border border-stone-700/80 text-white hover:text-amber-400 hover:scale-110 active:scale-95 transition-all shadow-xl backdrop-blur-md cursor-pointer"
+                title="Foto siguiente (Flecha derecha)"
+              >
+                <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            )}
+          </div>
+
+          {/* 3. BARRA INFERIOR: TÍTULO, LOCACIÓN Y BOTÓN DIRECTO DE WHATSAPP */}
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-7xl mx-auto pt-3 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs flex-shrink-0 cursor-default"
+          >
+            <div className="text-center sm:text-left min-w-0">
+              <h3 className="text-sm sm:text-base font-serif font-bold text-white truncate">
+                {previewPhoto.title}
+              </h3>
+              <p className="text-[11px] text-stone-400 flex items-center justify-center sm:justify-start gap-1 mt-0.5 truncate">
+                <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                <span className="truncate">{previewPhoto.location || 'San Antero & Coveñas'}</span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-center">
+              <button
+                type="button"
+                onClick={() => handleInquirePhotoWhatsApp(previewPhoto)}
+                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/40 active:scale-95 transition-all cursor-pointer"
+                title="Preguntar o cotizar esta sesión por WhatsApp"
+              >
+                <MessageCircle className="w-4 h-4 fill-white text-white" />
+                <span>Consultar por WhatsApp</span>
+              </button>
 
               <button
                 type="button"
                 onClick={() => setPreviewPhoto(null)}
-                className="px-4 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-300 hover:text-white text-xs font-semibold transition-colors shrink-0 cursor-pointer"
+                className="px-3.5 py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-300 hover:text-white font-semibold text-xs transition-colors shrink-0 cursor-pointer"
               >
-                Volver al Catálogo
+                Volver
               </button>
             </div>
           </div>
