@@ -143,121 +143,6 @@ const svgOgBanner = `
 </svg>
 `;
 
-// 2. GENERATE A CLEANED APP-ICON.PNG (512 x 512 px)
-// The previous app-icon.png had solid white corners (rgb 255,255,255) and 0 margins.
-// We make the icon have generous breathing margin on dark background `#0c0a09` so if ANY platform requests 1:1, it NEVER overflows or shows white corners!
-const svgSquareIcon = `
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- Background Gradient matching app dark tone -->
-    <radialGradient id="sqBg" cx="50%" cy="50%" r="70%">
-      <stop offset="0%" stop-color="#1a1512" />
-      <stop offset="60%" stop-color="#0c0a09" />
-      <stop offset="100%" stop-color="#050505" />
-    </radialGradient>
-
-    <!-- Warm Ambient Glow -->
-    <radialGradient id="sqGlow" cx="50%" cy="48%" r="48%">
-      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.30" />
-      <stop offset="45%" stop-color="#ec4899" stop-opacity="0.18" />
-      <stop offset="80%" stop-color="#000000" stop-opacity="0" />
-    </radialGradient>
-
-    <!-- Instagram Sunset Gradients -->
-    <linearGradient id="igBaseSq" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#FFD600" />
-      <stop offset="25%" stop-color="#FF6A00" />
-      <stop offset="55%" stop-color="#EE0979" />
-      <stop offset="85%" stop-color="#9B51E0" />
-      <stop offset="100%" stop-color="#5851DB" />
-    </linearGradient>
-
-    <radialGradient id="igYellowGlowSq" cx="20%" cy="95%" r="75%">
-      <stop offset="0%" stop-color="#FFEA79" stop-opacity="0.9" />
-      <stop offset="40%" stop-color="#FF7A00" stop-opacity="0.8" />
-      <stop offset="85%" stop-color="#D6249F" stop-opacity="0" />
-    </radialGradient>
-
-    <radialGradient id="igPurpleGlowSq" cx="85%" cy="15%" r="80%">
-      <stop offset="0%" stop-color="#405DE6" stop-opacity="0.95" />
-      <stop offset="50%" stop-color="#833AB4" stop-opacity="0.85" />
-      <stop offset="100%" stop-color="#C13584" stop-opacity="0" />
-    </radialGradient>
-
-    <linearGradient id="glassTopSq" x1="50%" y1="0%" x2="50%" y2="100%">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.36" />
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
-    </linearGradient>
-
-    <filter id="shadowSGSq" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.45" />
-    </filter>
-
-    <filter id="emblemShadowSq" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="16" stdDeviation="22" flood-color="#000000" flood-opacity="0.7" />
-      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#f59e0b" flood-opacity="0.3" />
-    </filter>
-  </defs>
-
-  <!-- Dark container background (seamless with WhatsApp dark mode & website) -->
-  <rect width="512" height="512" fill="url(#sqBg)" />
-  <rect width="512" height="512" fill="url(#sqGlow)" />
-
-  <!--
-    SQUIRCLE EMBLEM WITH BREATHING ROOM:
-    Instead of 512x512 with 0 margin, it is 340x340 placed at x=86, y=60!
-    Margin = 86px on sides, 60px on top!
-    Leaves room at the bottom for "SEBASTIAN G" branding!
-  -->
-  <g transform="translate(86, 56)" filter="url(#emblemShadowSq)">
-    <rect width="340" height="340" rx="80" fill="url(#igBaseSq)" />
-    <rect width="340" height="340" rx="80" fill="url(#igYellowGlowSq)" />
-    <rect width="340" height="340" rx="80" fill="url(#igPurpleGlowSq)" />
-
-    <!-- Glass sheen -->
-    <rect x="2" y="2" width="336" height="336" rx="78" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-opacity="0.45" />
-    <path d="M 0 80 C 0 35.8 35.8 0 80 0 L 260 0 C 304.2 0 340 35.8 340 80 L 340 140 L 0 140 Z" fill="url(#glassTopSq)" />
-
-    <!-- SG Monogram -->
-    <g filter="url(#shadowSGSq)">
-      <text
-        x="170"
-        y="225"
-        text-anchor="middle"
-        font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', Montserrat, Segoe UI, sans-serif"
-        font-size="152"
-        font-weight="900"
-        letter-spacing="-8"
-        fill="#FFFFFF"
-      >SG</text>
-    </g>
-  </g>
-
-  <!-- Bottom Brand Text -->
-  <text
-    x="256"
-    y="445"
-    text-anchor="middle"
-    font-family="Georgia, 'Playfair Display', serif"
-    font-size="22"
-    font-weight="700"
-    letter-spacing="4"
-    fill="#FFFFFF"
-  >SEBASTIAN G</text>
-
-  <text
-    x="256"
-    y="472"
-    text-anchor="middle"
-    font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', Segoe UI, sans-serif"
-    font-size="10.5"
-    font-weight="600"
-    letter-spacing="2.5"
-    fill="#f59e0b"
-  >FOTOGRAFÍA PROFESIONAL</text>
-</svg>
-`;
-
 async function main() {
   console.log('Generating social sharing OpenGraph assets...');
 
@@ -278,23 +163,11 @@ async function main() {
     fs.copyFileSync('public/og-image.jpg', 'dist/og-image.jpg');
   }
 
-  // 2. Generate updated app-icon.png with margins & dark background (512x512)
-  const sqBuffer = Buffer.from(svgSquareIcon);
-  await sharp(sqBuffer)
-    .png({ quality: 90, compressionLevel: 8 })
-    .toFile('public/app-icon.png');
-
-  if (fs.existsSync('dist')) {
-    fs.copyFileSync('public/app-icon.png', 'dist/app-icon.png');
-  }
-
   const statOg = fs.statSync('public/og-image.png');
   const statOgJpg = fs.statSync('public/og-image.jpg');
-  const statSq = fs.statSync('public/app-icon.png');
 
   console.log('✓ public/og-image.png (1200x630):', (statOg.size / 1024).toFixed(1), 'KB');
   console.log('✓ public/og-image.jpg (1200x630):', (statOgJpg.size / 1024).toFixed(1), 'KB');
-  console.log('✓ public/app-icon.png (512x512):', (statSq.size / 1024).toFixed(1), 'KB');
   console.log('Done!');
 }
 
