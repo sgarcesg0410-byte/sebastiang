@@ -4,9 +4,22 @@ import Catalog from './components/Catalog';
 import PackagesSection from './components/PackagesSection';
 import TestimonialsSection from './components/TestimonialsSection';
 import BookingModal from './components/BookingModal';
-import ClientGallery from './components/ClientGallery';
-import AdminPanel from './components/AdminPanel';
-import PublicReceiptView from './components/PublicReceiptView';
+const ClientGallery = React.lazy(() => import('./components/ClientGallery'));
+const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
+const PublicReceiptView = React.lazy(() => import('./components/PublicReceiptView'));
+
+function ModuleLoader({ message = "Cargando módulo..." }) {
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center">
+      <div className="relative w-14 h-14 mb-4">
+        <div className="absolute inset-0 rounded-full border-2 border-amber-500/20 animate-ping"></div>
+        <div className="w-14 h-14 rounded-full border-2 border-amber-500 border-t-transparent animate-spin"></div>
+      </div>
+      <p className="text-stone-300 font-serif font-medium text-sm tracking-wider">{message}</p>
+      <span className="text-[11px] text-stone-500 mt-1 uppercase tracking-widest">Sebastian G • Fotografía</span>
+    </div>
+  );
+}
 import AboutSection from './components/AboutSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
@@ -283,33 +296,39 @@ export default function App() {
           )}
 
           {currentView === 'gallery' && (
-            <ClientGallery
-              token={activeGalleryToken}
-              onBackToHome={() => setCurrentView('home')}
-            />
+            <React.Suspense fallback={<ModuleLoader message="Cargando galería privada del cliente..." />}>
+              <ClientGallery
+                token={activeGalleryToken}
+                onBackToHome={() => setCurrentView('home')}
+              />
+            </React.Suspense>
           )}
 
           {currentView === 'receipt' && (
-            <PublicReceiptView
-              bookingId={activeReceiptId}
-              onBack={() => {
-                setCurrentView('home');
-                if (typeof window !== 'undefined') {
-                  window.history.pushState(null, '', '/');
-                }
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-            />
+            <React.Suspense fallback={<ModuleLoader message="Cargando comprobante de reserva..." />}>
+              <PublicReceiptView
+                bookingId={activeReceiptId}
+                onBack={() => {
+                  setCurrentView('home');
+                  if (typeof window !== 'undefined') {
+                    window.history.pushState(null, '', '/');
+                  }
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              />
+            </React.Suspense>
           )}
 
           {currentView === 'admin' && (
-            <AdminPanel
-              onOpenGalleryToken={handleOpenGalleryToken}
-              onCatalogUpdated={loadInitialData}
-              onBackToHome={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-              onLogout={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-              onPackagesUpdated={(newPkgs) => setPackages(newPkgs)}
-            />
+            <React.Suspense fallback={<ModuleLoader message="Iniciando entorno administrativo seguro..." />}>
+              <AdminPanel
+                onOpenGalleryToken={handleOpenGalleryToken}
+                onCatalogUpdated={loadInitialData}
+                onBackToHome={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                onLogout={() => { setCurrentView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                onPackagesUpdated={(newPkgs) => setPackages(newPkgs)}
+              />
+            </React.Suspense>
           )}
         </main>
       </SecurityOverlay>

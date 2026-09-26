@@ -53,6 +53,11 @@ import {
 } from 'lucide-react';
 import { 
   verifyAdminPin, 
+  verifyTwoFactorCode,
+  generateTwoFactorCode,
+  isTrustedDevice,
+  saveTrustedDevice,
+  forgetTrustedDevice,
   getAdminBookings, 
   updateBookingStatus, 
   updateAdminBooking,
@@ -234,6 +239,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [authError, setAuthError] = useState('');
+
+  // Autenticación de Doble Factor (2FA)
+  const [isTwoFactorStep, setIsTwoFactorStep] = useState(false);
+  const [twoFactorData, setTwoFactorData] = useState(null);
+  const [twoFactorInput, setTwoFactorInput] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(true);
+  const [isVerifying2FA, setIsVerifying2FA] = useState(false);
 
   // Recuperación de PIN
   const [isRecoveringPin, setIsRecoveringPin] = useState(false);
@@ -569,12 +582,49 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     return `https://wa.me/${cleanPhone}?text=${text}`;
   };
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
+  const handleVerifyPinSubmit = async (pinToVerify) => {
     setAuthError('');
     try {
-      await verifyAdminPin(pinInput);
+      const res = await verifyAdminPin(pinToVerify);
+      if (res.requires2FA) {
+        setTwoFactorData(res);
+        setIsTwoFactorStep(true);
+        setTwoFactorInput('');
+        setTwoFactorError('');
+      } else {
+        setIsAuthenticated(true);
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+          try {
+            Notification.requestPermission();
+          } catch (err) {}
+        }
+        loadAllAdminData();
+      }
+    } catch (err) {
+      setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    handleVerifyPinSubmit(pinInput);
+  };
+
+  const handleVerify2FASubmit = (e) => {
+    if (e) e.preventDefault();
+    setTwoFactorError('');
+    const cleanCode = String(twoFactorInput || '').trim();
+    if (cleanCode.length !== 6) {
+      setTwoFactorError('Por favor ingresa el código completo de 6 dígitos.');
+      return;
+    }
+    setIsVerifying2FA(true);
+    try {
+      verifyTwoFactorCode(cleanCode, rememberDevice);
       setIsAuthenticated(true);
+      setIsTwoFactorStep(false);
+      setPinInput('');
+      setTwoFactorInput('');
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
         try {
           Notification.requestPermission();
@@ -582,8 +632,29 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
       loadAllAdminData();
     } catch (err) {
-      setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
+      setTwoFactorError(err.message || 'Código de seguridad incorrecto.');
+    } finally {
+      setIsVerifying2FA(false);
     }
+  };
+
+  const handleResend2FACode = () => {
+    try {
+      const fresh = generateTwoFactorCode();
+      setTwoFactorData(fresh);
+      setTwoFactorInput('');
+      setTwoFactorError('✓ Se ha generado y enviado un nuevo código de 6 dígitos.');
+    } catch (err) {
+      setTwoFactorError('Error al reenviar código.');
+    }
+  };
+
+  const handleBackToPin = () => {
+    setIsTwoFactorStep(false);
+    setPinInput('');
+    setTwoFactorInput('');
+    setTwoFactorError('');
+    setAuthError('');
   };
 
   const handleStartRecovery = (e) => {
@@ -1784,7 +1855,154 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             Ingreso privado para reservas, fotos y precios
           </p>
 
-          {!isRecoveringPin ? (
+          {isTwoFactorStep ? (
+            /* PASO 2: VERIFICACIÓN DE DOBLE FACTOR (2FA) */
+            <div className="space-y-4 text-left">
+              <div className="text-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-bold uppercase tracking-wider mb-2">
+                  <Shield className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Paso 2 • Doble Factor (2FA)</span>
+                </div>
+                <h4 className="text-xl font-serif font-bold text-white">
+                  Verifica tu Identidad
+                </h4>
+                <p className="text-xs text-stone-300 mt-1">
+                  Generamos un código de seguridad exclusivo de 6 dígitos.
+                </p>
+              </div>
+
+              {/* Canales de entrega */}
+              <div className="p-3 rounded-2xl bg-stone-950/80 border border-stone-800 space-y-2 text-xs">
+                <div className="flex items-center justify-between text-stone-300">
+                  <span className="flex items-center gap-1.5 text-stone-400">
+                    <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>WhatsApp:</span>
+                  </span>
+                  <span className="font-mono font-bold text-emerald-400">{twoFactorData?.phoneMasked || '+57 324 ••• ••67'}</span>
+                </div>
+                <div className="flex items-center justify-between text-stone-400 text-[11px]">
+                  <span className="flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Correo:</span>
+                  </span>
+                  <span className="font-mono">{twoFactorData?.emailMasked || 'sga••••••0410@gmail.com'}</span>
+                </div>
+              </div>
+
+              {/* Acciones directas para recibir código en WhatsApp */}
+              <div className="space-y-2 pt-1">
+                {twoFactorData?.directWhatsAppUrl && (
+                  <a
+                    href={twoFactorData.directWhatsAppUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-950/50 transition-all active:scale-95 cursor-pointer"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>📲 Recibir en WhatsApp (Línea 1)</span>
+                  </a>
+                )}
+                {twoFactorData?.secondaryWhatsAppUrl && (
+                  <a
+                    href={twoFactorData.secondaryWhatsAppUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-2 py-1.5 px-3 rounded-xl bg-stone-800/90 hover:bg-stone-800 border border-emerald-500/30 text-emerald-300 font-semibold text-[11px] transition-all cursor-pointer"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>📲 Recibir en WhatsApp (Línea 2)</span>
+                  </a>
+                )}
+              </div>
+
+              {/* Mensajes de error o éxito */}
+              {twoFactorError && (
+                <div className={`p-2.5 rounded-xl text-xs text-center ${
+                  twoFactorError.startsWith('✓') 
+                    ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-200' 
+                    : 'bg-red-950/80 border border-red-500/40 text-red-200'
+                }`}>
+                  {twoFactorError}
+                </div>
+              )}
+
+              {/* Formulario de Código de 6 dígitos */}
+              <form onSubmit={handleVerify2FASubmit} className="space-y-3 pt-1">
+                <div>
+                  <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block mb-1.5 text-center">
+                    Escribe tu código de 6 dígitos:
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={twoFactorInput}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                      setTwoFactorInput(val);
+                      if (val.length === 6) {
+                        setTimeout(() => {
+                          try {
+                            verifyTwoFactorCode(val, rememberDevice);
+                            setIsAuthenticated(true);
+                            setIsTwoFactorStep(false);
+                            setPinInput('');
+                            setTwoFactorInput('');
+                            loadAllAdminData();
+                          } catch (err) {
+                            setTwoFactorError(err.message || 'Código incorrecto');
+                          }
+                        }, 120);
+                      }
+                    }}
+                    placeholder="000000"
+                    className="w-full text-center tracking-[0.35em] font-mono font-bold text-2xl py-2.5 px-4 rounded-2xl bg-stone-950 border border-amber-500/50 text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-stone-700"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Casilla: Recordar este dispositivo por 30 días */}
+                <label className="flex items-center justify-center gap-2 text-xs text-stone-300 cursor-pointer pt-1 select-none">
+                  <input
+                    type="checkbox"
+                    checked={rememberDevice}
+                    onChange={(e) => setRememberDevice(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-500 bg-stone-950 border-stone-700 focus:ring-amber-400 cursor-pointer"
+                  />
+                  <span>Recordar este dispositivo por 30 días</span>
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={isVerifying2FA || twoFactorInput.length < 6}
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-40 text-stone-950 font-bold text-xs sm:text-sm shadow-lg shadow-amber-500/25 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>{isVerifying2FA ? 'Verificando...' : 'Confirmar & Entrar al Panel'}</span>
+                </button>
+              </form>
+
+              {/* Botones de pie */}
+              <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={handleResend2FACode}
+                  className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Reenviar código</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBackToPin}
+                  className="text-stone-400 hover:text-stone-200 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Volver al PIN</span>
+                </button>
+              </div>
+            </div>
+          ) : !isRecoveringPin ? (
             /* FORMULARIO DE LOGIN VIP CON KEYPAD */
             <div>
               {authError && (
@@ -1819,12 +2037,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   const val = e.target.value;
                   setPinInput(val);
                   if (val.length === 4) {
-                    verifyAdminPin(val).then(() => {
-                      setIsAuthenticated(true);
-                      loadAllAdminData();
-                    }).catch(() => {
-                      setAuthError('PIN incorrecto.');
-                    });
+                    handleVerifyPinSubmit(val);
                   }
                 }}
                 className="opacity-0 w-0 h-0 absolute -top-10"

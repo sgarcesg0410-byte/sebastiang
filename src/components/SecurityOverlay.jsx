@@ -62,8 +62,9 @@ export default function SecurityOverlay({ children, enabled = true }) {
     const handleTouchStart = (e) => {
       if (!e.touches || e.touches.length === 0) return;
 
-      // Gestos de 2 o más dedos (captura en MIUI / Samsung)
-      if (e.touches.length >= 2) {
+      // Gestos de 3 o más dedos (gesto de captura en MIUI / Motorola / OnePlus / Oppo)
+      // Se permite el gesto de 2 dedos para que el usuario pueda hacer zoom/pellizco normal en fotos
+      if (e.touches.length >= 3) {
         try {
           e.preventDefault();
           e.stopPropagation();
@@ -81,7 +82,8 @@ export default function SecurityOverlay({ children, enabled = true }) {
     const handleTouchMove = (e) => {
       if (!e.touches || e.touches.length === 0) return;
 
-      if (e.touches.length >= 2) {
+      // Gestos de 3 o más dedos
+      if (e.touches.length >= 3) {
         try {
           e.preventDefault();
           e.stopPropagation();
