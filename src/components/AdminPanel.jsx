@@ -245,8 +245,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [twoFactorData, setTwoFactorData] = useState(null);
   const [twoFactorInput, setTwoFactorInput] = useState('');
   const [twoFactorError, setTwoFactorError] = useState('');
-  const [rememberDevice, setRememberDevice] = useState(true);
+  const [rememberDevice, setRememberDevice] = useState(false);
   const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
 
   // Recuperación de PIN
   const [isRecoveringPin, setIsRecoveringPin] = useState(false);
@@ -583,7 +584,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   const handleVerifyPinSubmit = async (pinToVerify) => {
+    if (isVerifyingPin) return;
     setAuthError('');
+    setIsVerifyingPin(true);
     try {
       const res = await verifyAdminPin(pinToVerify);
       if (res.requires2FA) {
@@ -602,6 +605,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
     } catch (err) {
       setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
+      setPinInput('');
+    } finally {
+      setIsVerifyingPin(false);
     }
   };
 
@@ -610,17 +616,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     handleVerifyPinSubmit(pinInput);
   };
 
-  const handleVerify2FASubmit = (e) => {
+  const handleVerify2FASubmit = async (e) => {
     if (e) e.preventDefault();
     setTwoFactorError('');
     const cleanCode = String(twoFactorInput || '').trim();
-    if (cleanCode.length !== 6) {
+    if (cleanCode.length < 6) {
       setTwoFactorError('Por favor ingresa el código completo de 6 dígitos.');
       return;
     }
     setIsVerifying2FA(true);
     try {
-      verifyTwoFactorCode(cleanCode, rememberDevice);
+      await verifyTwoFactorCode(cleanCode, rememberDevice);
       setIsAuthenticated(true);
       setIsTwoFactorStep(false);
       setPinInput('');
@@ -638,12 +644,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const handleResend2FACode = () => {
+  const handleResend2FACode = async () => {
     try {
-      const fresh = generateTwoFactorCode();
+      setTwoFactorError('Enviando nuevo código a tu correo...');
+      const fresh = await generateTwoFactorCode();
       setTwoFactorData(fresh);
       setTwoFactorInput('');
-      setTwoFactorError('✓ Se ha generado y enviado un nuevo código de 6 dígitos.');
+      setTwoFactorError('✓ Se ha enviado un nuevo código de 6 dígitos a tu correo sgarcesg0410@gmail.com.');
     } catch (err) {
       setTwoFactorError('Error al reenviar código.');
     }
@@ -1093,8 +1100,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   const handleLogout = () => {
     if (confirm('¿Deseas cerrar la sesión del panel?')) {
+      forgetTrustedDevice();
       setIsAuthenticated(false);
       setPinInput('');
+      setIsTwoFactorStep(false);
+      setTwoFactorInput('');
       if (onLogout) onLogout();
     }
   };
@@ -1803,28 +1813,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setPinInput(prev => prev.slice(0, -1));
     } else if (val === 'enter') {
       if (!pinInput) return;
-      verifyAdminPin(pinInput)
-        .then(() => {
-          setIsAuthenticated(true);
-          loadAllAdminData();
-        })
-        .catch(() => {
-          setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
-        });
+      handleVerifyPinSubmit(pinInput);
     } else {
       if (pinInput.length < 8) {
         const nextPin = pinInput + val;
         setPinInput(nextPin);
         if (nextPin.length === 4) {
           setTimeout(() => {
-            verifyAdminPin(nextPin)
-              .then(() => {
-                setIsAuthenticated(true);
-                loadAllAdminData();
-              })
-              .catch(() => {
-                setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
-              });
+            handleVerifyPinSubmit(nextPin);
           }, 150);
         }
       }
@@ -1867,52 +1863,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   Verifica tu Identidad
                 </h4>
                 <p className="text-xs text-stone-300 mt-1">
-                  Generamos un código de seguridad exclusivo de 6 dígitos.
+                  Se detectó un dispositivo no verificado. Hemos despachado un código exclusivo de seguridad a tu correo oficial.
                 </p>
               </div>
 
-              {/* Canales de entrega */}
-              <div className="p-3 rounded-2xl bg-stone-950/80 border border-stone-800 space-y-2 text-xs">
+              {/* Canal Seguro de Entrega */}
+              <div className="p-3.5 rounded-2xl bg-stone-950/90 border border-stone-800 space-y-2 text-xs">
                 <div className="flex items-center justify-between text-stone-300">
                   <span className="flex items-center gap-1.5 text-stone-400">
-                    <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>WhatsApp:</span>
-                  </span>
-                  <span className="font-mono font-bold text-emerald-400">{twoFactorData?.phoneMasked || '+57 324 ••• ••67'}</span>
-                </div>
-                <div className="flex items-center justify-between text-stone-400 text-[11px]">
-                  <span className="flex items-center gap-1.5">
                     <Mail className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Correo:</span>
+                    <span>Correo Autorizado:</span>
                   </span>
-                  <span className="font-mono">{twoFactorData?.emailMasked || 'sga••••••0410@gmail.com'}</span>
+                  <span className="font-mono font-bold text-amber-300">sga••••••0410@gmail.com</span>
                 </div>
-              </div>
-
-              {/* Acciones directas para recibir código en WhatsApp */}
-              <div className="space-y-2 pt-1">
-                {twoFactorData?.directWhatsAppUrl && (
-                  <a
-                    href={twoFactorData.directWhatsAppUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-950/50 transition-all active:scale-95 cursor-pointer"
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                    <span>📲 Recibir en WhatsApp (Línea 1)</span>
-                  </a>
-                )}
-                {twoFactorData?.secondaryWhatsAppUrl && (
-                  <a
-                    href={twoFactorData.secondaryWhatsAppUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-2 py-1.5 px-3 rounded-xl bg-stone-800/90 hover:bg-stone-800 border border-emerald-500/30 text-emerald-300 font-semibold text-[11px] transition-all cursor-pointer"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>📲 Recibir en WhatsApp (Línea 2)</span>
-                  </a>
-                )}
+                <p className="text-[11px] text-stone-400 leading-relaxed pt-1 border-t border-stone-800/80">
+                  Abre tu correo electrónico personal para copiar el código de 6 dígitos e ingresarlo abajo.
+                </p>
               </div>
 
               {/* Mensajes de error o éxito */}
@@ -1930,7 +1896,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <form onSubmit={handleVerify2FASubmit} className="space-y-3 pt-1">
                 <div>
                   <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block mb-1.5 text-center">
-                    Escribe tu código de 6 dígitos:
+                    Ingresa el código de 6 dígitos:
                   </label>
                   <input
                     type="text"
@@ -1941,9 +1907,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const val = e.target.value.replace(/\D/g, '').slice(0, 6);
                       setTwoFactorInput(val);
                       if (val.length === 6) {
-                        setTimeout(() => {
+                        setTimeout(async () => {
                           try {
-                            verifyTwoFactorCode(val, rememberDevice);
+                            await verifyTwoFactorCode(val, rememberDevice);
                             setIsAuthenticated(true);
                             setIsTwoFactorStep(false);
                             setPinInput('');
@@ -1982,6 +1948,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </button>
               </form>
 
+              {/* Clave Maestra de Emergencia */}
+              <div className="p-2.5 rounded-xl bg-stone-950/60 border border-stone-800/80 text-[11px] text-stone-400 text-center">
+                💡 <span className="text-stone-300">¿Demora con el correo?</span> Puedes ingresar de emergencia con tu Clave Maestra (<code className="text-amber-300 font-mono">049300</code>).
+              </div>
+
               {/* Botones de pie */}
               <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between text-xs">
                 <button
@@ -2008,6 +1979,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               {authError && (
                 <div className="p-3 mb-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
                   {authError}
+                </div>
+              )}
+
+              {isVerifyingPin && (
+                <div className="p-2.5 mb-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs flex items-center justify-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                  <span>Verificando credenciales y seguridad 2FA...</span>
                 </div>
               )}
 

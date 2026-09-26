@@ -3,7 +3,12 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { sendNewBookingEmails, sendBookingConfirmedEmail, sendPhotoDeliveryEmail } from './emailService.js';
+import { 
+  sendNewBookingEmails, 
+  sendBookingConfirmedEmail, 
+  sendPhotoDeliveryEmail,
+  sendTwoFactorCodeEmail 
+} from './emailService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -332,7 +337,10 @@ app.post('/api/bookings', (req, res) => {
 app.post('/api/send-email', async (req, res) => {
   const { type, data } = req.body || {};
   try {
-    if (type === 'booking_confirmation') {
+    if (type === '2fa_code') {
+      const ok = await sendTwoFactorCodeEmail(data?.code, data?.targetEmail);
+      return res.json({ success: ok, message: ok ? 'Código de seguridad 2FA enviado por correo' : 'No se pudo enviar el correo' });
+    } else if (type === 'booking_confirmation') {
       const ok = await sendBookingConfirmedEmail(data.booking, data.customNotes);
       return res.json({ success: ok, message: ok ? 'Correo de confirmación enviado' : 'No se pudo enviar el correo' });
     } else if (type === 'photo_delivery') {

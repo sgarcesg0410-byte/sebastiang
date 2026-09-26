@@ -1046,7 +1046,8 @@ export async function submitGallerySelection(token, selections) {
 }
 
 // --- SISTEMA DE AUTENTICACIÓN CON DOBLE FACTOR (2FA) & DISPOSITIVOS CONFIABLES ---
-let active2FACode = null; // { code: '123456', expiresAt: timestamp }
+let active2FACodeHash = null;
+let active2FAExpiresAt = 0;
 
 export function isTrustedDevice() {
   try {
@@ -1075,8 +1076,8 @@ export function forgetTrustedDevice() {
   } catch (e) {}
 }
 
-export function generateTwoFactorCode() {
-  // Generar código criptográfico de 6 dígitos
+export async function generateTwoFactorCode() {
+  // Generar código numérico criptográfico de 6 dígitos
   let code = '';
   if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
     const arr = new Uint32Array(1);
@@ -1087,71 +1088,113 @@ export function generateTwoFactorCode() {
   }
 
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutos
-  active2FACode = { code, expiresAt };
+  const codeHash = await hashStringSHA256(code);
+  active2FACodeHash = codeHash;
+  active2FAExpiresAt = expiresAt;
 
-  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
-  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
-
-  const waText = encodeURIComponent(
-    `🔐 *CÓDIGO DE ACCESO SEGURO (2FA) - SEBASTIAN G*\n\n` +
-    `Tu código de verificación de 6 dígitos es:\n` +
-    `👉 *${code}*\n\n` +
-    `⏱️ Este código vence en 10 minutos.\n` +
-    `Si no intentaste iniciar sesión en el panel de administración, ignora este mensaje.`
-  );
-
-  const directWhatsAppUrl = `https://wa.me/${p1}?text=${waText}`;
-  const secondaryWhatsAppUrl = `https://wa.me/${p2}?text=${waText}`;
-
-  // Si está dentro de la APK Android, emitir notificación flotante inmediata
-  if (typeof window !== 'undefined' && window.AndroidNotificationBridge && typeof window.AndroidNotificationBridge.showNotification === 'function') {
-    try {
-      window.AndroidNotificationBridge.showNotification(
-        '🔐 Código de Verificación 2FA: ' + code,
-        'Tu código para ingresar al Panel Administrativo es ' + code + ' (Válido 10 min)',
-        '2fa_alert',
-        'auth'
-      );
-    } catch (e) {}
+  // 1. Guardar reto 2FA en Supabase para validación en la nube (tabla catalog)
+  try {
+    await supabase.from('catalog').upsert({
+      id: 'system_2fa_challenge',
+      title: 'Active 2FA Challenge',
+      category: 'system_security',
+      url: JSON.stringify({
+        codeHash,
+        expiresAt,
+        requestedAt: Date.now()
+      })
+    });
+  } catch (e) {
+    console.warn('Aviso Supabase 2FA challenge:', e);
   }
 
-  // Notificación por correo electrónico si está configurado
+  // 2. Enviar correo real automático a sgarcesg0410@gmail.com vía backend Vercel
   try {
-    sendEmailNotification('2fa_code', {
-      code,
-      expiresAt: new Date(expiresAt).toLocaleTimeString('es-CO')
+    await fetch(`${API_BASE}/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: '2fa_code',
+        data: {
+          code,
+          targetEmail: 'sgarcesg0410@gmail.com'
+        }
+      })
     });
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Error enviando correo 2FA:', e);
+  }
 
   return {
     success: true,
-    code, // Disponible para la interfaz de desarrollo / pruebas
     expiresAt,
-    directWhatsAppUrl,
-    secondaryWhatsAppUrl,
-    phoneMasked: '+57 324 ••• ••67',
-    secondaryPhoneMasked: '+57 302 ••• ••13',
-    emailMasked: 'sga••••••0410@gmail.com'
+    emailMasked: 'sga••••••0410@gmail.com',
+    secondaryEmailMasked: 'reservas@sebastiang.app'
   };
 }
 
-export function verifyTwoFactorCode(inputCode, rememberDevice = false) {
-  if (!active2FACode || !active2FACode.code) {
+export async function verifyTwoFactorCode(inputCode, rememberDevice = false) {
+  const cleanInput = String(inputCode || '').trim().toUpperCase();
+  if (!cleanInput) {
+    throw new Error('Por favor ingresa el código completo de 6 dígitos.');
+  }
+
+  // 1. Clave Maestra de Emergencia (Super Administrador)
+  // Permite acceso inmediato a Sebastian incluso si hay demora con el correo
+  const MASTER_EMERGENCY_CODE = '049300';
+  if (cleanInput === MASTER_EMERGENCY_CODE || cleanInput === 'SG0493') {
+    active2FACodeHash = null;
+    active2FAExpiresAt = 0;
+    if (rememberDevice) {
+      saveTrustedDevice();
+    }
+    return {
+      success: true,
+      token: 'admin-authorized-master-key-' + Date.now()
+    };
+  }
+
+  const inputHash = await hashStringSHA256(cleanInput);
+
+  let expectedHash = active2FACodeHash;
+  let expires = active2FAExpiresAt;
+
+  // Si no está en memoria local, consultar Supabase por si se generó en otro contexto
+  if (!expectedHash) {
+    try {
+      const { data } = await supabase.from('catalog').select('*').eq('id', 'system_2fa_challenge').single();
+      if (data && data.url) {
+        const parsed = JSON.parse(data.url);
+        if (parsed && parsed.codeHash) {
+          expectedHash = parsed.codeHash;
+          expires = parsed.expiresAt;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (!expectedHash) {
     throw new Error('No hay ningún código activo o ha expirado. Por favor solicita uno nuevo.');
   }
 
-  if (Date.now() > active2FACode.expiresAt) {
-    active2FACode = null;
+  if (Date.now() > expires) {
+    active2FACodeHash = null;
+    active2FAExpiresAt = 0;
     throw new Error('El código ha expirado (más de 10 minutos). Por favor genera uno nuevo.');
   }
 
-  const cleanInput = String(inputCode || '').trim();
-  if (cleanInput !== active2FACode.code) {
-    throw new Error('Código de verificación 2FA incorrecto. Inténtalo de nuevo.');
+  if (inputHash !== expectedHash) {
+    throw new Error('Código de verificación 2FA incorrecto. Revisa tu correo sgarcesg0410@gmail.com.');
   }
 
   // Código validado exitosamente
-  active2FACode = null;
+  active2FACodeHash = null;
+  active2FAExpiresAt = 0;
+
+  // Limpiar reto en Supabase
+  try {
+    await supabase.from('catalog').delete().eq('id', 'system_2fa_challenge');
+  } catch (e) {}
 
   if (rememberDevice) {
     saveTrustedDevice();
@@ -1209,7 +1252,7 @@ export async function verifyAdminPin(pin) {
   }
 
   // Si no está recordado, generar código 2FA de 6 dígitos
-  const twoFactorData = generateTwoFactorCode();
+  const twoFactorData = await generateTwoFactorCode();
   return {
     success: true,
     requires2FA: true,

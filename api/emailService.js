@@ -340,3 +340,55 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
     return false;
   }
 }
+
+/**
+ * 4. Envía código de autenticación de dos factores (2FA) al correo oficial del administrador
+ */
+export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@gmail.com') {
+  const transporter = getTransporter();
+  try {
+    const dest = (targetEmail || 'sgarcesg0410@gmail.com').trim();
+    const html = wrapEmailTemplate(`
+      <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px;">
+        <span style="color: #f59e0b; font-weight: bold; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
+          🔐 Código de Acceso Seguro (2FA) • Sebastian G
+        </span>
+      </div>
+
+      <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6; margin-top: 0;">
+        ¡Hola Sebastian! Se ha solicitado un ingreso al <strong>Panel de Administración</strong> desde un dispositivo no reconocido.
+      </p>
+
+      <p style="color: #d6d3d1; font-size: 14px; line-height: 1.6;">
+        Para confirmar tu identidad y autorizar el acceso privado a tus reservas, fotos y finanzas, ingresa el siguiente código de verificación de 6 dígitos:
+      </p>
+
+      <div style="text-align: center; margin: 30px 0;">
+        <div style="display: inline-block; background: #0c0a09; border: 2px solid #f59e0b; padding: 16px 36px; border-radius: 16px; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #f59e0b; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.25);">
+          ${code}
+        </div>
+      </div>
+
+      <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
+        <p style="margin: 0; color: #a8a29e; font-size: 12px; line-height: 1.5;">
+          ⏱️ Este código vence en <strong>10 minutos</strong>.<br/>
+          ⚠️ Si tú no realizaste este intento de inicio de sesión, ignora este mensaje. El acceso permanece bloqueado con seguridad de doble factor.
+        </p>
+      </div>
+    `);
+
+    await transporter.sendMail({
+      from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
+      to: dest,
+      bcc: 'reservas@sebastiang.app',
+      subject: `🔐 Tu Código de Seguridad 2FA es [ ${code} ] • Sebastian G`,
+      html
+    });
+    console.log('✓ Código 2FA enviado por correo a:', dest);
+    return true;
+  } catch (err) {
+    console.error('Error enviando código 2FA por correo:', err);
+    return false;
+  }
+}
+
