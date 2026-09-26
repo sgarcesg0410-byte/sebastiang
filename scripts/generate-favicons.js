@@ -109,13 +109,14 @@ async function generateFavicons() {
   // 1. Save updated favicon.svg
   fs.writeFileSync('public/favicon.svg', svgFavicon.trim());
 
-  // 2. Generate 16x16, 32x32, 48x48, 64x64, 180x180 PNGs with full RGBA transparency
+  // 2. Generate 16x16, 32x32, 48x48, 64x64, 180x180, 512x512 PNGs with full RGBA transparency
   const sizes = [
     { name: 'favicon-16x16.png', size: 16 },
     { name: 'favicon-32x32.png', size: 32 },
     { name: 'favicon-48x48.png', size: 48 },
     { name: 'favicon.png', size: 64 },
     { name: 'apple-touch-icon.png', size: 180 },
+    { name: 'app-icon.png', size: 512 },
   ];
 
   const icoSources = [];
