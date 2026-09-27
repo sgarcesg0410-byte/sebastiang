@@ -49,8 +49,16 @@ import {
   FileText,
   Printer,
   ChevronLeft,
-  List
+  List,
+  Fingerprint
 } from 'lucide-react';
+import {
+  isBiometricsSupported,
+  isBiometricsConfigured,
+  registerBiometrics,
+  authenticateWithBiometrics,
+  disableBiometrics
+} from '../services/biometrics';
 import { 
   verifyAdminPin, 
   verifyTwoFactorCode,
@@ -267,12 +275,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   // Recuperación de PIN
   const [isRecoveringPin, setIsRecoveringPin] = useState(false);
   const [recoveryPhone, setRecoveryPhone] = useState('');
-  const [recoveryStep, setRecoveryStep] = useState(1); // 1: ingresar teléfono, 2: ingresar nuevo PIN
+  const [recoveryStep, setRecoveryStep] = useState(1); // 1: ingresar teléfono o código, 2: ingresar nuevo PIN
+  const [recoveryMethod, setRecoveryMethod] = useState('phone'); // 'phone' | 'email'
+  const [isSendingRecoveryEmail, setIsSendingRecoveryEmail] = useState(false);
   const [recoveryNewPin, setRecoveryNewPin] = useState('');
   const [recoveryConfirmPin, setRecoveryConfirmPin] = useState('');
   const [recoveryMsg, setRecoveryMsg] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
   const [recoveredPinDisplay, setRecoveredPinDisplay] = useState('');
+
+  // Autenticación Biométrica (Huella Dactilar / Face ID)
+  const [bioSupported, setBioSupported] = useState(false);
+  const [bioConfigured, setBioConfigured] = useState(false);
+  const [isAuthenticatingBio, setIsAuthenticatingBio] = useState(false);
+  const [bioError, setBioError] = useState('');
+  const [bioSuccess, setBioSuccess] = useState('');
 
   // Pestañas
   const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'payments' | 'reviews' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
@@ -684,9 +701,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   const handleStartRecovery = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setIsRecoveringPin(true);
     setRecoveryStep(1);
+    setRecoveryMethod('phone');
     setRecoveryError('');
     setRecoveryMsg('');
     setRecoveryPhone('');
@@ -694,17 +712,38 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setRecoveryConfirmPin('');
   };
 
+  const handleRequestEmailRecoveryCode = async () => {
+    setIsSendingRecoveryEmail(true);
+    setRecoveryError('');
+    setRecoveryMsg('');
+    try {
+      const res = await generateTwoFactorCode();
+      setRecoveryMethod('email');
+      setRecoveryStep(1);
+      setRecoveryPhone('');
+      setRecoveryMsg(`✓ Código de 6 dígitos enviado a tu correo (${res.emailMasked}). Revisa tu bandeja de entrada.`);
+    } catch (err) {
+      setRecoveryError('Error al enviar el código de seguridad al correo.');
+    } finally {
+      setIsSendingRecoveryEmail(false);
+    }
+  };
+
   const handleVerifyPhoneForRecovery = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setRecoveryError('');
     setRecoveryMsg('');
     try {
       const res = await recoverAdminPin(recoveryPhone);
       setRecoveryStep(2);
       setRecoveredPinDisplay(res.currentPin || '');
-      setRecoveryMsg('✓ Número verificado exitosamente. Ahora escribe tu nuevo PIN de acceso.');
+      setRecoveryMsg('✓ Identidad verificada exitosamente. Ahora escribe tu nuevo PIN de acceso.');
     } catch (err) {
-      setRecoveryError(err.message || 'El número ingresado no coincide con las líneas registradas (324 4725167 o 302 369 6513).');
+      if (recoveryMethod === 'email') {
+        setRecoveryError(err.message || 'Código de verificación incorrecto o expirado.');
+      } else {
+        setRecoveryError(err.message || 'El número ingresado no coincide con las líneas registradas (324 4725167 o 302 369 6513).');
+      }
     }
   };
 
@@ -733,6 +772,49 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     } catch (err) {
       setRecoveryError(err.message || 'Error al actualizar PIN');
     }
+  };
+
+  // Handlers para Acceso Biométrico (Huella Dactilar / Face ID)
+  const handleBiometricLogin = async () => {
+    if (isAuthenticatingBio) return;
+    setBioError('');
+    setAuthError('');
+    setIsAuthenticatingBio(true);
+    try {
+      const res = await authenticateWithBiometrics();
+      if (res && res.verified) {
+        setIsAuthenticated(true);
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+          try { Notification.requestPermission(); } catch (err) {}
+        }
+        loadAllAdminData();
+      }
+    } catch (err) {
+      setBioError(err.message || 'No se reconoció la huella.');
+    } finally {
+      setIsAuthenticatingBio(false);
+    }
+  };
+
+  const handleRegisterBiometrics = async () => {
+    setBioError('');
+    setBioSuccess('');
+    try {
+      const res = await registerBiometrics();
+      setBioConfigured(true);
+      setBioSuccess(res.message || '¡Huella dactilar activada con éxito en este dispositivo!');
+      setTimeout(() => setBioSuccess(''), 5000);
+    } catch (err) {
+      setBioError(err.message || 'No se pudo vincular la huella.');
+    }
+  };
+
+  const handleDisableBiometrics = () => {
+    if (!confirm('¿Deseas desactivar el ingreso por huella en este dispositivo?')) return;
+    disableBiometrics();
+    setBioConfigured(false);
+    setBioSuccess('Ingreso por huella desactivado.');
+    setTimeout(() => setBioSuccess(''), 3000);
   };
 
   const loadAllAdminData = async (isSilent = false) => {
@@ -934,12 +1016,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Limpieza estricta de seguridad: nunca dejar credenciales persistidas que puedan abrir el panel automáticamente
+  // Limpieza estricta de seguridad y comprobación de biometría (huella dactilar)
   useEffect(() => {
     try {
       localStorage.removeItem('sebastian_g_admin_pin');
       sessionStorage.removeItem('sebastian_g_admin_session_token');
     } catch (e) {}
+
+    isBiometricsSupported().then(supported => {
+      setBioSupported(supported);
+      setBioConfigured(isBiometricsConfigured());
+    });
   }, []);
 
   // Sincronización continua en tiempo real (Web <-> APK Android, WebSocket + Heartbeat 2.5s + BroadcastChannel + Instant Wakeup)
@@ -2154,6 +2241,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </div>
               )}
 
+              {/* Botón de Ingreso con Huella Dactilar (Biometría nativa) */}
+              {bioConfigured && (
+                <button
+                  type="button"
+                  onClick={handleBiometricLogin}
+                  disabled={isAuthenticatingBio}
+                  className="w-full mb-3.5 py-3 px-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 active:scale-95 text-amber-300 font-semibold text-xs flex items-center justify-center gap-2.5 transition-all shadow-md shadow-amber-500/10 cursor-pointer touch-manipulation"
+                >
+                  <Fingerprint className={`w-5 h-5 text-amber-400 ${isAuthenticatingBio ? 'animate-bounce' : 'animate-pulse'}`} />
+                  <span>{isAuthenticatingBio ? 'Coloca tu dedo en el sensor...' : 'Ingresar con Huella Dactilar'}</span>
+                </button>
+              )}
+
+              {bioError && (
+                <div className="p-2.5 mb-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-center">
+                  {bioError}
+                </div>
+              )}
+
               {/* Indicador de 4 Dots Luminosos */}
               <div className="flex items-center justify-center gap-3.5 my-4">
                 {[0, 1, 2, 3].map((idx) => {
@@ -2228,17 +2334,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <button
                   type="button"
                   onClick={handleStartRecovery}
-                  className="text-xs text-amber-400 hover:text-amber-300 hover:underline flex items-center justify-center gap-1 mx-auto font-medium"
+                  className="text-xs text-amber-400 hover:text-amber-300 hover:underline flex items-center justify-center gap-1 mx-auto font-medium cursor-pointer"
                 >
                   <Key className="w-3.5 h-3.5" />
                   <span>¿Olvidaste tu PIN? Recuperar aquí</span>
                 </button>
 
+                {bioSupported && !bioConfigured && (
+                  <p className="text-[11px] text-stone-400 text-center flex items-center justify-center gap-1.5 pt-1">
+                    <Fingerprint className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Puedes activar el ingreso por <strong>huella dactilar</strong> en Configuración.</span>
+                  </p>
+                )}
+
                 {onBackToHome && (
                   <button
                     type="button"
                     onClick={onBackToHome}
-                    className="text-[11px] text-stone-500 hover:text-stone-300 flex items-center justify-center gap-1 mx-auto pt-1"
+                    className="text-[11px] text-stone-500 hover:text-stone-300 flex items-center justify-center gap-1 mx-auto pt-1 cursor-pointer"
                   >
                     <Eye className="w-3 h-3" />
                     <span>Volver a la página principal</span>
@@ -2250,8 +2363,41 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             /* FLUJO DE RECUPERACIÓN DE PIN */
             <div className="space-y-4 text-left">
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200">
-                🔐 <strong>Recuperación de Seguridad:</strong> Escribe el número de WhatsApp registrado para verificar tu identidad y crear un nuevo PIN.
+                🔐 <strong>Recuperación de Seguridad:</strong> Elige tu método de validación para verificar tu identidad y restablecer tu PIN.
               </div>
+
+              {/* Selector de Método de Recuperación */}
+              {recoveryStep === 1 && (
+                <div className="flex rounded-xl bg-stone-950 p-1 border border-stone-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecoveryMethod('phone');
+                      setRecoveryError('');
+                      setRecoveryPhone('');
+                    }}
+                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
+                      recoveryMethod === 'phone' ? 'bg-amber-500 text-stone-950 shadow' : 'text-stone-400 hover:text-white'
+                    }`}
+                  >
+                    Por WhatsApp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecoveryMethod('email');
+                      setRecoveryError('');
+                      setRecoveryPhone('');
+                      handleRequestEmailRecoveryCode();
+                    }}
+                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
+                      recoveryMethod === 'email' ? 'bg-amber-500 text-stone-950 shadow' : 'text-stone-400 hover:text-white'
+                    }`}
+                  >
+                    Por Correo (Código)
+                  </button>
+                </div>
+              )}
 
               {recoveryError && (
                 <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
@@ -2266,36 +2412,67 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               )}
 
               {recoveryStep === 1 ? (
-                <form onSubmit={handleVerifyPhoneForRecovery} className="space-y-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                      Tu Número de WhatsApp *
-                    </label>
-                    <input
-                      type="tel"
-                      required
-                      value={recoveryPhone}
-                      onChange={(e) => setRecoveryPhone(e.target.value)}
-                      placeholder="Ej. 3244725167 o 3023696513"
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
+                recoveryMethod === 'phone' ? (
+                  <form onSubmit={handleVerifyPhoneForRecovery} className="space-y-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                        Tu Número de WhatsApp Registrado *
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        value={recoveryPhone}
+                        onChange={(e) => setRecoveryPhone(e.target.value)}
+                        placeholder="Ej. 3244725167 o 3023696513"
+                        className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
 
-                  <button
-                    type="submit"
-                    className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl text-xs"
-                  >
-                    Verificar Mi Identidad
-                  </button>
-                </form>
+                    <button
+                      type="submit"
+                      className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl text-xs cursor-pointer"
+                    >
+                      Verificar Mi Número
+                    </button>
+                  </form>
+                ) : (
+                  <form onSubmit={handleVerifyPhoneForRecovery} className="space-y-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                        Código de 6 Dígitos Recibido al Correo *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={6}
+                        value={recoveryPhone}
+                        onChange={(e) => setRecoveryPhone(e.target.value)}
+                        placeholder="Ej. 654321"
+                        className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 font-mono text-center tracking-widest text-lg"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        className="flex-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl text-xs cursor-pointer"
+                      >
+                        Validar Código y Continuar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRequestEmailRecoveryCode}
+                        disabled={isSendingRecoveryEmail}
+                        className="px-3 bg-stone-800 hover:bg-stone-700 text-amber-400 rounded-xl text-xs font-medium cursor-pointer"
+                        title="Reenviar código al correo"
+                      >
+                        {isSendingRecoveryEmail ? '...' : 'Reenviar'}
+                      </button>
+                    </div>
+                  </form>
+                )
               ) : (
                 <form onSubmit={handleResetPinSubmit} className="space-y-3">
-                  {recoveredPinDisplay && (
-                    <div className="p-2.5 bg-stone-950 rounded-xl border border-stone-800 text-[11px] text-stone-300">
-                      PIN anterior detectado: <strong className="text-amber-400 font-mono">{recoveredPinDisplay}</strong>
-                    </div>
-                  )}
-
                   <div>
                     <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
                       Escribe tu Nuevo PIN *
@@ -2305,7 +2482,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       required
                       value={recoveryNewPin}
                       onChange={(e) => setRecoveryNewPin(e.target.value)}
-                      placeholder="Mínimo 4 dígitos"
+                      placeholder="Mínimo 4 dígitos (ej: 0493)"
                       className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
                     />
                   </div>
@@ -2326,7 +2503,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                   <button
                     type="submit"
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs cursor-pointer"
                   >
                     Guardar Nuevo PIN y Entrar
                   </button>
@@ -5747,6 +5924,80 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 Actualizar PIN de Seguridad
               </button>
             </form>
+          </div>
+
+          {/* SECCIÓN 2.5: ACCESO BIOMÉTRICO (HUELLA DACTILAR / FACE ID) */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+                  <Fingerprint className="w-4 h-4 text-amber-400" />
+                  Biometría del Dispositivo
+                </span>
+                <h3 className="text-xl font-serif font-bold text-white mt-1">
+                  Ingreso con Huella Dactilar
+                </h3>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  Entra con un toque usando el sensor de huella de tu celular, igual que en tus bancos.
+                </p>
+              </div>
+              <span className={`text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider ${
+                bioConfigured ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-stone-800 text-stone-400'
+              }`}>
+                {bioConfigured ? '✓ Huella Vinculada' : 'No configurada'}
+              </span>
+            </div>
+
+            <p className="text-xs text-stone-400 leading-relaxed">
+              Al activar la biometría, podrás entrar al Panel Administrativo instantáneamente tocando el sensor de tu celular o el lector biométrico de tu equipo, sin tener que digitar el PIN cada vez.
+            </p>
+
+            {bioSuccess && (
+              <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{bioSuccess}</span>
+              </div>
+            )}
+
+            {bioError && (
+              <div className="p-3 bg-red-950/80 border border-red-500/50 rounded-xl text-red-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{bioError}</span>
+              </div>
+            )}
+
+            <div className="pt-2 flex flex-wrap gap-3">
+              {!bioConfigured ? (
+                <button
+                  type="button"
+                  onClick={handleRegisterBiometrics}
+                  className="flex-1 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 transition-all"
+                >
+                  <Fingerprint className="w-4 h-4" />
+                  <span>Vincular mi Huella Dactilar en este Dispositivo</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleBiometricLogin}
+                    disabled={isAuthenticatingBio}
+                    className="flex-1 bg-stone-800 hover:bg-stone-700 text-amber-300 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <Fingerprint className="w-4 h-4 text-amber-400" />
+                    <span>Probar Sensor de Huella</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDisableBiometrics}
+                    className="bg-red-950/50 hover:bg-red-900/60 border border-red-500/30 text-red-300 font-semibold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Desactivar Huella</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {/* SECCIÓN 3: CERRAR SESIÓN DEL PANEL */}
