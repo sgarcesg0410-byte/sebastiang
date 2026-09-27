@@ -2615,17 +2615,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           )}
 
-          {!isStandalone && (
-            <button
-              type="button"
-              onClick={handleInstallClick}
-              className="px-3.5 py-2.5 rounded-xl bg-purple-950/80 border border-purple-500/50 hover:bg-purple-900 text-purple-200 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md active:scale-95 shadow-purple-950/40"
-              title="Instalar la aplicación nativa en tu teléfono Android"
-            >
-              <DownloadCloud className="w-3.5 h-3.5 text-purple-400" />
-              <span>📲 Instalar App en Android</span>
-            </button>
-          )}
 
           <button
             type="button"
