@@ -384,7 +384,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const cached = localStorage.getItem('sebastian_g_catalog_v1');
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length >= DEFAULT_REAL_CATALOG.length) return parsed;
         }
       }
     } catch (e) {}

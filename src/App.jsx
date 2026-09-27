@@ -96,7 +96,7 @@ export default function App() {
         const cached = localStorage.getItem('sebastian_g_catalog_v1');
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length >= DEFAULT_REAL_CATALOG.length) return parsed;
         }
       }
     } catch (e) {}
@@ -108,7 +108,7 @@ export default function App() {
   const updateCatalogSafely = (data) => {
     if (!Array.isArray(data) || data.length === 0) return;
     setCatalog(prev => {
-      if (prev && prev.length > data.length && data.length <= 18) {
+      if (prev && prev.length > data.length && data.length < DEFAULT_REAL_CATALOG.length) {
         return prev;
       }
       if (prev && prev.length === data.length && prev[0]?.id === data[0]?.id) {

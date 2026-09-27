@@ -126,23 +126,43 @@ export const DEFAULT_PACKAGES = [
 
 export const DEFAULT_REAL_CATALOG = [
   { id: 'cat-verano-salsero', title: 'Verano salsero', category: 'Retratos', location: 'Playas de Coveñas', url: '/catalog/verano-salsero.jpg' },
-  { id: 'cat-1789878355199', title: 'Amor al campo', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789878355199.jpg' },
-  { id: 'cat-1789902452640', title: 'Atardecer', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789902452640.jpg' },
-  { id: 'cat-1789916017066', title: 'Feliz cumpleaños Thiago', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789916017066.jpg' },
-  { id: 'cat-1789916075257', title: 'Atardeceres', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789916075257.jpg' },
+  { id: 'cat-1789878355199', title: 'Amor al  campo', category: 'Retratos', location: 'Torrente -Coveñas', url: '/catalog/cat-1789878355199.jpg' },
+  { id: 'cat-1789902452640', title: 'Atardecer', category: 'Retratos', location: 'Playas el Edén - Coveñas', url: '/catalog/cat-1789902452640.jpg' },
+  { id: 'cat-1789916017066', title: 'Feliz cumpleaños  Thiago', category: 'Retratos', location: 'Nuevo Agrado', url: '/catalog/cat-1789916017066.jpg' },
+  { id: 'cat-1789916075257', title: 'Atardeceres', category: 'Retratos', location: 'Malecón , San Antero', url: '/catalog/cat-1789916075257.jpg' },
   { id: 'cat-1789916145830', title: 'Morenas con estilo', category: 'Retratos', location: 'Malecón, San Antero', url: '/catalog/cat-1789916145830.jpg' },
   { id: 'cat-1789916197806', title: 'Unión Familiar', category: 'Retratos', location: 'Tijereta, San Antero', url: '/catalog/cat-1789916197806.jpg' },
-  { id: 'cat-1789916408679', title: 'Feliz cumpleaños Kairys', category: 'Playas & Atardeceres', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789916408679.jpg' },
+  { id: 'cat-1789916408679', title: 'Feliz cumpleaños Kairys', category: 'Playas San Antero', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789916408679.jpg' },
   { id: 'cat-1789916617329', title: 'ANGT', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789916617329.jpg' },
-  { id: 'cat-1789949201412', title: 'Feliz cumpleaños Daniela', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789949201412.jpg' },
-  { id: 'cat-1789949301568', title: 'Jesús, un niño lleno de alegría', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789949301568.jpg' },
-  { id: 'cat-1789949471911', title: 'Feliz cumpleaños Julieta', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789949471911.jpg' },
+  { id: 'cat-1789949201412', title: 'Feliz cumpleaños Daniela', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789949201412.jpg' },
+  { id: 'cat-1789949301568', title: 'Jesús, un niño lleno de alegría', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789949301568.jpg' },
+  { id: 'cat-1789949471911', title: 'Feliz  cumpleaños Julieta', category: 'Retratos', location: 'Via la culebra ,Cotorra', url: '/catalog/cat-1789949471911.jpg' },
   { id: 'cat-1789951307326', title: 'Los 6 años de Christy', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789951307326.jpg' },
-  { id: 'cat-1789951453602', title: 'Felices 16', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789951453602.jpg' },
-  { id: 'cat-1789951546306', title: 'Los 9 meses de Celeste', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789951546306.jpg' },
-  { id: 'cat-1789951644266', title: 'celebramos un cumpleaños rodeado de la magia  Ayda Luz', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789951644266.jpg' },
-  { id: 'cat-1789951931767', title: 'Una sesión llena de amor, ilusión', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789951931767.jpg' },
-  { id: 'cat-1789952024846', title: 'Feliz primer cumpleaños, Shamara', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789952024846.jpg' }
+  { id: 'cat-1789951453602', title: 'Felices 16', category: 'Retratos', location: 'Cotorra', url: '/catalog/cat-1789951453602.jpg' },
+  { id: 'cat-1789951546306', title: 'Los 9 meses de Celeste', category: 'Retratos', location: 'Playas el Eden ,Coveñas', url: '/catalog/cat-1789951546306.jpg' },
+  { id: 'cat-1789951644266', title: 'celebramos un cumpleaños rodeado de la magia  Ayda Luz', category: 'Retratos', location: 'Malecon, San Antero', url: '/catalog/cat-1789951644266.jpg' },
+  { id: 'cat-1789951931767', title: 'Una sesión llena de amor, ilusión', category: 'Retratos', location: 'Coveñas, Sucre', url: '/catalog/cat-1789951931767.jpg' },
+  { id: 'cat-1789952024846', title: 'Feliz primer cumpleaños, Shamara', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789952024846.jpg' },
+  { id: 'cat-1790137885828', title: '10 años de Thiago', category: 'Retratos', location: 'Malecon, San Antero', url: '/catalog/cat-1790137885828.jpg' },
+  { id: 'cat-1790138062113', title: 'Celebramos un cumpleaños lleno de alegría', category: 'Retratos', location: 'Malecón, San Antero', url: '/catalog/cat-1790138062113.jpg' },
+  { id: 'cat-1790138129671', title: 'cumpleaños de Liam', category: 'Retratos', location: 'Tolu', url: '/catalog/cat-1790138129671.jpg' },
+  { id: 'cat-1790138192390', title: 'Una sesión llena de color, alegría', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138192390.jpg' },
+  { id: 'cat-1790138313878', title: 'Celebramos los 15 años de Sofía', category: 'Retratos', location: 'Malecon,Coveñas', url: '/catalog/cat-1790138313878.jpg' },
+  { id: 'cat-1790138378422', title: 'Elegancia, seguridad y belleza', category: 'Retratos', location: 'Malecon, San Antero', url: '/catalog/cat-1790138378422.jpg' },
+  { id: 'cat-1790138441725', title: 'La verdadera belleza resplandece cuando te muestras tal y como eres', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138441725.jpg' },
+  { id: 'cat-1790138504516', title: 'Entre el azul del cielo y la calma del mar,', category: 'Retratos', location: 'Malecón, San Antero', url: '/catalog/cat-1790138504516.jpg' },
+  { id: 'cat-1790138561501', title: 'Una tarde llena de amor, sonrisas', category: 'Retratos', location: 'Tolu playa', url: '/catalog/cat-1790138561501.jpg' },
+  { id: 'cat-1790138633284', title: 'La magia de lo natural se refleja en cada toma', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790138633284.jpg' },
+  { id: 'cat-1790138725659', title: 'Ariadna celebró sus 9 años', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1790138725659.jpg' },
+  { id: 'cat-1790138815867', title: 'Hoy celebramos los 6 años de Santiago', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138815867.jpg' },
+  { id: 'cat-1790138962906', title: 'Entre la brisa del mar y el sonido de las olas, florece una conexión', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790138962906.jpg' },
+  { id: 'cat-1790138998265', title: 'La belleza no tiene límites. Con su esencia, confianza y elegancia', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138998265.jpg' },
+  { id: 'cat-1790139087441', title: 'Una morena que brilla con luz propia, reflejando confianza, amor propio', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139087441.jpg' },
+  { id: 'cat-1790139202456', title: 'Entre risas, abrazos y miradas llenas de amor, vivimos una sesión mágica junto a Maylin esta hermosa niña de 2 años y su mamá.', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139202456.jpg' },
+  { id: 'cat-1790139247128', title: 'Entre la brisa del mar y la magia del atardecer, su cabello crespo bailaba con el viento como una obra de arte natural', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139247128.jpg' },
+  { id: 'cat-1790139302008', title: 'El amor de mamá.', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790139302008.jpg' },
+  { id: 'cat-1790139359055', title: 'Hay amistades que se convierten en familia y corazones que viven cada etapa como si fuera propia 💕✨', category: 'Retratos', location: 'Malecon,Coveñas', url: '/catalog/cat-1790139359055.jpg' },
+  { id: 'cat-1790139435319', title: 'Los 6 llegaron llenos de diversión, juegos y mucho pastel!', category: 'Retratos', location: 'Nuevo Agrado, San Antero', url: '/catalog/cat-1790139435319.jpg' }
 ];
 
 export function isSampleItem(item) {
@@ -590,7 +610,27 @@ const KNOWN_STATIC_PHOTOS = {
   'cat-1789951546306': '/catalog/cat-1789951546306.jpg',
   'cat-1789951644266': '/catalog/cat-1789951644266.jpg',
   'cat-1789951931767': '/catalog/cat-1789951931767.jpg',
-  'cat-1789952024846': '/catalog/cat-1789952024846.jpg'
+  'cat-1789952024846': '/catalog/cat-1789952024846.jpg',
+  'cat-1790137885828': '/catalog/cat-1790137885828.jpg',
+  'cat-1790138062113': '/catalog/cat-1790138062113.jpg',
+  'cat-1790138129671': '/catalog/cat-1790138129671.jpg',
+  'cat-1790138192390': '/catalog/cat-1790138192390.jpg',
+  'cat-1790138313878': '/catalog/cat-1790138313878.jpg',
+  'cat-1790138378422': '/catalog/cat-1790138378422.jpg',
+  'cat-1790138441725': '/catalog/cat-1790138441725.jpg',
+  'cat-1790138504516': '/catalog/cat-1790138504516.jpg',
+  'cat-1790138561501': '/catalog/cat-1790138561501.jpg',
+  'cat-1790138633284': '/catalog/cat-1790138633284.jpg',
+  'cat-1790138725659': '/catalog/cat-1790138725659.jpg',
+  'cat-1790138815867': '/catalog/cat-1790138815867.jpg',
+  'cat-1790138962906': '/catalog/cat-1790138962906.jpg',
+  'cat-1790138998265': '/catalog/cat-1790138998265.jpg',
+  'cat-1790139087441': '/catalog/cat-1790139087441.jpg',
+  'cat-1790139202456': '/catalog/cat-1790139202456.jpg',
+  'cat-1790139247128': '/catalog/cat-1790139247128.jpg',
+  'cat-1790139302008': '/catalog/cat-1790139302008.jpg',
+  'cat-1790139359055': '/catalog/cat-1790139359055.jpg',
+  'cat-1790139435319': '/catalog/cat-1790139435319.jpg'
 };
 
 export async function getCatalog() {
@@ -2250,37 +2290,15 @@ export async function deleteCatalogPhoto(id, title = null) {
 
   const normTitle = title ? title.trim().toLowerCase() : null;
 
-  // 1. Borrar en Supabase en la nube
+  // 1. Borrar en Supabase en la nube por ID único
   try {
     await supabase.from('catalog').delete().eq('id', id);
-    if (normTitle) {
-      await supabase.from('catalog').delete().ilike('title', normTitle);
-    }
   } catch (err) {
     console.warn('Error eliminando de Supabase:', err);
   }
 
-  // 2. Borrar en almacenamiento local
-  if (normTitle) {
-    local.forEach(i => {
-      if (i.title && i.title.trim().toLowerCase() === normTitle) {
-        addDeletedCatalogId(i.id);
-      }
-    });
-    DEFAULT_REAL_CATALOG.forEach(d => {
-      if (d.title && d.title.trim().toLowerCase() === normTitle) {
-        addDeletedCatalogId(d.id);
-      }
-    });
-    const filteredLocal = local.filter(i => {
-      if (i.id === id) return false;
-      if (i.title && i.title.trim().toLowerCase() === normTitle) return false;
-      return true;
-    });
-    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(filteredLocal));
-  } else {
-    removeLocalCatalogItem(id);
-  }
+  // 2. Borrar en almacenamiento local (IndexedDB y localStorage) por ID único
+  removeLocalCatalogItem(id);
 
   try {
     const res = await fetch(`${API_BASE}/admin/catalog/${id}`, {
