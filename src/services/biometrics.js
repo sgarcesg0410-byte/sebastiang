@@ -1,13 +1,15 @@
 /**
- * Servicio de Autenticación Biométrica (Huella Dactilar / Face ID)
- * Utiliza Web Authentication API (WebAuthn / Passkeys estándar FIDO2)
- * Compatible con Android (Huella / Lector biométrico), iOS (Touch ID / Face ID)
- * y Windows Hello en navegadores modernos y aplicaciones empaquetadas (Capacitor/PWA).
+ * Servicio Unificado de Autenticación Biométrica (Huella Dactilar / Face ID)
+ * Soporta de forma transparente:
+ * 1. Hardware biométrico NATIVO de Android (BiometricPrompt) a través del puente APK (AndroidNotificationBridge).
+ *    Idéntico al funcionamiento de apps bancarias (Nequi, Bancolombia, etc.).
+ * 2. Web Authentication API (WebAuthn / Passkeys estándar FIDO2) para navegadores (Chrome Android, Safari iOS, Windows Hello).
  */
 
 const BIO_ENABLED_KEY = 'sebastian_g_biometrics_enabled_v1';
 const BIO_CRED_ID_KEY = 'sebastian_g_biometrics_cred_id_v1';
 const BIO_DEVICE_NAME_KEY = 'sebastian_g_biometrics_device_name_v1';
+const BIO_PROVIDER_KEY = 'sebastian_g_biometrics_provider_v1'; // 'native_android' | 'webauthn'
 
 function bufferToBase64(buffer) {
   if (!buffer) return '';
@@ -30,21 +32,115 @@ function base64ToBuffer(base64) {
 }
 
 /**
+ * Detecta si el puente biométrico nativo de Android está activo en la APK
+ */
+function hasNativeAndroidBiometrics() {
+  return typeof window !== 'undefined' && 
+    !!window.AndroidNotificationBridge && 
+    typeof window.AndroidNotificationBridge.isBiometricAvailable === 'function';
+}
+
+/**
+ * Obtiene el estado detallado del sensor biométrico en Android nativo
+ */
+function getNativeAndroidBiometricStatus() {
+  if (hasNativeAndroidBiometrics() && typeof window.AndroidNotificationBridge.getBiometricStatus === 'function') {
+    return window.AndroidNotificationBridge.getBiometricStatus();
+  }
+  return null;
+}
+
+/**
+ * Lanza el prompt nativo de huella dactilar de Android (BiometricPrompt)
+ * y retorna una Promise que se resuelve con el resultado
+ */
+function authenticateViaNativeAndroid(title, subtitle) {
+  return new Promise((resolve, reject) => {
+    if (!hasNativeAndroidBiometrics()) {
+      return reject(new Error('El lector biométrico nativo no está disponible.'));
+    }
+
+    let timeoutId = null;
+
+    const handler = (event) => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('android-biometric-response', handler);
+      const detail = event?.detail || {};
+      if (detail.success) {
+        resolve({
+          success: true,
+          verified: true,
+          method: 'native_fingerprint',
+          message: detail.message || 'Huella verificada correctamente.'
+        });
+      } else {
+        const errorMsg = detail.message || 'Acceso por huella cancelado o no reconocido.';
+        reject(new Error(errorMsg));
+      }
+    };
+
+    window.addEventListener('android-biometric-response', handler);
+
+    // Timeout de seguridad en caso de que Android no emita evento
+    timeoutId = setTimeout(() => {
+      window.removeEventListener('android-biometric-response', handler);
+      reject(new Error('Tiempo de espera agotado en el sensor de huella. Intenta nuevamente.'));
+    }, 60000);
+
+    try {
+      window.AndroidNotificationBridge.authenticateBiometric(
+        title || 'Ingreso Sebastian G',
+        subtitle || 'Coloca tu dedo en el sensor de huella de tu celular'
+      );
+    } catch (err) {
+      clearTimeout(timeoutId);
+      window.removeEventListener('android-biometric-response', handler);
+      reject(new Error('Error al iniciar el sensor de huella: ' + (err.message || err)));
+    }
+  });
+}
+
+/**
  * Comprueba si el dispositivo actual tiene hardware biométrico disponible (sensor de huella o Face ID)
  */
 export async function isBiometricsSupported() {
   if (typeof window === 'undefined') return false;
-  if (!window.PublicKeyCredential) return false;
-  try {
-    if (typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
-      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-      return !!available;
+
+  // 1. Prioridad: Lector Biométrico Nativo de la APK de Android (BiometricPrompt)
+  if (hasNativeAndroidBiometrics()) {
+    try {
+      const isAvailable = window.AndroidNotificationBridge.isBiometricAvailable();
+      if (isAvailable) return true;
+      const status = getNativeAndroidBiometricStatus();
+      if (status === 'NONE_ENROLLED' || status === 'AVAILABLE') {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('Error comprobando biometría nativa:', e);
     }
-    return false;
-  } catch (err) {
-    console.warn('Error verificando soporte biométrico:', err);
+  }
+
+  // 2. Si estamos dentro de la APK antigua (con puente de notificaciones pero sin biometría nativa)
+  if (window.AndroidNotificationBridge && !hasNativeAndroidBiometrics()) {
     return false;
   }
+
+  // 3. Web Estándar (WebAuthn / Passkeys en Chrome/Safari/Edge/Windows Hello)
+  if (window.PublicKeyCredential) {
+    try {
+      if (typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
+        const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+        return !!available;
+      }
+      return true;
+    } catch (err) {
+      console.warn('Error verificando WebAuthn:', err);
+      return false;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -56,27 +152,71 @@ export function isBiometricsConfigured() {
 }
 
 /**
- * Registra la huella dactilar del administrador en el dispositivo
+ * Registra y vincula la huella dactilar del administrador en el dispositivo actual
  */
 export async function registerBiometrics() {
+  // 1. CANAL NATIVO ANDROID (APK)
+  if (hasNativeAndroidBiometrics()) {
+    const status = getNativeAndroidBiometricStatus();
+    if (status === 'NO_HARDWARE') {
+      throw new Error('Este celular no cuenta con lector de huella dactilar integrado.');
+    }
+    if (status === 'HW_UNAVAILABLE') {
+      throw new Error('El sensor de huella dactilar está temporalmente no disponible. Intenta reiniciar tu dispositivo.');
+    }
+    if (status === 'NONE_ENROLLED') {
+      if (typeof window.AndroidNotificationBridge.openBiometricEnrollmentSettings === 'function') {
+        window.AndroidNotificationBridge.openBiometricEnrollmentSettings();
+      }
+      throw new Error('Tu celular tiene sensor de huella pero aún no has registrado ninguna huella en los Ajustes del sistema. Abre Ajustes > Seguridad > Huella Digital para configurarla.');
+    }
+
+    // Solicitar toque de huella con el diálogo nativo de Android
+    const res = await authenticateViaNativeAndroid(
+      'Vincular Huella Dactilar',
+      'Toca el sensor de huella para vincular este celular a tu cuenta de Sebastian G'
+    );
+
+    if (res && res.success) {
+      localStorage.setItem(BIO_CRED_ID_KEY, 'native_android_' + Date.now());
+      localStorage.setItem(BIO_ENABLED_KEY, 'true');
+      localStorage.setItem(BIO_PROVIDER_KEY, 'native_android');
+      localStorage.setItem(BIO_DEVICE_NAME_KEY, 'Celular Android (Nativo)');
+
+      return {
+        success: true,
+        message: '¡Huella dactilar vinculada exitosamente! Ahora podrás entrar con un solo toque como en tus aplicaciones de banco.'
+      };
+    }
+    throw new Error('No se pudo verificar la huella dactilar.');
+  }
+
+  // Si estamos en la APK antigua sin bridge de biometría
+  if (typeof window !== 'undefined' && window.AndroidNotificationBridge && !hasNativeAndroidBiometrics()) {
+    throw new Error('Para activar la huella en tu celular, descarga e instala la última versión de la aplicación (APK v1.4.0).');
+  }
+
+  // 2. CANAL WEBAUTHN ESTÁNDAR (Para navegadores web)
   const supported = await isBiometricsSupported();
   if (!supported) {
-    throw new Error('Tu dispositivo no cuenta con sensor de huella disponible o el navegador no tiene permisos biométricos activados.');
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      throw new Error('La autenticación por huella requiere una conexión HTTPS segura o la APK instalada en tu celular.');
+    }
+    throw new Error('Tu dispositivo o navegador actual no cuenta con sensor de huella disponible o permisos activados.');
   }
 
   const challenge = new Uint8Array(32);
   window.crypto.getRandomValues(challenge);
 
   const userId = new TextEncoder().encode('sebastiang-admin-' + Date.now());
-
-  // Detectar hostname seguro para rpId (compatible con localhost y dominio en producción)
   const hostname = window.location.hostname || 'localhost';
+  const isCustomDomain = hostname !== 'localhost' && !hostname.match(/^(\d{1,3}\.){3}\d{1,3}$/);
 
   const creationOptions = {
     challenge,
     rp: {
       name: 'Sebastian G - Panel de Control',
-      id: hostname === 'localhost' ? undefined : hostname
+      id: isCustomDomain ? hostname : undefined
     },
     user: {
       id: userId,
@@ -84,11 +224,11 @@ export async function registerBiometrics() {
       displayName: 'Sebastian G'
     },
     pubKeyCredParams: [
-      { alg: -7, type: 'public-key' },   // ES256 (estándar Android/iOS)
+      { alg: -7, type: 'public-key' },   // ES256
       { alg: -257, type: 'public-key' }  // RS256
     ],
     authenticatorSelection: {
-      authenticatorAttachment: 'platform', // Obliga al lector nativo del dispositivo (Huella dactilar)
+      authenticatorAttachment: 'platform',
       userVerification: 'required',
       requireResidentKey: false
     },
@@ -108,7 +248,8 @@ export async function registerBiometrics() {
     const credIdBase64 = bufferToBase64(credential.rawId);
     localStorage.setItem(BIO_CRED_ID_KEY, credIdBase64);
     localStorage.setItem(BIO_ENABLED_KEY, 'true');
-    localStorage.setItem(BIO_DEVICE_NAME_KEY, navigator.userAgent.includes('Android') ? 'Celular Android' : (navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Dispositivo Personal'));
+    localStorage.setItem(BIO_PROVIDER_KEY, 'webauthn');
+    localStorage.setItem(BIO_DEVICE_NAME_KEY, navigator.userAgent.includes('Android') ? 'Celular Android (Navegador)' : (navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Dispositivo Personal'));
 
     return {
       success: true,
@@ -130,26 +271,39 @@ export async function authenticateWithBiometrics() {
     throw new Error('El acceso por huella no está configurado en este dispositivo.');
   }
 
-  const supported = await isBiometricsSupported();
-  if (!supported) {
-    throw new Error('El sensor de huella no está disponible en este momento.');
+  // 1. CANAL NATIVO ANDROID (APK)
+  if (hasNativeAndroidBiometrics()) {
+    const res = await authenticateViaNativeAndroid(
+      'Ingreso al Panel Sebastian G',
+      'Coloca tu huella dactilar para acceder inmediatamente'
+    );
+    if (res && res.success) {
+      return {
+        success: true,
+        verified: true,
+        method: 'fingerprint'
+      };
+    }
+    throw new Error('No se pudo verificar la huella.');
   }
 
+  // 2. CANAL WEBAUTHN ESTÁNDAR
   const storedCredId = localStorage.getItem(BIO_CRED_ID_KEY);
   if (!storedCredId) {
-    throw new Error('Credencial biométrica no encontrada.');
+    throw new Error('Credencial biométrica no encontrada en este navegador.');
   }
 
   const challenge = new Uint8Array(32);
   window.crypto.getRandomValues(challenge);
 
   const hostname = window.location.hostname || 'localhost';
+  const isCustomDomain = hostname !== 'localhost' && !hostname.match(/^(\d{1,3}\.){3}\d{1,3}$/);
 
   const requestOptions = {
     challenge,
     timeout: 60000,
     userVerification: 'required',
-    rpId: hostname === 'localhost' ? undefined : hostname,
+    rpId: isCustomDomain ? hostname : undefined,
     allowCredentials: [
       {
         id: base64ToBuffer(storedCredId),
@@ -188,4 +342,5 @@ export function disableBiometrics() {
   localStorage.removeItem(BIO_ENABLED_KEY);
   localStorage.removeItem(BIO_CRED_ID_KEY);
   localStorage.removeItem(BIO_DEVICE_NAME_KEY);
+  localStorage.removeItem(BIO_PROVIDER_KEY);
 }
