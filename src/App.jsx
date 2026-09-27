@@ -23,9 +23,8 @@ function ModuleLoader({ message = "Cargando módulo..." }) {
 import AboutSection from './components/AboutSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
-import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG } from './services/api';
+import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds } from './services/api';
 import { trackPageVisit } from './services/analytics';
-import { supabase } from './services/supabase';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
@@ -96,7 +95,7 @@ export default function App() {
         const cached = localStorage.getItem('sebastian_g_catalog_v1');
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length >= DEFAULT_REAL_CATALOG.length) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
       }
     } catch (e) {}
@@ -108,13 +107,32 @@ export default function App() {
   const updateCatalogSafely = (data) => {
     if (!Array.isArray(data) || data.length === 0) return;
     setCatalog(prev => {
-      if (prev && prev.length > data.length && data.length < DEFAULT_REAL_CATALOG.length) {
+      const rawDeleted = getDeletedCatalogIds();
+      const deletedSet = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
+
+      // Mapa para unir todas las fotos sin perder jamás fotos subidas por el fotógrafo
+      const map = new Map();
+      (prev || []).forEach(p => {
+        if (p && p.id && !deletedSet.has(p.id)) {
+          map.set(p.id, p);
+        }
+      });
+      (data || []).forEach(p => {
+        if (p && p.id && !deletedSet.has(p.id)) {
+          const existing = map.get(p.id);
+          if (existing && existing.url && (!p.url || p.isHeavyLocal)) {
+            map.set(p.id, { ...p, url: existing.url });
+          } else {
+            map.set(p.id, p);
+          }
+        }
+      });
+
+      const merged = Array.from(map.values());
+      if (prev && prev.length === merged.length && prev[0]?.id === merged[0]?.id) {
         return prev;
       }
-      if (prev && prev.length === data.length && prev[0]?.id === data[0]?.id) {
-        return prev;
-      }
-      return data;
+      return merged.length > 0 ? merged : (prev || DEFAULT_REAL_CATALOG);
     });
   };
 

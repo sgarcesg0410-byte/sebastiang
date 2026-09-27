@@ -99,7 +99,8 @@ import {
   DEFAULT_REAL_CATALOG,
   sendEmailNotification,
   exportCatalogBackup,
-  importCatalogBackup
+  importCatalogBackup,
+  getDeletedCatalogIds
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -401,7 +402,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const cached = localStorage.getItem('sebastian_g_catalog_v1');
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length >= DEFAULT_REAL_CATALOG.length) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
         }
       }
     } catch (e) {}
@@ -892,7 +893,32 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const cData = cRes?.status === 'fulfilled' && Array.isArray(cRes.value) && cRes.value.length > 0
           ? cRes.value
           : DEFAULT_REAL_CATALOG;
-        setCatalog(prev => areArraysEqual(prev, cData) ? prev : cData);
+
+        setCatalog(prev => {
+          const rawDeleted = getDeletedCatalogIds();
+          const deletedSet = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
+
+          const map = new Map();
+          // 1. Preservar todas las fotos previas válidas
+          (prev || []).forEach(p => {
+            if (p && p.id && !deletedSet.has(p.id)) {
+              map.set(p.id, p);
+            }
+          });
+          // 2. Fusionar con las fotos recibidas de la fuente
+          (cData || []).forEach(p => {
+            if (p && p.id && !deletedSet.has(p.id)) {
+              const existing = map.get(p.id);
+              if (existing && existing.url && (!p.url || p.isHeavyLocal)) {
+                map.set(p.id, { ...p, url: existing.url });
+              } else {
+                map.set(p.id, p);
+              }
+            }
+          });
+          const merged = Array.from(map.values());
+          return areArraysEqual(prev, merged) ? prev : merged;
+        });
 
         const revData = revRes?.status === 'fulfilled' && Array.isArray(revRes.value) ? revRes.value : [];
         setReviewsList(prev => areArraysEqual(prev, revData) ? prev : revData);
@@ -1901,7 +1927,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       // Actualización optimista simultánea inmediata en el panel
       if (result && result.item) {
-        setCatalog(prev => [result.item, ...prev.filter(p => p.id !== result.item.id)]);
+        setCatalog(prev => {
+          const filtered = (prev || []).filter(p => p.id !== result.item.id && p.url !== result.item.url);
+          return [result.item, ...filtered];
+        });
       }
 
       setCatalogUploadSuccess('¡Foto publicada exitosamente y sincronizada en tiempo real!');

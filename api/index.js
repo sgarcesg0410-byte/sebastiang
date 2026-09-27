@@ -18,8 +18,29 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Helper para leer base de datos (con fallback seguro en servidor Vercel)
+// Helper para persistir y leer base de datos (con soporte /tmp para entornos serverless de Vercel)
+function saveDB(data) {
+  try {
+    const tmpPath = path.join('/tmp', 'db.json');
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+  } catch (e) {}
+
+  try {
+    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
+    if (fs.existsSync(dbPath)) {
+      fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+    }
+  } catch (e) {}
+}
+
 function getDB() {
+  try {
+    const tmpPath = path.join('/tmp', 'db.json');
+    if (fs.existsSync(tmpPath)) {
+      return JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
+    }
+  } catch (e) {}
+
   try {
     const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
     if (fs.existsSync(dbPath)) {
@@ -790,28 +811,24 @@ app.post('/api/admin/settings', (req, res) => {
 
 // --- GESTIÓN DE CATÁLOGO (FOTOS PÚBLICAS) ---
 app.post('/api/admin/catalog', (req, res) => {
-  const { title, category, url, location } = req.body;
+  const { id, title, category, url, location } = req.body;
   if (!title || !url) {
     return res.status(400).json({ error: 'Faltan título o imagen de la foto.' });
   }
   const newItem = {
-    id: `cat-${Date.now()}`,
+    id: id || `cat-${Date.now()}`,
     title: title.trim(),
     category: (category || 'Retratos').trim(),
     url: url.trim(),
-    location: (location || 'San Antero').trim()
+    location: (location || 'San Antero').trim(),
+    createdAt: new Date().toISOString()
   };
   if (!runtimeDB.catalog) runtimeDB.catalog = [];
+  // Evitar duplicados por ID o por URL
+  runtimeDB.catalog = runtimeDB.catalog.filter(c => c.id !== newItem.id && c.url !== newItem.url);
   runtimeDB.catalog.unshift(newItem);
 
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.catalog = runtimeDB.catalog;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  saveDB(runtimeDB);
 
   res.status(201).json({ success: true, item: newItem });
 });
@@ -828,14 +845,7 @@ app.delete('/api/admin/catalog/:id', (req, res) => {
     return true;
   });
 
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.catalog = runtimeDB.catalog;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  saveDB(runtimeDB);
 
   res.json({ success: true, id });
 });
@@ -847,14 +857,7 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
     return !isSample;
   });
 
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.catalog = runtimeDB.catalog;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  saveDB(runtimeDB);
 
   res.json({ success: true, catalog: runtimeDB.catalog });
 });
