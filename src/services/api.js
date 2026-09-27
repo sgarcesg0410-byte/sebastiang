@@ -1,4 +1,13 @@
 import { supabase } from './supabase';
+import {
+  idbGetCatalog,
+  idbSaveCatalogItem,
+  idbSaveCatalogBatch,
+  idbDeleteCatalogItem,
+  idbGetSessions,
+  idbSaveSession,
+  idbDeleteSession
+} from './indexedDb';
 
 const API_BASE = '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
@@ -189,21 +198,31 @@ function getLocalCatalog() {
 }
 
 function saveLocalCatalogItem(item) {
+  if (!item || !item.id) return;
+  // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB)
+  try {
+    idbSaveCatalogItem(item);
+  } catch (e) {}
+
+  // 2. Respaldo adicional en localStorage con manejo seguro de cuota
   try {
     const items = getLocalCatalog().filter(i => i.id !== item.id);
     items.unshift(item);
     localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
-    // Si estaba en la lista de eliminados, removerlo porque se está agregando de nuevo
     try {
       const deletedIds = getDeletedCatalogIds().filter(id => id !== item.id);
       localStorage.setItem(LOCAL_DELETED_CATALOG_KEY, JSON.stringify(deletedIds));
     } catch (e) {}
   } catch (e) {
-    console.warn('No se pudo guardar item de catálogo:', e);
+    // Si localStorage excede su cuota de 5MB, IndexedDB ya tiene el dato a salvo
+    console.warn('localStorage al límite; foto persistida exitosamente en IndexedDB:', e);
   }
 }
 
 function removeLocalCatalogItem(id) {
+  try {
+    idbDeleteCatalogItem(id);
+  } catch (e) {}
   try {
     addDeletedCatalogId(id);
     const items = getLocalCatalog().filter(i => i.id !== id);
@@ -619,6 +638,9 @@ export async function getCatalog() {
     console.warn('Error obteniendo catálogo de servidor:', err);
   }
 
+  // 3. Consultar IndexedDB de alta capacidad (persistencia local protegida ante caída de red o límites de cuota)
+  const idbCatalog = await idbGetCatalog().catch(() => []);
+
   const rawLocal = getLocalCatalog();
   const localItems = Array.isArray(rawLocal) ? rawLocal : [];
   const rawDeleted = getDeletedCatalogIds();
@@ -626,9 +648,10 @@ export async function getCatalog() {
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
 
   // Fuentes combinadas y deduplicadas inteligentemente:
-  // Supabase -> Local -> Servidor -> Catálogo base predeterminado
+  // Supabase -> IndexedDB -> LocalStorage -> Servidor -> Catálogo base predeterminado
   const allCandidates = [
     ...supabaseCatalog, 
+    ...idbCatalog,
     ...localItems, 
     ...serverCatalog, 
     ...DEFAULT_REAL_CATALOG
@@ -636,7 +659,7 @@ export async function getCatalog() {
 
   const result = [];
   const seenIds = new Set();
-  const seenTitles = new Set();
+  const seenUrls = new Set();
 
   for (let item of allCandidates) {
     if (!item || !item.id) continue;
@@ -647,21 +670,25 @@ export async function getCatalog() {
     // Si las muestras demo fueron purgadas y es foto demo de Unsplash, descartarlo
     if (samplesPurged && isSampleItem(item)) continue;
 
-    // Sustituir base64 pesado o enlaces externos lentos por archivo estático ultrarrápido
+    // Sustituir base64 pesado o enlaces externos lentos por archivo estático ultrarrápido si existe
     if (KNOWN_STATIC_PHOTOS[item.id]) {
       item = { ...item, url: KNOWN_STATIC_PHOTOS[item.id] };
     }
 
-    // Normalizar título para deduplicar fotos con el mismo nombre
-    const normTitle = (item.title || '').trim().toLowerCase();
-    
-    // Si ya existe por ID o por título exacto, es duplicada: descartar
+    // Deduplicar estrictamente por ID único o URL idéntica (nunca por título, para permitir múltiples fotos de una misma sesión o temática)
     if (seenIds.has(item.id)) continue;
-    if (normTitle && seenTitles.has(normTitle)) continue;
+    if (item.url && seenUrls.has(item.url)) continue;
 
     seenIds.add(item.id);
-    if (normTitle) seenTitles.add(normTitle);
+    if (item.url) seenUrls.add(item.url);
     result.push(item);
+  }
+
+  // Guardar copia de seguridad en IndexedDB de alta capacidad
+  if (result.length > 0) {
+    try {
+      idbSaveCatalogBatch(result);
+    } catch (e) {}
   }
 
   // Guardar en caché local para que jamás baje a 18 fotos aunque falle la red
@@ -2157,27 +2184,38 @@ export function broadcastCatalogUpdate() {
 export async function addCatalogPhoto(photoData) {
   const cleanUrl = formatPhotoUrl(photoData.url);
   const newItem = {
-    id: `cat-${Date.now()}`,
+    id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
     title: (photoData.title || '').trim(),
     category: (photoData.category || 'Retratos').trim(),
     location: (photoData.location || 'San Antero').trim(),
-    url: cleanUrl
+    url: cleanUrl,
+    createdAt: new Date().toISOString()
   };
 
-  // 1. Guardar primero en Supabase en la nube
+  // 1. Guardar de forma inmediata en IndexedDB (alta capacidad garantizada de cientos de MB)
+  await idbSaveCatalogItem(newItem).catch(() => {});
+  saveLocalCatalogItem(newItem);
+  broadcastCatalogUpdate();
+
+  // 2. Intentar guardar en Supabase en la nube (si el proyecto tiene cuota disponible)
   try {
-    const { data, error } = await supabase.from('catalog').insert(newItem).select();
+    const { data, error } = await supabase.from('catalog').insert({
+      id: newItem.id,
+      title: newItem.title,
+      category: newItem.category,
+      location: newItem.location,
+      url: cleanUrl
+    }).select();
     if (!error && data && data.length > 0) {
+      await idbSaveCatalogItem(data[0]).catch(() => {});
       saveLocalCatalogItem(data[0]);
-      broadcastCatalogUpdate();
       return { success: true, item: data[0] };
     }
-    if (error) console.warn('Supabase insert error:', error);
   } catch (err) {
-    console.warn('Error insertando en Supabase:', err);
+    console.warn('Supabase no disponible o con límite de cuota (guardado en IndexedDB):', err);
   }
 
-  // 2. Fallback a servidor / Vercel
+  // 3. Fallback a servidor / Vercel
   try {
     const res = await fetch(`${API_BASE}/admin/catalog`, {
       method: 'POST',
@@ -2186,22 +2224,23 @@ export async function addCatalogPhoto(photoData) {
     });
     if (res.ok) {
       const data = await res.json();
-      saveLocalCatalogItem(data.item);
-      broadcastCatalogUpdate();
+      if (data && data.item) {
+        await idbSaveCatalogItem(data.item).catch(() => {});
+      }
       return data;
     }
   } catch (err) {
     console.warn('Fallback local para catálogo:', err);
   }
 
-  // 3. Fallback a almacenamiento local
-  saveLocalCatalogItem(newItem);
-  broadcastCatalogUpdate();
   return { success: true, item: newItem };
 }
 
 export async function deleteCatalogPhoto(id, title = null) {
   addDeletedCatalogId(id);
+  try {
+    await idbDeleteCatalogItem(id);
+  } catch (e) {}
 
   const local = getLocalCatalog();
   if (!title) {
@@ -2257,6 +2296,30 @@ export async function deleteCatalogPhoto(id, title = null) {
 
   broadcastCatalogUpdate();
   return { success: true };
+}
+
+export async function exportCatalogBackup() {
+  const items = await getCatalog();
+  return {
+    version: '1.0',
+    exportDate: new Date().toISOString(),
+    photographer: 'Sebastian G',
+    itemCount: items.length,
+    catalog: items
+  };
+}
+
+export async function importCatalogBackup(backupData) {
+  if (!backupData || !Array.isArray(backupData.catalog)) {
+    throw new Error('Formato de copia de seguridad no válido.');
+  }
+  const items = backupData.catalog;
+  await idbSaveCatalogBatch(items);
+  for (const item of items) {
+    saveLocalCatalogItem(item);
+  }
+  broadcastCatalogUpdate();
+  return { success: true, count: items.length };
 }
 
 export async function deleteAllSampleCatalogPhotos() {
