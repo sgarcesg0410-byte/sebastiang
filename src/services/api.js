@@ -217,7 +217,35 @@ function getLocalCatalog() {
   }
 }
 
-function saveLocalCatalogItem(item) {
+export function saveLocalCatalog(items) {
+  if (!Array.isArray(items)) return;
+  // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB)
+  try {
+    idbSaveCatalogBatch(items);
+  } catch (e) {}
+
+  // 2. Guardar en localStorage de forma segura
+  try {
+    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
+    localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
+  } catch (e) {
+    // Si localStorage excede su cuota de 5MB por base64, resguardar versión ligera con metadata
+    try {
+      const lightweight = items.map(it => {
+        if (typeof it.url === 'string' && it.url.startsWith('data:image/') && it.url.length > 30000) {
+          return { ...it, url: it.url.slice(0, 50), isHeavyLocal: true };
+        }
+        return it;
+      });
+      localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(lightweight));
+      localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
+    } catch (err2) {
+      console.warn('localStorage al límite; catálogo resguardado en IndexedDB');
+    }
+  }
+}
+
+export function saveLocalCatalogItem(item) {
   if (!item || !item.id) return;
   // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB)
   try {
@@ -228,13 +256,12 @@ function saveLocalCatalogItem(item) {
   try {
     const items = getLocalCatalog().filter(i => i.id !== item.id);
     items.unshift(item);
-    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
+    saveLocalCatalog(items);
     try {
       const deletedIds = getDeletedCatalogIds().filter(id => id !== item.id);
       localStorage.setItem(LOCAL_DELETED_CATALOG_KEY, JSON.stringify(deletedIds));
     } catch (e) {}
   } catch (e) {
-    // Si localStorage excede su cuota de 5MB, IndexedDB ya tiene el dato a salvo
     console.warn('localStorage al límite; foto persistida exitosamente en IndexedDB:', e);
   }
 }
@@ -717,22 +744,15 @@ export async function getCatalog() {
 
     // Deduplicar estrictamente por ID único o URL idéntica (nunca por título, para permitir múltiples fotos de una misma sesión o temática)
     if (seenIds.has(item.id)) continue;
-    if (item.url && seenUrls.has(item.url)) continue;
+    if (item.url && !item.isHeavyLocal && seenUrls.has(item.url)) continue;
 
     seenIds.add(item.id);
-    if (item.url) seenUrls.add(item.url);
+    if (item.url && !item.isHeavyLocal) seenUrls.add(item.url);
     result.push(item);
   }
 
-  // Guardar copia de seguridad en IndexedDB de alta capacidad
+  // Guardar copia de seguridad garantizada en IndexedDB y localStorage
   if (result.length > 0) {
-    try {
-      idbSaveCatalogBatch(result);
-    } catch (e) {}
-  }
-
-  // Guardar en caché local para que jamás baje a 18 fotos aunque falle la red
-  if (result.length > 18) {
     try {
       saveLocalCatalog(result);
     } catch (e) {}
@@ -2240,7 +2260,7 @@ export function broadcastCatalogUpdate() {
 export async function addCatalogPhoto(photoData) {
   const cleanUrl = formatPhotoUrl(photoData.url);
   const newItem = {
-    id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: photoData.id || `cat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
     title: (photoData.title || '').trim(),
     category: (photoData.category || 'Retratos').trim(),
     location: (photoData.location || 'San Antero').trim(),
@@ -2265,30 +2285,32 @@ export async function addCatalogPhoto(photoData) {
     if (!error && data && data.length > 0) {
       await idbSaveCatalogItem(data[0]).catch(() => {});
       saveLocalCatalogItem(data[0]);
-      return { success: true, item: data[0] };
     }
   } catch (err) {
     console.warn('Supabase no disponible o con límite de cuota (guardado en IndexedDB):', err);
   }
 
-  // 3. Fallback a servidor / Vercel
+  // 3. Fallback a servidor / Vercel con el ID exacto del cliente
   try {
     const res = await fetch(`${API_BASE}/admin/catalog`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...photoData, url: cleanUrl })
+      body: JSON.stringify(newItem)
     });
     if (res.ok) {
       const data = await res.json();
       if (data && data.item) {
         await idbSaveCatalogItem(data.item).catch(() => {});
+        saveLocalCatalogItem(data.item);
+        broadcastCatalogUpdate();
+        return data;
       }
-      return data;
     }
   } catch (err) {
     console.warn('Fallback local para catálogo:', err);
   }
 
+  broadcastCatalogUpdate();
   return { success: true, item: newItem };
 }
 

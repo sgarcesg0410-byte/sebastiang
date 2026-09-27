@@ -10,6 +10,10 @@ const SESSIONS_STORE = 'sessions';
 
 let dbPromise = null;
 
+export function resetIDBConnection() {
+  dbPromise = null;
+}
+
 function getDB() {
   if (typeof window === 'undefined' || !window.indexedDB) {
     return Promise.reject(new Error('IndexedDB no está disponible en este entorno.'));
@@ -27,7 +31,20 @@ function getDB() {
             db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' });
           }
         };
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = (e) => {
+          const db = e.target.result;
+          db.onclose = () => {
+            dbPromise = null;
+          };
+          db.onversionchange = () => {
+            try { db.close(); } catch (err) {}
+            dbPromise = null;
+          };
+          db.onerror = () => {
+            dbPromise = null;
+          };
+          resolve(db);
+        };
         req.onerror = () => {
           dbPromise = null;
           reject(req.error);
@@ -41,17 +58,32 @@ function getDB() {
   return dbPromise;
 }
 
-export async function idbGetCatalog() {
+async function withDB(op) {
   try {
     const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(CATALOG_STORE, 'readonly');
-      const store = tx.objectStore(CATALOG_STORE);
-      const req = store.getAll();
-      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
-      req.onerror = () => resolve([]);
+    return await op(db);
+  } catch (err) {
+    // Si la conexión fue cerrada por el sistema operativo o WebView, reconectar de inmediato y reintentar
+    console.warn('Conexión IDB reseteada tras error, reintentando operación:', err);
+    dbPromise = null;
+    const freshDb = await getDB();
+    return await op(freshDb);
+  }
+}
+
+export async function idbGetCatalog() {
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(CATALOG_STORE, 'readonly');
+        const store = tx.objectStore(CATALOG_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+        req.onerror = () => resolve([]);
+      });
     });
   } catch (e) {
+    console.warn('Error al leer catálogo de IndexedDB:', e);
     return [];
   }
 }
@@ -59,15 +91,17 @@ export async function idbGetCatalog() {
 export async function idbSaveCatalogItem(item) {
   if (!item || !item.id) return false;
   try {
-    const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(CATALOG_STORE, 'readwrite');
-      const store = tx.objectStore(CATALOG_STORE);
-      store.put(item);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(CATALOG_STORE, 'readwrite');
+        const store = tx.objectStore(CATALOG_STORE);
+        store.put(item);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
     });
   } catch (e) {
+    console.warn('Error al guardar foto en IndexedDB:', e);
     return false;
   }
 }
@@ -75,17 +109,19 @@ export async function idbSaveCatalogItem(item) {
 export async function idbSaveCatalogBatch(items) {
   if (!Array.isArray(items) || items.length === 0) return false;
   try {
-    const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(CATALOG_STORE, 'readwrite');
-      const store = tx.objectStore(CATALOG_STORE);
-      for (const item of items) {
-        if (item && item.id) store.put(item);
-      }
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(CATALOG_STORE, 'readwrite');
+        const store = tx.objectStore(CATALOG_STORE);
+        for (const item of items) {
+          if (item && item.id) store.put(item);
+        }
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
     });
   } catch (e) {
+    console.warn('Error al guardar lote en IndexedDB:', e);
     return false;
   }
 }
@@ -93,30 +129,34 @@ export async function idbSaveCatalogBatch(items) {
 export async function idbDeleteCatalogItem(id) {
   if (!id) return false;
   try {
-    const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(CATALOG_STORE, 'readwrite');
-      const store = tx.objectStore(CATALOG_STORE);
-      store.delete(id);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(CATALOG_STORE, 'readwrite');
+        const store = tx.objectStore(CATALOG_STORE);
+        store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
     });
   } catch (e) {
+    console.warn('Error al eliminar foto de IndexedDB:', e);
     return false;
   }
 }
 
 export async function idbGetSessions() {
   try {
-    const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(SESSIONS_STORE, 'readonly');
-      const store = tx.objectStore(SESSIONS_STORE);
-      const req = store.getAll();
-      req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
-      req.onerror = () => resolve([]);
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(SESSIONS_STORE, 'readonly');
+        const store = tx.objectStore(SESSIONS_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+        req.onerror = () => resolve([]);
+      });
     });
   } catch (e) {
+    console.warn('Error al leer sesiones de IndexedDB:', e);
     return [];
   }
 }
@@ -124,15 +164,17 @@ export async function idbGetSessions() {
 export async function idbSaveSession(session) {
   if (!session || !session.id) return false;
   try {
-    const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(SESSIONS_STORE, 'readwrite');
-      const store = tx.objectStore(SESSIONS_STORE);
-      store.put(session);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(SESSIONS_STORE, 'readwrite');
+        const store = tx.objectStore(SESSIONS_STORE);
+        store.put(session);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
     });
   } catch (e) {
+    console.warn('Error al guardar sesión en IndexedDB:', e);
     return false;
   }
 }
@@ -140,15 +182,17 @@ export async function idbSaveSession(session) {
 export async function idbDeleteSession(id) {
   if (!id) return false;
   try {
-    const db = await getDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(SESSIONS_STORE, 'readwrite');
-      const store = tx.objectStore(SESSIONS_STORE);
-      store.delete(id);
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        const tx = db.transaction(SESSIONS_STORE, 'readwrite');
+        const store = tx.objectStore(SESSIONS_STORE);
+        store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
     });
   } catch (e) {
+    console.warn('Error al eliminar sesión de IndexedDB:', e);
     return false;
   }
 }

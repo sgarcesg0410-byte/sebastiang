@@ -435,19 +435,21 @@ app.post('/api/admin/settings', (req, res) => {
 
 // --- GESTIÓN DE CATÁLOGO (FOTOS PÚBLICAS) ---
 app.post('/api/admin/catalog', (req, res) => {
-  const { title, category, url, location } = req.body;
+  const { id, title, category, url, location } = req.body;
   if (!title || !url) {
     return res.status(400).json({ error: 'Faltan título o imagen de la foto.' });
   }
   const db = readDB();
   const newItem = {
-    id: `cat-${Date.now()}`,
+    id: id || `cat-${Date.now()}`,
     title: title.trim(),
     category: (category || 'Retratos').trim(),
     url: url.trim(),
-    location: (location || 'San Antero').trim()
+    location: (location || 'San Antero').trim(),
+    createdAt: new Date().toISOString()
   };
   if (!db.catalog) db.catalog = [];
+  db.catalog = db.catalog.filter(c => c.id !== newItem.id && c.url !== newItem.url);
   db.catalog.unshift(newItem);
   writeDB(db);
   res.status(201).json({ success: true, item: newItem });
