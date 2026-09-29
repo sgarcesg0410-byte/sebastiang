@@ -211,7 +211,15 @@ function getLocalCatalog() {
   try {
     const raw = localStorage.getItem(LOCAL_CATALOG_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Filtrar entradas corruptas o truncadas previamente (< 200 caracteres de base64)
+    return parsed.filter(item => {
+      if (!item || !item.id) return false;
+      if (typeof item.url === 'string' && item.url.startsWith('data:image/') && item.url.length < 200) {
+        return false;
+      }
+      return true;
+    });
   } catch (e) {
     return [];
   }
@@ -219,25 +227,21 @@ function getLocalCatalog() {
 
 export function saveLocalCatalog(items) {
   if (!Array.isArray(items)) return;
-  // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB)
+  // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB y sin truncar nada)
   try {
     idbSaveCatalogBatch(items);
   } catch (e) {}
 
-  // 2. Guardar en localStorage de forma segura
+  // 2. Guardar en localStorage de forma segura (sin truncar jamás las URLs)
   try {
     localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
     localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
   } catch (e) {
-    // Si localStorage excede su cuota de 5MB por base64, resguardar versión ligera con metadata
+    // Si excede los 5MB de cuota de localStorage, guardar solo las fotos con URL estática
+    // y NUNCA truncar las fotos base64 (IndexedDB las tiene completas en alta calidad)
     try {
-      const lightweight = items.map(it => {
-        if (typeof it.url === 'string' && it.url.startsWith('data:image/') && it.url.length > 30000) {
-          return { ...it, url: it.url.slice(0, 50), isHeavyLocal: true };
-        }
-        return it;
-      });
-      localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(lightweight));
+      const safeItems = items.filter(it => !it.url || !it.url.startsWith('data:image/'));
+      localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(safeItems));
       localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
     } catch (err2) {
       console.warn('localStorage al límite; catálogo resguardado en IndexedDB');
@@ -512,7 +516,16 @@ function getLocalBookings() {
   }
 }
 
-function saveLocalBooking(booking) {
+export function getDeletedBookingIds() {
+  try {
+    const raw = localStorage.getItem('sebastian_g_deleted_bookings');
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function saveLocalBooking(booking) {
   try {
     const bookings = getLocalBookings().filter(b => b.id !== booking.id && b.clientName !== 'Camila Rodríguez');
     bookings.unshift(booking);
@@ -715,10 +728,11 @@ export async function getCatalog() {
   const samplesPurged = localStorage.getItem(LOCAL_SAMPLES_PURGED_KEY) === 'true';
 
   // Fuentes combinadas y deduplicadas inteligentemente:
-  // Supabase -> IndexedDB -> LocalStorage -> Servidor -> Catálogo base predeterminado
+  // 1. IndexedDB de primero (contiene las fotos reales de alta fidelidad sin truncar)
+  // 2. Supabase -> LocalStorage -> Servidor -> Catálogo base predeterminado
   const allCandidates = [
-    ...supabaseCatalog, 
     ...idbCatalog,
+    ...supabaseCatalog, 
     ...localItems, 
     ...serverCatalog, 
     ...DEFAULT_REAL_CATALOG
@@ -737,17 +751,27 @@ export async function getCatalog() {
     // Si las muestras demo fueron purgadas y es foto demo de Unsplash, descartarlo
     if (samplesPurged && isSampleItem(item)) continue;
 
+    // Si la foto tiene una URL base64 truncada o corrupta (< 200 caracteres), buscar si IndexedDB tiene la versión completa
+    if (typeof item.url === 'string' && item.url.startsWith('data:image/') && item.url.length < 200) {
+      const full = idbCatalog.find(c => c.id === item.id && c.url && c.url.length > 200);
+      if (full) {
+        item = { ...item, url: full.url };
+      } else {
+        continue; // Descartar entrada corrupta para que jamás se pinte un cuadro negro
+      }
+    }
+
     // Sustituir base64 pesado o enlaces externos lentos por archivo estático ultrarrápido si existe
     if (KNOWN_STATIC_PHOTOS[item.id]) {
       item = { ...item, url: KNOWN_STATIC_PHOTOS[item.id] };
     }
 
-    // Deduplicar estrictamente por ID único o URL idéntica (nunca por título, para permitir múltiples fotos de una misma sesión o temática)
+    // Deduplicar estrictamente por ID único o URL idéntica
     if (seenIds.has(item.id)) continue;
-    if (item.url && !item.isHeavyLocal && seenUrls.has(item.url)) continue;
+    if (item.url && seenUrls.has(item.url)) continue;
 
     seenIds.add(item.id);
-    if (item.url && !item.isHeavyLocal) seenUrls.add(item.url);
+    if (item.url) seenUrls.add(item.url);
     result.push(item);
   }
 
@@ -1388,14 +1412,16 @@ export async function getAdminBookings() {
     }
   } catch (e) {}
 
-  // Respaldar inmediatamente en la caché local del dispositivo para que nunca desaparezcan
-  if (cloudBookings.length > 0) {
+  // Respaldar inmediatamente TODAS las reservas recibidas (tanto de nube como de servidor) en la caché local
+  if (cloudBookings.length > 0 || serverBookings.length > 0) {
     try {
       const currentLocal = getLocalBookings();
       const localMap = new Map();
       currentLocal.forEach(b => { if (b?.id) localMap.set(b.id, b); });
+      serverBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
       cloudBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
-      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(Array.from(localMap.values())));
+      const savedList = Array.from(localMap.values()).filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id));
+      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(savedList));
     } catch (e) {}
   }
 
@@ -1469,12 +1495,19 @@ export async function updateAdminBooking(id, updates) {
     console.warn('Error al actualizar reserva en servidor, guardando localmente:', err);
   }
 
-  const list = getLocalBookings().map(b => b.id === id ? { ...b, ...updates } : b);
+  const list = getLocalBookings();
+  const idx = list.findIndex(b => b.id === id);
+  let updatedBooking;
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], ...updates };
+    updatedBooking = list[idx];
+  } else {
+    updatedBooking = { id, ...updates };
+    list.unshift(updatedBooking);
+  }
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
   } catch (e) {}
-
-  const updatedBooking = list.find(b => b.id === id);
 
   // Sincronizar actualización de reserva en la nube (Supabase)
   if (updatedBooking) {
@@ -2376,6 +2409,73 @@ export async function importCatalogBackup(backupData) {
   }
   broadcastCatalogUpdate();
   return { success: true, count: items.length };
+}
+
+export async function exportFullSystemBackup() {
+  const catalog = await getCatalog();
+  const bookings = getLocalBookings();
+  const packages = getLocalPackages() || DEFAULT_PACKAGES;
+  const settings = getLocalSettings() || DEFAULT_SETTINGS;
+  const payments = getLocalPayments();
+  const reviews = getLocalReviews();
+  return {
+    version: '2.0',
+    exportDate: new Date().toISOString(),
+    photographer: 'Sebastian G',
+    stats: {
+      catalogCount: catalog.length,
+      bookingsCount: bookings.length,
+      packagesCount: packages.length
+    },
+    catalog,
+    bookings,
+    packages,
+    settings,
+    payments,
+    reviews
+  };
+}
+
+export async function importFullSystemBackup(backupData) {
+  if (!backupData || typeof backupData !== 'object') {
+    throw new Error('Formato de copia de seguridad no válido.');
+  }
+
+  let catalogCount = 0;
+  let bookingsCount = 0;
+
+  // 1. Restaurar fotos de catálogo
+  if (Array.isArray(backupData.catalog) && backupData.catalog.length > 0) {
+    await idbSaveCatalogBatch(backupData.catalog);
+    for (const item of backupData.catalog) {
+      saveLocalCatalogItem(item);
+    }
+    catalogCount = backupData.catalog.length;
+    broadcastCatalogUpdate();
+  }
+
+  // 2. Restaurar reservas
+  if (Array.isArray(backupData.bookings) && backupData.bookings.length > 0) {
+    const existing = getLocalBookings();
+    const map = new Map();
+    existing.forEach(b => { if (b?.id) map.set(b.id, b); });
+    backupData.bookings.forEach(b => { if (b?.id) map.set(b.id, b); });
+    const mergedBookings = Array.from(map.values());
+    localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(mergedBookings));
+    bookingsCount = mergedBookings.length;
+  }
+
+  // 3. Restaurar paquetes
+  if (Array.isArray(backupData.packages) && backupData.packages.length > 0) {
+    localStorage.setItem(LOCAL_PACKAGES_KEY, JSON.stringify(backupData.packages));
+  }
+
+  // 4. Restaurar configuraciones
+  if (backupData.settings && typeof backupData.settings === 'object') {
+    localStorage.setItem(LOCAL_SETTINGS_KEY, JSON.stringify(backupData.settings));
+  }
+
+  return { success: true, catalogCount, bookingsCount };
 }
 
 export async function deleteAllSampleCatalogPhotos() {
