@@ -1,7 +1,7 @@
 // Servicio Oficial de OneSignal para Notificaciones Push en Tiempo Real 24/7
 // Funciona en Android APK, PWA y Navegadores incluso con la App totalmente cerrada.
 
-const ONESIGNAL_APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID || 'd168e37d-5a9e-4e4b-97c1-0c5a1a1f59c2';
+const ONESIGNAL_APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
 
 let oneSignalInitialized = false;
 
