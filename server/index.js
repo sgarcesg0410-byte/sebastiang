@@ -14,6 +14,52 @@ const DB_PATH = path.join(__dirname, 'data', 'db.json');
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// --- CONFIGURACIÓN Y CLIENTE ONESIGNAL PUSH 24/7 ---
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
+const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || 
+  Buffer.from('b3NfdjJfYXBwX3hycm13YWV4cWpmaTVpMmU1ZGhxZ2dyYmRsYmZiaDIybG50ZWZxbnZlbDQyaHdqaGRqMnNmZ2J3cXBlamZtcHlld243bmlzNXBzZmdkbW54NTJ5eTV5a2twYmtuMmF5cnZvc21pZmE=', 'base64').toString('utf-8');
+
+async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
+  if (!ONESIGNAL_REST_API_KEY || !ONESIGNAL_APP_ID) return null;
+  try {
+    const payload = JSON.stringify({
+      app_id: ONESIGNAL_APP_ID,
+      included_segments: ['Total Subscriptions', 'Subscribed Users'],
+      headings: { es: title, en: title },
+      contents: { es: message, en: message },
+      url: url,
+      priority: 10,
+      data
+    });
+
+    const response = await fetch('https://onesignal.com/api/v1/notifications', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`
+      },
+      body: payload
+    });
+
+    const resJson = await response.json();
+    console.log('OneSignal Push enviado:', resJson);
+    return resJson;
+  } catch (err) {
+    console.warn('Error al disparar OneSignal Push:', err);
+    return null;
+  }
+}
+
+// Endpoint dedicado para enviar notificaciones Push desde cualquier parte del sistema
+app.post('/api/send-push', async (req, res) => {
+  const { title, message, url, data } = req.body || {};
+  if (!title || !message) {
+    return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
+  }
+  const result = await sendOneSignalPush({ title, message, url, data });
+  res.json({ success: true, result });
+});
+
 // Helper para leer base de datos
 function readDB() {
   try {
@@ -129,6 +175,14 @@ app.post('/api/bookings', (req, res) => {
 
   db.bookings.unshift(newBooking);
   writeDB(db);
+
+  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
+  sendOneSignalPush({
+    title: '📸 ¡Nueva Reserva Recibida!',
+    message: `${newBooking.clientName} ha reservado ${newBooking.packageName} (${newBooking.dateTime})`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'booking', bookingId: newBooking.id }
+  }).catch(err => console.error('Error OneSignal Push reserva:', err));
 
   // Generar link de WhatsApp directo hacia el fotógrafo con el resumen
   const photogWhatsApp1 = (db.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');

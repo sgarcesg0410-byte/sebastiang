@@ -57,11 +57,31 @@ export async function isOneSignalSubscribed() {
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async function(OneSignal) {
       try {
-        const optedIn = OneSignal.User.PushSubscription.optedIn;
+        const optedIn = OneSignal.User.PushSubscription?.optedIn;
         resolve(!!optedIn);
       } catch (e) {
         resolve(false);
       }
     });
   });
+}
+
+export async function sendTestPushNotification() {
+  try {
+    const res = await fetch('/api/send-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: '🔔 ¡Prueba OneSignal Exitosa!',
+        message: 'Las notificaciones push 24/7 en segundo plano están activas en Sebastián G.',
+        url: 'https://sebastiang.app/?mode=admin',
+        data: { type: 'test' }
+      })
+    });
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.error('Error enviando push de prueba:', err);
+    return { success: false, error: err.message };
+  }
 }
