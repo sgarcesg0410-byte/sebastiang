@@ -893,6 +893,25 @@ export async function createBooking(data) {
       location: newBooking.specificLocation || '',
       url: JSON.stringify(newBooking)
     });
+
+    try {
+      await supabase.from('bookings').upsert({
+        id: supaId,
+        client_name: newBooking.clientName || 'Cliente',
+        client_whatsapp: newBooking.clientWhatsApp || '',
+        client_email: newBooking.clientEmail || '',
+        package_id: newBooking.packageId || 'pkg-4fotos',
+        package_name: newBooking.packageName || 'Sesión Fotográfica',
+        total_price: Number(newBooking.totalPrice || 0),
+        location_type: newBooking.locationType || 'san_antero',
+        specific_location: newBooking.specificLocation || '',
+        date_time: newBooking.dateTime || '',
+        description: newBooking.description || '',
+        status: newBooking.status || 'pending'
+      });
+    } catch (tblErr) {
+      console.warn('Sync en tabla bookings:', tblErr);
+    }
     console.log('✓ Reserva guardada y sincronizada en Supabase con éxito:', newBooking.clientName);
   } catch (supaErr) {
     console.error('Error sincronizando reserva con Supabase:', supaErr);
@@ -1412,14 +1431,40 @@ export async function getAdminBookings() {
     }
   } catch (e) {}
 
+  let directBookings = [];
+  try {
+    const { data: supaBookings } = await supabase
+      .from('bookings')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (Array.isArray(supaBookings)) {
+      directBookings = supaBookings.map(b => ({
+        id: b.id,
+        clientName: b.client_name,
+        clientWhatsApp: b.client_whatsapp,
+        clientEmail: b.client_email,
+        packageId: b.package_id,
+        packageName: b.package_name,
+        totalPrice: Number(b.total_price || 0),
+        locationType: b.location_type,
+        specificLocation: b.specific_location,
+        dateTime: b.date_time,
+        description: b.description,
+        status: b.status,
+        createdAt: b.created_at
+      }));
+    }
+  } catch (e) {}
+
   // Respaldar inmediatamente TODAS las reservas recibidas (tanto de nube como de servidor) en la caché local
-  if (cloudBookings.length > 0 || serverBookings.length > 0) {
+  if (cloudBookings.length > 0 || serverBookings.length > 0 || directBookings.length > 0) {
     try {
       const currentLocal = getLocalBookings();
       const localMap = new Map();
       currentLocal.forEach(b => { if (b?.id) localMap.set(b.id, b); });
       serverBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
       cloudBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
+      directBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
       const savedList = Array.from(localMap.values()).filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id));
       localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(savedList));
     } catch (e) {}
@@ -1434,7 +1479,7 @@ export async function getAdminBookings() {
 
   const localBookings = getLocalBookings();
   const map = new Map();
-  [...localBookings, ...serverBookings, ...cloudBookings].forEach(b => {
+  [...localBookings, ...serverBookings, ...cloudBookings, ...directBookings].forEach(b => {
     if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       map.set(b.id, b);
     }
@@ -1520,6 +1565,16 @@ export async function updateAdminBooking(id, updates) {
         location: updatedBooking.specificLocation || '',
         url: JSON.stringify(updatedBooking)
       });
+      try {
+        await supabase.from('bookings').update({
+          status: updatedBooking.status || 'pending',
+          client_name: updatedBooking.clientName,
+          client_whatsapp: updatedBooking.clientWhatsApp,
+          total_price: Number(updatedBooking.totalPrice || 0),
+          date_time: updatedBooking.dateTime,
+          specific_location: updatedBooking.specificLocation
+        }).eq('id', supaId);
+      } catch (tblErr) {}
     } catch (e) {}
   }
 

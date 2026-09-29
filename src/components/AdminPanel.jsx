@@ -504,8 +504,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   // Modal y confirmación de reserva por WhatsApp al cliente
   const [confirmingBooking, setConfirmingBooking] = useState(null);
+  const [confirmWhatsAppLine, setConfirmWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
+  const [confirmPhone, setConfirmPhone] = useState('');
   const [confirmNote, setConfirmNote] = useState('');
   const [confirmSuccessMsg, setConfirmSuccessMsg] = useState('');
+  const [confirmCopied, setConfirmCopied] = useState(false);
   const [isConfirmingBookingStatus, setIsConfirmingBookingStatus] = useState(false);
   const [confirmAutoRegisterPayment, setConfirmAutoRegisterPayment] = useState(true);
   const [confirmPaymentType, setConfirmPaymentType] = useState('deposit'); // 'deposit' (50%) | 'total' (100%)
@@ -1300,19 +1303,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '') => {
-    if (!b) return '#';
-    let cleanPhone = (b.clientWhatsApp || '').replace(/\D/g, '');
-    if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
-      cleanPhone = '57' + cleanPhone;
-    }
+  const getBookingConfirmationPlainText = (b, customNotes = '', chosenLine = 'line1') => {
+    if (!b) return '';
     const rawName = (b.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
     const isOutside = b.locationType === 'outside_san_antero' || b.locationType === 'outside';
     const loc = b.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero');
+    const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
 
-    const text = encodeURIComponent(
+    return (
       `📸 *¡Hola ${formattedFirstName}! Te saluda Sebastian G.* ✨\n\n` +
       `¡Excelente noticia! Te confirmo con mucho gusto tu *Sesión Fotográfica Profesional* para el día que reservaste:\n\n` +
       `🗓️ *Fecha y Hora:* ${formatDateTime12Hour(b.dateTime)}\n` +
@@ -1324,46 +1324,56 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `💡 *Recomendaciones para el día de tu sesión:*\n` +
       `• Te sugiero llegar con 10 o 15 minutos de anticipación.\n` +
       `• Trae tus cambios de vestuario y la mejor energía para tus fotos.\n\n` +
-      `¡Será un verdadero placer capturar tus mejores momentos frente al lente! Si tienes cualquier inquietud sobre vestuarios, poses o detalles, puedes responderme directamente por aquí. 📸`
+      `¡Será un verdadero placer capturar tus mejores momentos frente al lente! Si tienes cualquier inquietud sobre vestuarios, poses o detalles, puedes responderme directamente a este WhatsApp (+57 ${myPhone}). 📸`
     );
+  };
 
+  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '', targetPhone = null, chosenLine = 'line1') => {
+    if (!b) return '#';
+    let cleanPhone = (targetPhone || b.clientWhatsApp || '').replace(/\D/g, '');
+    if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
+      cleanPhone = '57' + cleanPhone;
+    }
+    const text = encodeURIComponent(getBookingConfirmationPlainText(b, customNotes, chosenLine));
     return `https://wa.me/${cleanPhone}?text=${text}`;
   };
 
   const handleOpenConfirmBookingModal = (booking) => {
     setConfirmingBooking(booking);
+    setConfirmPhone(booking?.clientWhatsApp || '');
     setConfirmNote('');
     setConfirmSuccessMsg('');
+    setConfirmCopied(false);
+    setConfirmWhatsAppLine('line1');
     setConfirmAutoRegisterPayment(true);
     setConfirmPaymentType('deposit');
     setConfirmPaymentMethod('nequi');
   };
 
-  const handleSendBookingConfirmation = async (e) => {
-    if (e) e.preventDefault();
+  const handleSendBookingConfirmation = async (chosenLine = confirmWhatsAppLine) => {
     if (!confirmingBooking) return;
     setIsConfirmingBookingStatus(true);
     try {
+      const activePhone = (confirmPhone || '').trim() || confirmingBooking.clientWhatsApp;
       // 1. Asegurar que el estado quede como 'confirmed' en Supabase y localmente
-      if (confirmingBooking.status !== 'confirmed') {
-        await updateBookingStatus(confirmingBooking.id, 'confirmed');
-        const updatedObj = { ...confirmingBooking, status: 'confirmed' };
-        saveLocalBooking(updatedObj);
-        setBookings(prev => {
-          const list = prev || [];
-          const exists = list.some(b => b.id === confirmingBooking.id);
-          if (exists) {
-            return list.map(b => b.id === confirmingBooking.id ? updatedObj : b);
-          }
-          return [updatedObj, ...list];
-        });
-      }
+      const updatedObj = { ...confirmingBooking, status: 'confirmed', clientWhatsApp: activePhone };
+      await updateAdminBooking(confirmingBooking.id, updatedObj);
+      saveLocalBooking(updatedObj);
+      setBookings(prev => {
+        const list = prev || [];
+        const exists = list.some(b => b.id === confirmingBooking.id);
+        if (exists) {
+          return list.map(b => b.id === confirmingBooking.id ? updatedObj : b);
+        }
+        return [updatedObj, ...list];
+      });
+
       // 2. Si el cliente suministró correo, enviar comprobante formal por email
       if (confirmingBooking.clientEmail && confirmingBooking.clientEmail.includes('@')) {
         sendEmailNotification({
           type: 'booking_confirmation',
           data: {
-            booking: confirmingBooking,
+            booking: updatedObj,
             customNotes: confirmNote
           }
         }).catch(err => console.error('Error enviando correo de confirmación:', err));
@@ -1378,7 +1388,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         try {
           const resPay = await createPayment({
             clientName: confirmingBooking.clientName,
-            clientWhatsApp: confirmingBooking.clientWhatsApp,
+            clientWhatsApp: activePhone,
             sessionToken: String(confirmingBooking.id),
             packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
             amount: amountToCredit,
@@ -1395,28 +1405,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         }
       }
 
-      // 4. Generar URL de WhatsApp y abrirla
-      const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote);
+      // 4. Generar URL de WhatsApp y abrir en nueva pestaña sin sacarlo del panel
+      const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote, activePhone, chosenLine);
       setConfirmSuccessMsg(
         confirmingBooking.clientEmail
-          ? `✓ ¡Reserva confirmada y saldo acreditado! Correo enviado a ${confirmingBooking.clientEmail} y abriendo WhatsApp...`
-          : `✓ ¡Reserva confirmada y saldo acreditado! Abriendo WhatsApp para enviar mensaje a ${confirmingBooking.clientName}...`
+          ? `✓ ¡Reserva confirmada! Abriendo WhatsApp con ${chosenLine === 'line2' ? 'Línea 2 (302)' : 'Línea 1 (324)'}...`
+          : `✓ ¡Reserva confirmada! Abriendo WhatsApp con ${chosenLine === 'line2' ? 'Línea 2 (302)' : 'Línea 1 (324)'}...`
       );
 
-      const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-      if (isMobile) {
+      const win = window.open(url, '_blank');
+      if (!win || win.closed || typeof win.closed === 'undefined') {
         window.location.href = url;
-      } else {
-        const win = window.open(url, '_blank');
-        if (!win || win.closed || typeof win.closed === 'undefined') {
-          window.location.href = url;
-        }
       }
 
       setTimeout(() => {
         setConfirmingBooking(null);
         setConfirmSuccessMsg('');
-      }, 3500);
+      }, 2500);
     } catch (err) {
       alert('Error al confirmar reserva: ' + err.message);
     } finally {
@@ -6954,7 +6959,66 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             )}
 
-            <form onSubmit={handleSendBookingConfirmation} className="space-y-4">
+            <form onSubmit={(e) => { e.preventDefault(); handleSendBookingConfirmation(confirmWhatsAppLine); }} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-300 mb-1.5 uppercase tracking-wider">
+                  Número de WhatsApp del cliente para enviar confirmación:
+                </label>
+                <input
+                  type="tel"
+                  value={confirmPhone}
+                  onChange={(e) => setConfirmPhone(e.target.value)}
+                  placeholder="+57 300 000 0000"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-stone-500 font-mono focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              {/* Selector de Línea de WhatsApp para enviar */}
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                    Elige desde cuál de tus líneas de WhatsApp enviar:
+                  </span>
+                  <span className="text-[10px] text-stone-400 font-medium">
+                    {confirmWhatsAppLine === 'line1' ? 'Línea 1 Seleccionada' : 'Línea 2 Seleccionada'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmWhatsAppLine('line1')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
+                      confirmWhatsAppLine === 'line1'
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
+                        : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-[10px] text-stone-400">Línea 1 (Principal)</div>
+                      <div className="font-mono text-xs text-white">324 472 5167</div>
+                    </div>
+                    {confirmWhatsAppLine === 'line1' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setConfirmWhatsAppLine('line2')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
+                      confirmWhatsAppLine === 'line2'
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
+                        : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
+                    }`}
+                  >
+                    <div>
+                      <div className="text-[10px] text-stone-400">Línea 2 (Secundaria)</div>
+                      <div className="font-mono text-xs text-white">302 369 6513</div>
+                    </div>
+                    {confirmWhatsAppLine === 'line2' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-stone-300 mb-1.5 uppercase tracking-wider">
                   Nota o indicación especial para el cliente (opcional):
@@ -7041,24 +7105,53 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 )}
               </div>
 
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={isConfirmingBookingStatus}
-                  className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all active:scale-95 disabled:opacity-50"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>
-                    {isConfirmingBookingStatus ? 'Confirmando...' : '🚀 Enviar Confirmación por WhatsApp'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingBooking(null)}
-                  className="px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold"
-                >
-                  Cancelar
-                </button>
+              {/* Botones de acción directos por línea y copiar */}
+              <div className="space-y-2 pt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isConfirmingBookingStatus}
+                    onClick={() => handleSendBookingConfirmation('line1')}
+                    className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <MessageCircle className="w-4 h-4 shrink-0" />
+                    <span>📲 Enviar vía Línea 1 (324...)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isConfirmingBookingStatus}
+                    onClick={() => handleSendBookingConfirmation('line2')}
+                    className="py-3 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <MessageCircle className="w-4 h-4 shrink-0" />
+                    <span>📲 Enviar vía Línea 2 (302...)</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = getBookingConfirmationPlainText(confirmingBooking, confirmNote, confirmWhatsAppLine);
+                      navigator.clipboard?.writeText(text);
+                      setConfirmCopied(true);
+                      setTimeout(() => setConfirmCopied(false), 3000);
+                    }}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs flex items-center justify-center gap-2 transition-all"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>{confirmCopied ? '✓ Mensaje Copiado' : '📋 Copiar Mensaje Completo'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingBooking(null)}
+                    className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white text-xs font-semibold"
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
             </form>
           </div>
