@@ -97,14 +97,22 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           )}
         </nav>
 
-        {/* Acciones Móviles: Menú Limpio */}
+        {/* Acciones Móviles: Botón Reservar + Menú */}
         <div className="flex md:hidden items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenBooking}
+            className="px-3.5 py-1.5 bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-xs rounded-xl shadow-md shadow-amber-500/25 active:scale-95 transition-all flex items-center gap-1 border border-amber-300/40 cursor-pointer"
+          >
+            <span>Reservar</span>
+          </button>
+
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 text-stone-300 hover:text-white rounded-xl bg-stone-900 border border-stone-800"
             aria-label="Abrir menú"
           >
-            {mobileMenuOpen ? <X className="w-6 h-6 text-amber-400" /> : <Menu className="w-6 h-6 text-stone-200" />}
+            {mobileMenuOpen ? <X className="w-5 h-5 text-amber-400" /> : <Menu className="w-5 h-5 text-stone-200" />}
           </button>
         </div>
       </div>
@@ -112,6 +120,13 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
       {/* Menú Desplegable Móvil */}
       {mobileMenuOpen && (
         <div className="md:hidden bg-stone-900 border-b border-stone-800 px-5 py-6 space-y-4">
+          <button
+            onClick={() => { setMobileMenuOpen(false); onOpenBooking(); }}
+            className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-stone-950 font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 mb-3"
+          >
+            <span>📸 Agendar Sesión de Fotos</span>
+          </button>
+
           <button
             onClick={() => navigateTo('home')}
             className="block w-full text-left py-2 text-stone-200 font-medium text-base hover:text-amber-400"

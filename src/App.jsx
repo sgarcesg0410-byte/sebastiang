@@ -23,6 +23,7 @@ function ModuleLoader({ message = "Cargando módulo..." }) {
 import AboutSection from './components/AboutSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
+import MobileStickyBookingBar from './components/MobileStickyBookingBar';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds } from './services/api';
 import { trackPageVisit } from './services/analytics';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
@@ -363,6 +364,12 @@ export default function App() {
         preselectedPackage={selectedPackageForBooking}
         preselectedPhoto={selectedPhotoForBooking}
         settings={settings}
+      />
+
+      {/* BARRA FLOTANTE FIJA DE RESERVA PARA CELULARES */}
+      <MobileStickyBookingBar
+        currentView={currentView}
+        onOpenBooking={() => handleOpenBooking(null)}
       />
 
       {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD Y DEL RECIBO) */}
