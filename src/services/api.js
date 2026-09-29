@@ -333,6 +333,36 @@ export const REAL_DEFAULT_BOOKINGS = [
     createdAt: "2026-09-19T10:00:00.000Z",
     status: "confirmed",
     isReal: true
+  },
+  {
+    id: "book-1790280190756",
+    clientName: "Marlin torres",
+    clientWhatsApp: "+57 313 666 7262",
+    packageId: "pkg-6fotos",
+    packageName: "6 Fotos Digitales",
+    totalPrice: 75000,
+    locationType: "outside_san_antero",
+    specificLocation: "Locación Especial / Fuera",
+    dateTime: "03/10/2026 a las 3:10 p. m.",
+    description: "Primer mes bebé",
+    createdAt: "2026-09-24T20:03:10.756Z",
+    status: "confirmed",
+    isReal: true
+  },
+  {
+    id: "book-laura-vanesa-maza-1790651249486",
+    clientName: "Laura Vanesa Maza de Hoyos",
+    clientWhatsApp: "+57 313 597 5323",
+    packageId: "pkg-4fotos",
+    packageName: "4 Fotos Digitales",
+    totalPrice: 45000,
+    locationType: "san_antero",
+    specificLocation: "Jose Antonio Galán",
+    dateTime: "29/11/2026 a las 4:00 p. m.",
+    description: "Grado",
+    createdAt: "2026-09-29T03:07:32.000Z",
+    status: "confirmed",
+    isReal: true
   }
 ];
 
@@ -480,37 +510,24 @@ function getLocalBookings() {
     // Filtrar cualquier reserva de muestra o demo que haya quedado guardada
     list = (Array.isArray(list) ? list : []).filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
     
-    // Asegurar que Jennifer Vásquez esté siempre presente con sus datos reales del 30 de septiembre
-    let found = false;
-    list = list.map(b => {
-      if (b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez') {
-        found = true;
-        return {
-          ...b,
-          id: "book-real-jennifer-vasquez",
-          clientName: "Jennifer Vásquez",
-          clientWhatsApp: "+57 320 892 1635",
-          packageId: "pkg-8fotos",
-          packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
-          totalPrice: 85000,
-          locationType: "outside_san_antero",
-          specificLocation: "Coveñas",
-          dateTime: "30/09/2026 a las 3:00 p. m.",
-          description: "Sesión de fotos de juramento de bandera de su hijo",
-          status: b.status || "confirmed",
-          isReal: true
-        };
+    const map = new Map();
+    // 1. Asegurar todas las reservas reales garantizadas
+    REAL_DEFAULT_BOOKINGS.forEach(b => {
+      if (b && b.id) map.set(b.id, b);
+    });
+    // 2. Fusionar con las reservas guardadas localmente
+    list.forEach(b => {
+      if (b && b.id) {
+        const existing = map.get(b.id);
+        map.set(b.id, existing ? { ...existing, ...b } : b);
       }
-      return b;
     });
 
-    if (!found) {
-      list.unshift(...REAL_DEFAULT_BOOKINGS);
-    }
+    const result = Array.from(map.values());
     try {
-      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
+      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(result));
     } catch (e) {}
-    return list;
+    return result;
   } catch (e) {
     return REAL_DEFAULT_BOOKINGS;
   }
@@ -1407,6 +1424,13 @@ export async function verifyAdminPin(pin) {
 }
 
 export async function getAdminBookings() {
+  // Lista de reservas eliminadas explícitamente para que no reaparezcan
+  let deletedIds = new Set();
+  try {
+    const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
+    deletedIds = new Set(Array.isArray(rawDel) ? rawDel : []);
+  } catch (e) {}
+
   let serverBookings = [];
   try {
     const res = await fetch(`${API_BASE}/admin/bookings`);
@@ -1456,71 +1480,39 @@ export async function getAdminBookings() {
     }
   } catch (e) {}
 
-  // Respaldar inmediatamente TODAS las reservas recibidas (tanto de nube como de servidor) en la caché local
-  if (cloudBookings.length > 0 || serverBookings.length > 0 || directBookings.length > 0) {
-    try {
-      const currentLocal = getLocalBookings();
-      const localMap = new Map();
-      currentLocal.forEach(b => { if (b?.id) localMap.set(b.id, b); });
-      serverBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
-      cloudBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
-      directBookings.forEach(b => { if (b?.id) localMap.set(b.id, b); });
-      const savedList = Array.from(localMap.values()).filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id));
-      localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(savedList));
-    } catch (e) {}
-  }
-
-  // Lista de reservas eliminadas explícitamente para que no reaparezcan
-  let deletedIds = new Set();
-  try {
-    const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
-    deletedIds = new Set(Array.isArray(rawDel) ? rawDel : []);
-  } catch (e) {}
-
   const localBookings = getLocalBookings();
   const map = new Map();
-  [...localBookings, ...serverBookings, ...cloudBookings, ...directBookings].forEach(b => {
-    if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
+
+  // 1. Incorporar reservas predeterminadas garantizadas
+  REAL_DEFAULT_BOOKINGS.forEach(b => {
+    if (b && b.id && !deletedIds.has(b.id)) {
       map.set(b.id, b);
     }
   });
 
-  let combined = Array.from(map.values());
-
-  if (combined.length === 0) {
-    combined = [...REAL_DEFAULT_BOOKINGS];
-  } else {
-    // Asegurar que Jennifer siempre esté con sus datos correctos restaurados
-    let hasJennifer = false;
-    combined = combined.map(b => {
-      if (b.id === 'book-real-jennifer-vasquez' || b.clientName === 'Jennifer Vásquez') {
-        hasJennifer = true;
-        return {
-          ...b,
-          id: "book-real-jennifer-vasquez",
-          clientName: "Jennifer Vásquez",
-          clientWhatsApp: "+57 320 892 1635",
-          packageId: "pkg-8fotos",
-          packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
-          totalPrice: 85000,
-          locationType: "outside_san_antero",
-          specificLocation: "Coveñas",
-          dateTime: "30/09/2026 a las 3:00 p. m.",
-          description: "Sesión de fotos de juramento de bandera de su hijo",
-          status: b.status || "confirmed",
-          isReal: true
-        };
-      }
-      return b;
-    });
-
-    if (!hasJennifer) {
-      combined.unshift(...REAL_DEFAULT_BOOKINGS);
+  // 2. Fusionar con todas las fuentes
+  [...localBookings, ...serverBookings, ...cloudBookings, ...directBookings].forEach(b => {
+    if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
+      const existing = map.get(b.id);
+      map.set(b.id, existing ? { ...existing, ...b } : b);
     }
-  }
+  });
 
-  // Filtrar cualquier rastro de reservas demo o eliminadas
-  return combined.filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`));
+  // 3. Garantizar siempre las 3 reservas reales del negocio
+  REAL_DEFAULT_BOOKINGS.forEach(b => {
+    if (b && b.id && !deletedIds.has(b.id) && !map.has(b.id)) {
+      map.set(b.id, b);
+    }
+  });
+
+  const combined = Array.from(map.values()).filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`));
+
+  // Respaldar inmediatamente en caché local
+  try {
+    localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(combined));
+  } catch (e) {}
+
+  return combined;
 }
 
 export async function updateAdminBooking(id, updates) {

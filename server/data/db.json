@@ -389,6 +389,21 @@
       "createdAt": "2026-09-29T03:07:32.000Z",
       "status": "pending",
       "isReal": true
+    },
+    {
+      "id": "book-1790280190756",
+      "clientName": "Marlin torres",
+      "clientWhatsApp": "+57 313 666 7262",
+      "packageId": "pkg-6fotos",
+      "packageName": "6 Fotos Digitales",
+      "totalPrice": 75000,
+      "locationType": "outside_san_antero",
+      "specificLocation": "Locación Especial / Fuera",
+      "dateTime": "03/10/2026 a las 3:10 p. m.",
+      "description": "Primer mes bebé",
+      "createdAt": "2026-09-24T20:03:10.756Z",
+      "status": "confirmed",
+      "isReal": true
     }
   ],
   "payments": [],
