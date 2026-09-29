@@ -688,7 +688,7 @@ export async function getCatalog() {
       .not('category', 'like', '%_data')
       .order('created_at', { ascending: false });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Supabase catalog timeout')), 5000)
+      setTimeout(() => reject(new Error('Supabase catalog timeout')), 12000)
     );
     const { data, error } = await Promise.race([supabasePromise, timeoutPromise]);
     if (!error && Array.isArray(data)) {
@@ -2363,7 +2363,7 @@ export async function addCatalogPhoto(photoData) {
 
   // 2. Intentar guardar en Supabase en la nube (si el proyecto tiene cuota disponible)
   try {
-    const { data, error } = await supabase.from('catalog').insert({
+    const { data, error } = await supabase.from('catalog').upsert({
       id: newItem.id,
       title: newItem.title,
       category: newItem.category,
@@ -2442,6 +2442,174 @@ export async function deleteCatalogPhoto(id, title = null) {
   return { success: true };
 }
 
+// Sincroniza fotos que están guardadas en IndexedDB/localStorage de este dispositivo hacia Supabase Cloud
+export async function syncLocalCatalogToCloud() {
+  try {
+    const idbItems = await idbGetCatalog().catch(() => []);
+    const rawLocal = getLocalCatalog();
+    const localItems = Array.isArray(rawLocal) ? rawLocal : [];
+    const rawDeleted = getDeletedCatalogIds();
+    const deletedIds = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
+
+    const combinedLocal = [];
+    const seen = new Set();
+    for (const item of [...idbItems, ...localItems]) {
+      if (!item || !item.id || seen.has(item.id) || deletedIds.has(item.id)) continue;
+      if (item.category === 'session_data' || item.category?.endsWith('_data')) continue;
+      if (item.id.startsWith('system_') || item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('rev-') || item.id.startsWith('sess-')) continue;
+      if (item.id === 'cat-atardecer-covenas') continue;
+      if (typeof item.url !== 'string' || !item.url.trim()) continue;
+      seen.add(item.id);
+      combinedLocal.push(item);
+    }
+
+    if (combinedLocal.length === 0) {
+      return { synced: 0, total: 0, pending: 0, alreadyInSync: true };
+    }
+
+    // Consultar IDs existentes en Supabase
+    const { data: supaItems, error: fetchErr } = await supabase
+      .from('catalog')
+      .select('id')
+      .not('id', 'like', 'system_%');
+
+    if (fetchErr) {
+      console.warn('[SyncCloud] Error consultando Supabase:', fetchErr);
+      return { error: fetchErr.message };
+    }
+
+    const supaIds = new Set(Array.isArray(supaItems) ? supaItems.map(s => s.id) : []);
+
+    // Detectar fotos locales que faltan en Supabase Cloud
+    const missingInCloud = combinedLocal.filter(item => !supaIds.has(item.id));
+
+    if (missingInCloud.length === 0) {
+      return { synced: 0, total: combinedLocal.length, pending: 0, alreadyInSync: true };
+    }
+
+    console.log(`[SyncCloud] Subiendo ${missingInCloud.length} fotos locales a Supabase Cloud...`);
+
+    let syncedCount = 0;
+    for (const photo of missingInCloud) {
+      try {
+        const { error: upsertErr } = await supabase.from('catalog').upsert({
+          id: photo.id,
+          title: photo.title || 'Foto de Catálogo',
+          category: photo.category || 'Retratos',
+          location: photo.location || 'San Antero',
+          url: photo.url
+        });
+        if (!upsertErr) {
+          syncedCount++;
+        } else {
+          console.warn('[SyncCloud] Error al subir foto a Supabase:', photo.id, upsertErr);
+        }
+      } catch (err) {
+        console.warn('[SyncCloud] Excepción al subir foto:', photo.id, err);
+      }
+    }
+
+    if (syncedCount > 0) {
+      broadcastCatalogUpdate();
+    }
+
+    return {
+      synced: syncedCount,
+      total: combinedLocal.length,
+      pending: missingInCloud.length - syncedCount,
+      missingCount: missingInCloud.length
+    };
+  } catch (err) {
+    console.error('[SyncCloud] Error general:', err);
+    return { error: err.message };
+  }
+}
+
+// Forzar subida y resincronización de todas las fotos a Supabase Cloud
+export async function forceSyncAllCatalogToCloud(itemsToSync = null) {
+  try {
+    let items = itemsToSync;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      const idbItems = await idbGetCatalog().catch(() => []);
+      const localItems = getLocalCatalog();
+      items = [...idbItems, ...localItems];
+    }
+    const rawDeleted = getDeletedCatalogIds();
+    const deletedIds = new Set(Array.isArray(rawDeleted) ? rawDeleted : []);
+
+    const seen = new Set();
+    const cleanList = [];
+    for (const item of items) {
+      if (!item || !item.id || seen.has(item.id) || deletedIds.has(item.id)) continue;
+      if (item.category === 'session_data' || item.category?.endsWith('_data')) continue;
+      if (item.id.startsWith('system_') || item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('rev-') || item.id.startsWith('sess-')) continue;
+      if (item.id === 'cat-atardecer-covenas') continue;
+      if (!item.url) continue;
+      seen.add(item.id);
+      cleanList.push(item);
+    }
+
+    let count = 0;
+    for (const photo of cleanList) {
+      try {
+        const { error } = await supabase.from('catalog').upsert({
+          id: photo.id,
+          title: photo.title || 'Foto de Catálogo',
+          category: photo.category || 'Retratos',
+          location: photo.location || 'San Antero',
+          url: photo.url
+        });
+        if (!error) count++;
+      } catch (e) {}
+    }
+
+    if (count > 0) {
+      broadcastCatalogUpdate();
+    }
+    return { success: true, count, total: cleanList.length };
+  } catch (err) {
+    console.error('[ForceSync] Error:', err);
+    return { error: err.message };
+  }
+}
+
+// Verifica el estado de sincronización local vs nube
+export async function checkCatalogSyncStatus() {
+  try {
+    const idbItems = await idbGetCatalog().catch(() => []);
+    const localItems = getLocalCatalog();
+    const deletedIds = new Set(getDeletedCatalogIds());
+
+    const combinedLocal = [];
+    const seen = new Set();
+    for (const item of [...idbItems, ...localItems]) {
+      if (!item || !item.id || seen.has(item.id) || deletedIds.has(item.id)) continue;
+      if (item.category === 'session_data' || item.category?.endsWith('_data')) continue;
+      if (item.id.startsWith('system_') || item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('rev-') || item.id.startsWith('sess-')) continue;
+      if (item.id === 'cat-atardecer-covenas') continue;
+      seen.add(item.id);
+      combinedLocal.push(item);
+    }
+
+    const { data: supaItems } = await supabase
+      .from('catalog')
+      .select('id')
+      .not('id', 'like', 'system_%');
+
+    const supaIds = new Set(Array.isArray(supaItems) ? supaItems.map(s => s.id) : []);
+    const missing = combinedLocal.filter(item => !supaIds.has(item.id));
+
+    return {
+      localTotal: combinedLocal.length,
+      cloudTotal: supaIds.size,
+      missingInCloud: missing.length,
+      missingItems: missing
+    };
+  } catch (e) {
+    return { localTotal: 0, cloudTotal: 0, missingInCloud: 0, missingItems: [] };
+  }
+}
+
 export async function exportCatalogBackup() {
   const items = await getCatalog();
   return {
@@ -2463,6 +2631,7 @@ export async function importCatalogBackup(backupData) {
     saveLocalCatalogItem(item);
   }
   broadcastCatalogUpdate();
+  syncLocalCatalogToCloud().catch(() => {});
   return { success: true, count: items.length };
 }
 

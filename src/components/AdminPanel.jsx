@@ -110,7 +110,10 @@ import {
   getDeletedCatalogIds,
   getDeletedBookingIds,
   saveLocalBooking,
-  createBooking
+  createBooking,
+  syncLocalCatalogToCloud,
+  forceSyncAllCatalogToCloud,
+  checkCatalogSyncStatus
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -507,6 +510,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [catalogUploadSuccess, setCatalogUploadSuccess] = useState('');
   const [purgeSamplesLoading, setPurgeSamplesLoading] = useState(false);
   const [purgeSamplesSuccess, setPurgeSamplesSuccess] = useState('');
+  const [isSyncingCatalogCloud, setIsSyncingCatalogCloud] = useState(false);
+  const [catalogSyncMessage, setCatalogSyncMessage] = useState('');
+  const [catalogSyncError, setCatalogSyncError] = useState('');
+  const [cloudPendingCount, setCloudPendingCount] = useState(0);
   const catalogFileInputRef = useRef(null);
   const catalogBackupInputRef = useRef(null);
 
@@ -1009,6 +1016,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
         const revData = revRes?.status === 'fulfilled' && Array.isArray(revRes.value) ? revRes.value : [];
         setReviewsList(prev => areArraysEqual(prev, revData) ? prev : revData);
+
+        // Sincronización proactiva de fotos locales pendientes hacia Supabase Cloud
+        syncLocalCatalogToCloud().then(res => {
+          if (res && res.synced > 0) {
+            setCatalogSyncMessage(`¡${res.synced} foto(s) sincronizada(s) con la nube! Ahora todos tus clientes las pueden ver.`);
+            setTimeout(() => setCatalogSyncMessage(''), 8000);
+          }
+          if (res && res.pending !== undefined) {
+            setCloudPendingCount(res.pending);
+          }
+        }).catch(() => {});
       }
 
       const cloudBal = cloudBalRes && cloudBalRes.status === 'fulfilled' && cloudBalRes.value ? cloudBalRes.value : getWalletBaseBalances();
@@ -2204,6 +2222,29 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       reader.readAsText(file);
     } catch (err) {
       alert('Error al leer archivo: ' + err.message);
+    }
+  };
+
+  const handleManualCatalogCloudSync = async () => {
+    setIsSyncingCatalogCloud(true);
+    setCatalogSyncMessage('');
+    setCatalogSyncError('');
+    try {
+      const res = await forceSyncAllCatalogToCloud(catalog);
+      if (res && res.error) {
+        setCatalogSyncError('Error al sincronizar con la nube: ' + res.error);
+      } else {
+        const totalPhotos = catalog.length;
+        setCatalogSyncMessage(`¡Éxito total! ${res.count || totalPhotos} fotos sincronizadas con Supabase Cloud. Ahora todos tus clientes en cualquier teléfono o computador verán exactamente las ${totalPhotos} fotos.`);
+        setCloudPendingCount(0);
+        loadAllAdminData(true);
+        if (onCatalogUpdated) onCatalogUpdated();
+        setTimeout(() => setCatalogSyncMessage(''), 9000);
+      }
+    } catch (err) {
+      setCatalogSyncError('Error al sincronizar con la nube: ' + (err.message || err));
+    } finally {
+      setIsSyncingCatalogCloud(false);
     }
   };
 
@@ -5957,6 +5998,79 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 )}
               </div>
             </div>
+
+            {/* BARRA DE SINCRONIZACIÓN CLOUD */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-gradient-to-r from-stone-900 via-stone-900 to-amber-950/40 border border-amber-500/40 rounded-2xl shadow-xl">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+                  <UploadCloud className="w-6 h-6 text-amber-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h5 className="text-xs font-bold text-white">
+                      Sincronización en la Nube (Supabase Cloud)
+                    </h5>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-bold">
+                      {catalog.length} fotos en tu dispositivo
+                    </span>
+                    {cloudPendingCount > 0 && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/40 font-bold animate-pulse">
+                        {cloudPendingCount} fotos pendientes de subir
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-stone-400 mt-0.5">
+                    Garantiza que <strong>todos tus clientes</strong> desde cualquier celular o computador vean exactamente las {catalog.length} fotos completas.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleManualCatalogCloudSync}
+                disabled={isSyncingCatalogCloud}
+                className="w-full sm:w-auto shrink-0 inline-flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 text-xs font-black rounded-xl shadow-lg shadow-amber-500/25 transition-all active:scale-95 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncingCatalogCloud ? 'animate-spin' : ''}`} />
+                <span>
+                  {isSyncingCatalogCloud 
+                    ? 'Subiendo a la nube...' 
+                    : `☁️ Sincronizar mis ${catalog.length} Fotos con la Nube`}
+                </span>
+              </button>
+            </div>
+
+            {catalogSyncMessage && (
+              <div className="p-3.5 bg-emerald-950/90 border border-emerald-500/60 rounded-2xl text-emerald-200 text-xs flex items-center justify-between gap-2 shadow-lg">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-semibold">{catalogSyncMessage}</span>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setCatalogSyncMessage('')} 
+                  className="text-emerald-400 hover:text-white p-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {catalogSyncError && (
+              <div className="p-3.5 bg-red-950/90 border border-red-500/60 rounded-2xl text-red-200 text-xs flex items-center justify-between gap-2 shadow-lg">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span className="font-semibold">{catalogSyncError}</span>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setCatalogSyncError('')} 
+                  className="text-red-400 hover:text-white p-1"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
             <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-2.5 text-xs text-amber-300">
               <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />

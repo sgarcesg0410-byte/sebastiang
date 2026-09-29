@@ -24,7 +24,8 @@ import AboutSection from './components/AboutSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import MobileStickyBookingBar from './components/MobileStickyBookingBar';
-import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds } from './services/api';
+import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds, syncLocalCatalogToCloud } from './services/api';
+import { supabase } from './services/supabase';
 import { trackPageVisit } from './services/analytics';
 import { initOneSignal } from './services/onesignal';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
@@ -177,6 +178,9 @@ export default function App() {
 
     loadInitialData();
 
+    // Sincronizar silenciosamente fotos locales pendientes hacia la nube
+    syncLocalCatalogToCloud().catch(() => {});
+
     let syncDebounce = null;
     const triggerDebouncedCatalog = () => {
       if (syncDebounce) clearTimeout(syncDebounce);
@@ -198,6 +202,17 @@ export default function App() {
       }
     } catch (e) {}
 
+    // 2. Supabase Realtime para que cualquier cliente en otro celular o PC reciba fotos publicadas al instante
+    let supaCatalogChannel;
+    try {
+      supaCatalogChannel = supabase
+        .channel('app_catalog_realtime_sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
+          triggerDebouncedCatalog();
+        })
+        .subscribe();
+    } catch (e) {}
+
     const handleStorageSync = (e) => {
       if (e.key === 'sebastian_g_catalog_last_sync' || e.key === 'sebastian_g_catalog_v1') {
         triggerDebouncedCatalog();
@@ -208,6 +223,7 @@ export default function App() {
     return () => {
       if (syncDebounce) clearTimeout(syncDebounce);
       if (bc) bc.close();
+      if (supaCatalogChannel) supabase.removeChannel(supaCatalogChannel);
       window.removeEventListener('storage', handleStorageSync);
       window.removeEventListener('popstate', handlePopState);
     };
