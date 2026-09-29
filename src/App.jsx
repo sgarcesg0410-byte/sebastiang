@@ -26,6 +26,7 @@ import SecurityOverlay from './components/SecurityOverlay';
 import MobileStickyBookingBar from './components/MobileStickyBookingBar';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds } from './services/api';
 import { trackPageVisit } from './services/analytics';
+import { initOneSignal } from './services/onesignal';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
@@ -138,6 +139,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Inicializar OneSignal para Push en segundo plano (Android APK / PWA)
+    initOneSignal();
+
     // Registrar visita en analítica en tiempo real
     trackPageVisit();
 
