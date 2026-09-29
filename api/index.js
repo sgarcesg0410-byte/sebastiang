@@ -54,6 +54,59 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
   }
 }
 
+// Sincronización inmutable directa a Supabase Cloud desde el backend de Vercel
+const SUPABASE_REST_URL = 'https://maqqzcawbdhhfqxoabyq.supabase.co';
+const SUPABASE_REST_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hcXF6Y2F3YmRoaGZxeG9hYnlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2NDUzNzksImV4cCI6MjEwNjIyMTM3OX0.o35exqFEzfbL58avn8KuVtGkN2uo61ZYh_nmziT1IUY';
+
+async function syncBookingToSupabaseServer(b) {
+  if (!b || !b.id) return;
+  const supaId = b.id.startsWith('book-') ? b.id : `book-${b.id}`;
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: supaId,
+        client_name: b.clientName || 'Cliente',
+        client_whatsapp: b.clientWhatsApp || '',
+        client_email: b.clientEmail || '',
+        package_id: b.packageId || 'pkg-4fotos',
+        package_name: b.packageName || 'Sesión Fotográfica',
+        total_price: Number(b.totalPrice || 0),
+        location_type: b.locationType || 'san_antero',
+        specific_location: b.specificLocation || '',
+        date_time: b.dateTime || '',
+        description: b.description || '',
+        status: b.status || 'pending'
+      })
+    });
+
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: supaId,
+        title: b.clientName || 'Reserva',
+        category: 'booking_data',
+        location: b.specificLocation || '',
+        url: JSON.stringify(b)
+      })
+    });
+  } catch (e) {
+    console.warn('Sync server -> Supabase:', e);
+  }
+}
+
 // Endpoint dedicado para enviar notificaciones Push desde cualquier parte del sistema
 app.post('/api/send-push', async (req, res) => {
   const { title, message, url, data } = req.body || {};
@@ -423,6 +476,7 @@ app.post('/api/bookings', (req, res) => {
   runtimeDB.bookings.unshift(newBooking);
 
   saveDB(runtimeDB);
+  syncBookingToSupabaseServer(newBooking).catch(e => console.warn('Supabase sync server error:', e));
 
   // Disparo asíncrono de correos automáticos (a Sebastián y al cliente si suministró correo)
   sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
@@ -639,6 +693,7 @@ app.patch('/api/admin/bookings/:id', (req, res) => {
 
   Object.assign(booking, updates);
   saveDB(runtimeDB);
+  syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
 
   res.json({ success: true, booking });
 });

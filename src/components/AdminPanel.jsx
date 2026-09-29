@@ -375,6 +375,51 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [realtimeAlert, setRealtimeAlert] = useState(null);
   const [viewingVoucherModal, setViewingVoucherModal] = useState(null);
   const [pushPermission, setPushPermission] = useState(() => getPushPermissionState());
+  const [quickWhatsAppTarget, setQuickWhatsAppTarget] = useState(null);
+  const [lastSentWhatsAppUrl, setLastSentWhatsAppUrl] = useState('');
+
+  // Apertura segura de WhatsApp que NUNCA navega la página actual ni recarga el WebView del APK
+  const openWhatsAppSafely = (url) => {
+    if (!url) return;
+    try {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        try {
+          if (link.parentNode) {
+            link.parentNode.removeChild(link);
+          }
+        } catch (e) {}
+      }, 300);
+    } catch (e) {
+      try {
+        window.open(url, '_blank');
+      } catch (err) {
+        console.warn('Error abriendo WhatsApp:', err);
+      }
+    }
+  };
+
+  const handleOpenClientChat = (booking) => {
+    if (!booking) return;
+    let clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+    if (clientPhone.length === 10 && !clientPhone.startsWith('57')) {
+      clientPhone = '57' + clientPhone;
+    }
+    const text = `¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`;
+    setQuickWhatsAppTarget({
+      type: 'chat',
+      title: `Escribir por WhatsApp a ${booking.clientName}`,
+      clientName: booking.clientName,
+      clientPhone,
+      text
+    });
+  };
+
   const knownBookingIdsRef = useRef(null);
   const knownPaymentIdsRef = useRef(null);
   const knownSubmittedSessionTokensRef = useRef(null);
@@ -932,20 +977,32 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setBookings(prev => {
         const rawDel = getDeletedBookingIds();
         const deletedSet = new Set(Array.isArray(rawDel) ? rawDel : []);
+        // Proteger permanentemente las 3 reservas reales del negocio
+        const PROTECTED_IDS = ['book-real-jennifer-vasquez', 'book-1790280190756', 'book-laura-vanesa-maza-1790651249486'];
+        PROTECTED_IDS.forEach(pid => {
+          deletedSet.delete(pid);
+          deletedSet.delete(`book-${pid}`);
+        });
 
         const map = new Map();
-        // 1. Preservar todas las reservas previas válidas (que no hayan sido eliminadas por el usuario)
+        // 1. Incorporar siempre las 3 reservas reales oficiales garantizadas
+        REAL_DEFAULT_BOOKINGS.forEach(b => {
+          if (b && b.id) map.set(b.id, b);
+        });
+
+        // 2. Preservar todas las reservas previas válidas
         (prev || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
-            map.set(b.id, b);
+            const existing = map.get(b.id);
+            map.set(b.id, existing ? { ...existing, ...b } : b);
           }
         });
-        // 2. Fusionar con las reservas recibidas de la fuente (servidor/nube/local)
+        // 3. Fusionar con las reservas recibidas de la fuente (servidor/nube/local)
         (bData || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
             if (existing) {
-              map.set(b.id, { ...b, ...existing, status: existing.status || b.status });
+              map.set(b.id, { ...existing, ...b, status: b.status || existing.status });
             } else {
               map.set(b.id, b);
             }
@@ -1460,23 +1517,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         }
       }
 
-      // 4. Generar URL de WhatsApp y abrir en nueva pestaña sin sacarlo del panel
+      // 4. Generar URL de WhatsApp y abrir de manera segura sin recargar ni navegar el WebView
       const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote, activePhone, chosenLine);
-      setConfirmSuccessMsg(
-        confirmingBooking.clientEmail
-          ? `✓ ¡Reserva confirmada! Abriendo WhatsApp con ${chosenLine === 'line2' ? 'Línea 2 (302)' : 'Línea 1 (324)'}...`
-          : `✓ ¡Reserva confirmada! Abriendo WhatsApp con ${chosenLine === 'line2' ? 'Línea 2 (302)' : 'Línea 1 (324)'}...`
-      );
+      const lineLabel = chosenLine === 'line2' ? 'Línea 2 (302 369 6513)' : 'Línea 1 (324 472 5167)';
+      setConfirmSuccessMsg(`✓ ¡Reserva confirmada con éxito! Abriendo WhatsApp desde tu ${lineLabel}...`);
+      setLastSentWhatsAppUrl(url);
 
-      const win = window.open(url, '_blank');
-      if (!win || win.closed || typeof win.closed === 'undefined') {
-        window.location.href = url;
-      }
+      openWhatsAppSafely(url);
 
       setTimeout(() => {
         setConfirmingBooking(null);
         setConfirmSuccessMsg('');
-      }, 2500);
+        setLastSentWhatsAppUrl('');
+      }, 4000);
     } catch (err) {
       alert('Error al confirmar reserva: ' + err.message);
     } finally {
@@ -1743,13 +1796,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en ${loc}, reprogramamos tu sesión sin ningún costo adicional.\n\n` +
       `¿Tienes alguna duda previa o cambio de última hora? ¡Quedo muy atento! Nos vemos muy pronto para crear fotos inolvidables 📸✨`;
 
-    const url = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
-    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-    if (isMobile) {
-      window.location.href = url;
-    } else {
-      window.open(url, '_blank');
-    }
+    setQuickWhatsAppTarget({
+      type: 'reminder',
+      title: `Recordatorio 24 Horas VIP • ${booking.clientName}`,
+      clientName: booking.clientName,
+      clientPhone,
+      text
+    });
   };
 
   // 4. Modal de Recibo Digital Oficial y Voucher con Generación PDF Real
@@ -1905,12 +1958,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
 
     const waUrl = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
-    const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-    if (isMobile) {
-      window.location.href = waUrl;
-    } else {
-      window.open(waUrl, '_blank');
-    }
+    openWhatsAppSafely(waUrl);
   };
 
   // Manejador de subida de fotos para clientes (optimizado para Android, móviles y PC)
@@ -3024,14 +3072,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   )}
 
                   {realtimeAlert.whatsappUrl && (
-                    <a
-                      href={realtimeAlert.whatsappUrl}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cleanPhone = (realtimeAlert.whatsappUrl ? realtimeAlert.whatsappUrl.replace('https://wa.me/', '') : '').replace(/\D/g, '');
+                        setQuickWhatsAppTarget({
+                          type: 'chat',
+                          title: `Escribir a ${realtimeAlert.clientName}`,
+                          clientName: realtimeAlert.clientName,
+                          clientPhone: cleanPhone,
+                          text: `¡Hola ${realtimeAlert.clientName}! Te saluda Sebastian G.`
+                        });
+                      }}
                       className="px-3 py-1.5 rounded-xl bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
                     >
                       <span>💬 Chat WhatsApp</span>
-                    </a>
+                    </button>
                   )}
                 </div>
               </div>
@@ -3727,15 +3783,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                                 </div>
 
                                 <div className="flex items-center gap-2 pt-1 border-t border-stone-800/80">
-                                  <a
-                                    href={`https://wa.me/${clientPhoneClean}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center justify-center gap-1"
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenClientChat(booking)}
+                                    className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors"
+                                    title="Escribir por WhatsApp eligiendo línea"
                                   >
                                     <MessageCircle className="w-3 h-3 shrink-0" />
                                     <span>WhatsApp</span>
-                                  </a>
+                                  </button>
 
                                   {booking.status !== 'confirmed' && (
                                     <button
@@ -3796,15 +3852,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       </h4>
 
                       <div className="mt-1 flex flex-wrap items-center gap-3">
-                        <a
-                          href={`https://wa.me/${clientPhoneClean}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold"
+                        <button
+                          type="button"
+                          onClick={() => handleOpenClientChat(booking)}
+                          className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
+                          title="Escribir por WhatsApp eligiendo línea"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />
                           <span>{booking.clientWhatsApp} (Chatear)</span>
-                        </a>
+                        </button>
 
                         {booking.clientEmail && (
                           <a
@@ -4027,16 +4083,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                             <span className="hidden sm:inline">Google Cal</span>
                           </a>
 
-                          <a
-                            href={`https://wa.me/${clientPhoneClean}?text=${encodeURIComponent(`¡Hola ${booking.clientName}! Te escribe Sebastian G respecto a tu reserva para el ${formatDateTime12Hour(booking.dateTime)}.`)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-stone-700"
-                            title="Abrir chat regular de WhatsApp"
+                          <button
+                            type="button"
+                            onClick={() => handleOpenClientChat(booking)}
+                            className="flex items-center gap-1 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-stone-700 transition-colors"
+                            title="Abrir chat de WhatsApp eligiendo línea"
                           >
                             <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
                             <span>Chat</span>
-                          </a>
+                          </button>
                         </div>
                       </div>
 
@@ -7148,14 +7203,71 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
+            {/* SELECTOR PRINCIPAL Y ACCIÓN DIRECTA DE LÍNEA */}
+            <div className="bg-stone-950 border-2 border-emerald-500/50 rounded-2xl p-4 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <MessageCircle className="w-4 h-4 text-emerald-400" />
+                  ¿Desde cuál de tus dos líneas deseas confirmar la sesión?
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-300">
+                Toca directamente la línea que deseas usar. La reserva quedará confirmada y abrirá WhatsApp con el mensaje oficial:
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  disabled={isConfirmingBookingStatus}
+                  onClick={() => handleSendBookingConfirmation('line1')}
+                  className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-700 hover:from-emerald-600 hover:to-emerald-500 text-white font-bold text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all border border-emerald-400/50 disabled:opacity-50"
+                >
+                  <div className="text-left">
+                    <div className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">Línea 1 (Principal)</div>
+                    <div className="font-mono text-sm font-black text-white">324 472 5167</div>
+                  </div>
+                  <span className="text-[11px] bg-emerald-950 px-2.5 py-1.5 rounded-lg border border-emerald-400/40 text-emerald-300 font-black flex items-center gap-1 shadow-sm">
+                    📲 Confirmar
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isConfirmingBookingStatus}
+                  onClick={() => handleSendBookingConfirmation('line2')}
+                  className="p-3.5 rounded-xl bg-gradient-to-r from-teal-700 via-teal-600 to-teal-700 hover:from-teal-600 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all border border-teal-400/50 disabled:opacity-50"
+                >
+                  <div className="text-left">
+                    <div className="text-[10px] text-teal-200 font-bold uppercase tracking-wider">Línea 2 (Secundaria)</div>
+                    <div className="font-mono text-sm font-black text-white">302 369 6513</div>
+                  </div>
+                  <span className="text-[11px] bg-teal-950 px-2.5 py-1.5 rounded-lg border border-teal-400/40 text-teal-300 font-black flex items-center gap-1 shadow-sm">
+                    📲 Confirmar
+                  </span>
+                </button>
+              </div>
+            </div>
+
             {confirmSuccessMsg && (
-              <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-300 text-xs font-semibold flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>{confirmSuccessMsg}</span>
+              <div className="p-3.5 bg-emerald-950/90 border border-emerald-500/60 rounded-2xl text-xs space-y-1.5 shadow-lg">
+                <div className="text-emerald-300 font-black flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{confirmSuccessMsg}</span>
+                </div>
+                {lastSentWhatsAppUrl && (
+                  <a
+                    href={lastSentWhatsAppUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-amber-300 hover:text-amber-200 underline font-bold pt-1"
+                  >
+                    👉 Si WhatsApp no abrió automáticamente en tu celular, toca aquí para abrirlo
+                  </a>
+                )}
               </div>
             )}
 
-            <form onSubmit={(e) => { e.preventDefault(); handleSendBookingConfirmation(confirmWhatsAppLine); }} className="space-y-4">
+            <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-stone-300 mb-1.5 uppercase tracking-wider">
                   Número de WhatsApp del cliente para enviar confirmación:
@@ -7167,52 +7279,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   placeholder="+57 300 000 0000"
                   className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-stone-500 font-mono focus:outline-none focus:border-amber-400"
                 />
-              </div>
-
-              {/* Selector de Línea de WhatsApp para enviar */}
-              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
-                    Elige desde cuál de tus líneas de WhatsApp enviar:
-                  </span>
-                  <span className="text-[10px] text-stone-400 font-medium">
-                    {confirmWhatsAppLine === 'line1' ? 'Línea 1 Seleccionada' : 'Línea 2 Seleccionada'}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setConfirmWhatsAppLine('line1')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
-                      confirmWhatsAppLine === 'line1'
-                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
-                        : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
-                    }`}
-                  >
-                    <div>
-                      <div className="text-[10px] text-stone-400">Línea 1 (Principal)</div>
-                      <div className="font-mono text-xs text-white">324 472 5167</div>
-                    </div>
-                    {confirmWhatsAppLine === 'line1' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setConfirmWhatsAppLine('line2')}
-                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all text-left flex items-center justify-between ${
-                      confirmWhatsAppLine === 'line2'
-                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 ring-1 ring-emerald-500'
-                        : 'bg-stone-900 border-stone-800 text-stone-400 hover:text-white'
-                    }`}
-                  >
-                    <div>
-                      <div className="text-[10px] text-stone-400">Línea 2 (Secundaria)</div>
-                      <div className="font-mono text-xs text-white">302 369 6513</div>
-                    </div>
-                    {confirmWhatsAppLine === 'line2' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
-                  </button>
-                </div>
               </div>
 
               <div>
@@ -7350,6 +7416,99 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RÁPIDO PARA ELEGIR LÍNEA DE WHATSAPP (CHAT O RECORDATORIO) */}
+      {quickWhatsAppTarget && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative max-w-md w-full bg-stone-900 border border-emerald-500/40 rounded-3xl p-6 shadow-2xl space-y-4 text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+              <div className="flex items-center gap-2">
+                <span className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                  <MessageCircle className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">{quickWhatsAppTarget.title || 'Enviar WhatsApp'}</h3>
+                  <p className="text-[11px] text-stone-400">Cliente: <span className="text-amber-300 font-semibold">{quickWhatsAppTarget.clientName}</span></p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickWhatsAppTarget(null)}
+                className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-stone-950 rounded-xl border border-stone-800 text-xs space-y-1">
+              <p className="text-stone-300 font-medium">📱 Número destino: <span className="font-mono text-white font-bold">{quickWhatsAppTarget.clientPhone}</span></p>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="text-xs font-black text-amber-400 uppercase tracking-wider block">
+                ¿Desde cuál de tus dos líneas de WhatsApp deseas enviar?
+              </span>
+              <p className="text-[11px] text-stone-400">
+                Toca la línea que deseas usar para abrir el chat de forma segura:
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `https://wa.me/${quickWhatsAppTarget.clientPhone}?text=${encodeURIComponent(quickWhatsAppTarget.text || '')}`;
+                  openWhatsAppSafely(url);
+                  setQuickWhatsAppTarget(null);
+                }}
+                className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-700 hover:from-emerald-600 hover:to-emerald-500 text-white font-bold text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all border border-emerald-400/50"
+              >
+                <div className="text-left">
+                  <div className="text-[10px] text-emerald-200 font-bold uppercase">Línea 1 (Principal)</div>
+                  <div className="font-mono text-sm font-black text-white">324 472 5167</div>
+                </div>
+                <span className="text-[10px] bg-emerald-950 px-2 py-1 rounded-lg border border-emerald-400/40 text-emerald-300 font-bold">
+                  📲 Abrir
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `https://wa.me/${quickWhatsAppTarget.clientPhone}?text=${encodeURIComponent(quickWhatsAppTarget.text || '')}`;
+                  openWhatsAppSafely(url);
+                  setQuickWhatsAppTarget(null);
+                }}
+                className="p-3.5 rounded-xl bg-gradient-to-r from-teal-700 via-teal-600 to-teal-700 hover:from-teal-600 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all border border-teal-400/50"
+              >
+                <div className="text-left">
+                  <div className="text-[10px] text-teal-200 font-bold uppercase">Línea 2 (Secundaria)</div>
+                  <div className="font-mono text-sm font-black text-white">302 369 6513</div>
+                </div>
+                <span className="text-[10px] bg-teal-950 px-2 py-1 rounded-lg border border-teal-400/40 text-teal-300 font-bold">
+                  📲 Abrir
+                </span>
+              </button>
+            </div>
+
+            {quickWhatsAppTarget.text && (
+              <div className="pt-2 border-t border-stone-800 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(quickWhatsAppTarget.text);
+                    alert('✓ Texto del mensaje copiado al portapapeles');
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Copiar texto del mensaje</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
