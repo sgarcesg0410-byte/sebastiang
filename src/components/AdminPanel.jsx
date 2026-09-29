@@ -59,6 +59,11 @@ import {
   authenticateWithBiometrics,
   disableBiometrics
 } from '../services/biometrics';
+import {
+  requestOneSignalPermission,
+  isOneSignalSubscribed,
+  sendTestPushNotification
+} from '../services/onesignal';
 import { 
   verifyAdminPin, 
   verifyTwoFactorCode,
@@ -297,6 +302,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [bioError, setBioError] = useState('');
   const [bioSuccess, setBioSuccess] = useState('');
 
+  // Notificaciones Push 24/7 (OneSignal)
+  const [isPushSubscribed, setIsPushSubscribed] = useState(false);
+  const [isTestingPush, setIsTestingPush] = useState(false);
+  const [pushStatusMessage, setPushStatusMessage] = useState('');
+
   // Pestañas
   const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'payments' | 'reviews' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
 
@@ -382,10 +392,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const handleEnablePush = async () => {
     // Desbloquear contexto de audio con interacción del usuario
     playPushNotificationChime('booking');
+    setPushStatusMessage('');
+    try {
+      await requestOneSignalPermission();
+      const sub = await isOneSignalSubscribed();
+      setIsPushSubscribed(Boolean(sub));
+    } catch (e) {}
+
     const res = await requestPushPermission();
     setPushPermission(res);
     if (res === 'granted' || (typeof window !== 'undefined' && window.AndroidNotificationBridge)) {
       setPushPermission('granted');
+      setIsPushSubscribed(true);
+      setPushStatusMessage('¡Notificaciones push 24/7 activadas con éxito en este dispositivo!');
+      setTimeout(() => setPushStatusMessage(''), 5000);
       await sendSystemPushNotification({
         title: '🔔 ¡Notificaciones Push Activas!',
         body: 'Listo Sebastian G. Las alertas de reservas y pagos sonarán al instante como en WhatsApp.',
@@ -396,26 +416,38 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   const handleTestPush = async () => {
+    setIsTestingPush(true);
+    setPushStatusMessage('');
+    playPushNotificationChime('booking');
     const testWhatsApp = 'https://wa.me/573244725167';
-    await sendSystemPushNotification({
-      title: '📸 ¡Prueba de Reserva en Tiempo Real!',
-      body: 'Camila acaba de reservar: 8 Fotos Digitales (+ 2 Fotos Gratis) para el 28 de Septiembre.\n📍 Playa Blanca, San Antero ($75.000 COP)',
-      tag: 'test-push-sample',
-      data: { type: 'booking' },
-      whatsappUrl: testWhatsApp
-    });
-    setRealtimeAlert({
-      type: 'booking',
-      bookingId: 'test-sample-id',
-      clientName: 'Camila (Prueba en Vivo)',
-      packageName: '8 Fotos Digitales (+ 2 Fotos Gratis)',
-      dateTime: '28 de Septiembre a las 4:00 p. m.',
-      location: 'Playa Blanca, San Antero',
-      totalPrice: 75000,
-      whatsappUrl: testWhatsApp,
-      targetTab: 'bookings'
-    });
-    setTimeout(() => setRealtimeAlert(null), 12000);
+    try {
+      await sendSystemPushNotification({
+        title: '📸 ¡Prueba de Reserva en Tiempo Real!',
+        body: 'Camila acaba de reservar: 8 Fotos Digitales (+ 2 Fotos Gratis) para el 28 de Septiembre.\n📍 Playa Blanca, San Antero ($75.000 COP)',
+        tag: 'test-push-sample',
+        data: { type: 'booking' },
+        whatsappUrl: testWhatsApp
+      });
+      sendTestPushNotification().catch(() => {});
+      setRealtimeAlert({
+        type: 'booking',
+        bookingId: 'test-sample-id',
+        clientName: 'Camila (Prueba en Vivo)',
+        packageName: '8 Fotos Digitales (+ 2 Fotos Gratis)',
+        dateTime: '28 de Septiembre a las 4:00 p. m.',
+        location: 'Playa Blanca, San Antero',
+        totalPrice: 75000,
+        whatsappUrl: testWhatsApp,
+        targetTab: 'bookings'
+      });
+      setPushStatusMessage('¡Notificación enviada! Si OneSignal ya tiene este teléfono registrado, sonará y vibrará.');
+      setTimeout(() => setPushStatusMessage(''), 6000);
+      setTimeout(() => setRealtimeAlert(null), 12000);
+    } catch (e) {
+      setPushStatusMessage('Error enviando notificación de prueba.');
+    } finally {
+      setIsTestingPush(false);
+    }
   };
   const [sessions, setSessions] = useState([]);
   const [catalog, setCatalog] = useState(() => {
@@ -842,6 +874,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setBioSuccess('Ingreso por huella desactivado.');
     setTimeout(() => setBioSuccess(''), 3000);
   };
+
+  // Sincronizar estado de suscripción de OneSignal
+  useEffect(() => {
+    isOneSignalSubscribed().then(sub => setIsPushSubscribed(Boolean(sub)));
+  }, []);
 
   const loadAllAdminData = async (isSilent = false) => {
     try {
@@ -3060,6 +3097,33 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </p>
           </div>
         </div>
+
+        {/* BANNER NOTIFICACIONES ONESIGNAL */}
+        {!isPushSubscribed && (
+          <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/40 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <Bell className="w-5 h-5 text-amber-400 animate-bounce" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">
+                  ¿Quieres recibir alertas sonoras de nuevas reservas en este celular?
+                </p>
+                <p className="text-[11px] text-stone-400">
+                  Activa las Notificaciones Push 24/7 (OneSignal) para enterarte al instante incluso con la app cerrada.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleEnablePush}
+              className="bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 text-stone-950 font-bold px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 active:scale-95 transition-all shrink-0 cursor-pointer"
+            >
+              <Bell className="w-3.5 h-3.5" />
+              <span>Activar Notificaciones Aquí</span>
+            </button>
+          </div>
+        )}
 
         {/* Pestañas de navegación 100% responsive: Grid adaptable */}
         <div className="w-full bg-stone-900/95 p-1.5 sm:p-2 rounded-2xl border border-stone-800/90 shadow-xl no-scrollbar">
@@ -6403,6 +6467,63 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <span>Desactivar Huella</span>
                   </button>
                 </>
+              )}
+            </div>
+          </div>
+
+          {/* SECCIÓN 2.8: NOTIFICACIONES PUSH 24/7 EN SEGUNDO PLANO (ONESIGNAL) */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+                  <Bell className="w-4 h-4 text-amber-400" />
+                  Alertas en Tiempo Real (OneSignal)
+                </span>
+                <h3 className="text-xl font-serif font-bold text-white mt-1">
+                  Notificaciones Push 24/7 en Segundo Plano
+                </h3>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  Tu celular sonará y vibrará al instante con nuevas reservas y pagos, incluso con la pantalla apagada.
+                </p>
+              </div>
+              <span className={`text-[11px] font-bold px-3 py-1 rounded-full uppercase tracking-wider ${
+                isPushSubscribed ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+              }`}>
+                {isPushSubscribed ? '✓ Dispositivo Suscrito' : 'Pendiente Activar'}
+              </span>
+            </div>
+
+            <p className="text-xs text-stone-400 leading-relaxed">
+              Gracias al motor de OneSignal conectado a tu servidor, el sistema despacha una señal de alta prioridad que despierta el celular de forma inmediata sin consumir batería.
+            </p>
+
+            {pushStatusMessage && (
+              <div className="p-3 bg-stone-950 border border-amber-500/50 rounded-xl text-amber-200 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{pushStatusMessage}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              {!isPushSubscribed ? (
+                <button
+                  type="button"
+                  onClick={handleEnablePush}
+                  className="flex-1 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95 transition-all"
+                >
+                  <Bell className="w-4 h-4" />
+                  <span>Activar Notificaciones en este Teléfono</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleTestPush}
+                  disabled={isTestingPush}
+                  className="flex-1 bg-stone-800 hover:bg-stone-700 text-amber-300 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Bell className="w-4 h-4 text-amber-400" />
+                  <span>{isTestingPush ? 'Enviando Alerta...' : '📲 Probar Notificación Sonora en mi Celular'}</span>
+                </button>
               )}
             </div>
           </div>

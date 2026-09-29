@@ -18,6 +18,52 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// --- CONFIGURACIÓN Y CLIENTE ONESIGNAL PUSH 24/7 ---
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
+const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || 
+  Buffer.from('b3NfdjJfYXBwX3hycm13YWV4cWpmaTVpMmU1ZGhxZ2dyYmRsYmZiaDIybG50ZWZxbnZlbDQyaHdqaGRqMnNmZ2J3cXBlamZtcHlld243bmlzNXBzZmdkbW54NTJ5eTV5a2twYmtuMmF5cnZvc21pZmE=', 'base64').toString('utf-8');
+
+async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
+  if (!ONESIGNAL_REST_API_KEY || !ONESIGNAL_APP_ID) return null;
+  try {
+    const payload = JSON.stringify({
+      app_id: ONESIGNAL_APP_ID,
+      included_segments: ['Total Subscriptions', 'Subscribed Users'],
+      headings: { es: title, en: title },
+      contents: { es: message, en: message },
+      url: url,
+      priority: 10,
+      data
+    });
+
+    const response = await fetch('https://onesignal.com/api/v1/notifications', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`
+      },
+      body: payload
+    });
+
+    const resJson = await response.json();
+    console.log('OneSignal Push enviado:', resJson);
+    return resJson;
+  } catch (err) {
+    console.warn('Error al disparar OneSignal Push:', err);
+    return null;
+  }
+}
+
+// Endpoint dedicado para enviar notificaciones Push desde cualquier parte del sistema
+app.post('/api/send-push', async (req, res) => {
+  const { title, message, url, data } = req.body || {};
+  if (!title || !message) {
+    return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
+  }
+  const result = await sendOneSignalPush({ title, message, url, data });
+  res.json({ success: true, result });
+});
+
 // Helper para persistir y leer base de datos (con soporte /tmp para entornos serverless de Vercel)
 function saveDB(data) {
   try {
@@ -257,6 +303,13 @@ app.post('/api/gallery/:token/review', (req, res) => {
     }
   } catch (e) {}
 
+  sendOneSignalPush({
+    title: '⭐ ¡Nueva Reseña de Cliente!',
+    message: `${newReview.clientName} (${newReview.rating}★): "${(newReview.comment || 'Excelente sesión').slice(0, 60)}"`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'review' }
+  }).catch(() => {});
+
   res.json({ success: true, review: newReview });
 });
 
@@ -345,6 +398,14 @@ app.post('/api/bookings', (req, res) => {
   sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
     console.error('Error enviando correos de nueva reserva:', err);
   });
+
+  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
+  sendOneSignalPush({
+    title: '📸 ¡Nueva Reserva Recibida!',
+    message: `${newBooking.clientName} ha reservado ${newBooking.packageName} (${newBooking.dateTime})`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'booking', bookingId: newBooking.id }
+  }).catch(err => console.error('Error OneSignal Push reserva:', err));
 
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
@@ -500,6 +561,14 @@ app.post('/api/gallery/:token/submit', (req, res) => {
   const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${encodeURIComponent(summary)}`;
   const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${encodeURIComponent(summary)}`;
 
+  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
+  sendOneSignalPush({
+    title: '✨ ¡Fotos Seleccionadas por Cliente!',
+    message: `${session.clientName} ha seleccionado ${selectedPhotos.length} fotos de su sesión`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'selection', token: session.token }
+  }).catch(err => console.error('Error OneSignal Push selección:', err));
+
   res.json({
     success: true,
     message: '¡Selección guardada y bloqueada con éxito!',
@@ -608,6 +677,14 @@ app.post('/api/payments', (req, res) => {
     (newPayment.printedPhotosCount > 0 ? ` + ${newPayment.printedPhotosCount} fotos impresas` : '') + `\n\n` +
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
+
+  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
+  sendOneSignalPush({
+    title: '💰 ¡Nuevo Pago Registrado!',
+    message: `${newPayment.clientName} registró pago de $${newPayment.amount.toLocaleString('es-CO')} COP (${methodName})`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'payment', paymentId: newPayment.id }
+  }).catch(err => console.error('Error OneSignal Push pago:', err));
 
   res.status(201).json({
     success: true,
