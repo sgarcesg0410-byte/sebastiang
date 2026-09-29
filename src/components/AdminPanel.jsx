@@ -3288,7 +3288,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 title="Registrar manualmente una nueva reserva o restaurar una reserva confirmada"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>+ Nueva Reserva</span>
+                <span>Nueva Reserva</span>
               </button>
             </div>
           </div>
@@ -5878,45 +5878,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   accept=".json"
                   className="hidden"
                 />
-                <button
-                  type="button"
-                  onClick={handleExportFullBackup}
-                  className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 text-xs font-bold rounded-xl shadow-md shadow-amber-500/20 transition-all flex items-center gap-1.5 active:scale-95"
-                  title="Descargar copia de seguridad total con todas las fotos y reservas en formato JSON"
-                >
-                  <DownloadCloud className="w-3.5 h-3.5" />
-                  <span>Respaldo Total (Fotos + Reservas)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => fullBackupInputRef.current?.click()}
-                  className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-amber-300 text-xs font-bold rounded-xl border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
-                  title="Cargar respaldo total en este computador para tener fotos y reservas al instante"
-                >
-                  <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Restaurar Respaldo Total</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleExportCatalog}
-                  className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-semibold rounded-xl border border-stone-700 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
-                  title="Descargar una copia de seguridad con todas tus fotos en un archivo JSON"
-                >
-                  <DownloadCloud className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Respaldar Solo Fotos</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => catalogBackupInputRef.current?.click()}
-                  className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-semibold rounded-xl border border-stone-700 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
-                  title="Restaurar fotos desde un archivo JSON de respaldo"
-                >
-                  <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Restaurar Solo Fotos</span>
-                </button>
 
                 {catalog.some(item => isSampleItem(item)) && (
                   <button
