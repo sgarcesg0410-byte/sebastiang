@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, ArrowRight, ChevronLeft } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { createBooking, checkClientLoyalty, formatTo12Hour } from '../services/api';
 
@@ -24,10 +24,32 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     printedPhotosCount: 0
   });
 
+  const [bookingStep, setBookingStep] = useState(1); // 1: Datos, 2: Paquete y Lugar, 3: Fecha y Hora
   const [loyalInfo, setLoyalInfo] = useState({ isLoyal: false, discountPercent: 0, clientName: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [submittedBooking, setSubmittedBooking] = useState(null);
+
+  const handleNextStep1 = () => {
+    if (!formData.clientName.trim()) {
+      setErrorMessage('Por favor escribe tu Nombre y Apellido.');
+      return;
+    }
+    const cleanPhone = formData.clientWhatsApp.replace(/\D/g, '');
+    if (cleanPhone.length < 7) {
+      setErrorMessage('Por favor ingresa un número de WhatsApp válido.');
+      return;
+    }
+    setErrorMessage('');
+    setBookingStep(2);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  };
+
+  const handleNextStep2 = () => {
+    setErrorMessage('');
+    setBookingStep(3);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  };
 
   // Detección automática de cliente frecuente para fidelización
   useEffect(() => {
@@ -48,8 +70,12 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
   // Asegurar que al abrir siempre comience scrolleado arriba de todo
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0;
+    if (isOpen) {
+      setBookingStep(1);
+      setErrorMessage('');
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = 0;
+      }
     }
   }, [isOpen]);
 
@@ -226,6 +252,74 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
           </button>
         </div>
 
+        {/* INDICADOR VISUAL DE PASOS (1, 2, 3) */}
+        {!submittedBooking && (
+          <div className="px-5 py-2.5 bg-stone-950/95 border-b border-stone-800/80 flex items-center justify-between text-xs shrink-0">
+            <button
+              type="button"
+              onClick={() => setBookingStep(1)}
+              className={`flex items-center gap-1.5 font-bold transition-all cursor-pointer ${
+                bookingStep === 1 ? 'text-amber-400' : 'text-stone-400 hover:text-stone-200'
+              }`}
+            >
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                bookingStep === 1 ? 'bg-amber-400 text-stone-950 font-black' : (formData.clientName && formData.clientWhatsApp ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-stone-800 text-stone-400')
+              }`}>
+                {formData.clientName && formData.clientWhatsApp && bookingStep > 1 ? '✓' : '1'}
+              </span>
+              <span>Tus Datos</span>
+            </button>
+
+            <div className={`h-[1px] flex-1 mx-2 ${bookingStep >= 2 ? 'bg-amber-400/40' : 'bg-stone-800'}`} />
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!formData.clientName.trim() || !formData.clientWhatsApp.trim()) {
+                  setErrorMessage('Por favor escribe tu Nombre y WhatsApp primero.');
+                  return;
+                }
+                setErrorMessage('');
+                setBookingStep(2);
+              }}
+              className={`flex items-center gap-1.5 font-bold transition-all cursor-pointer ${
+                bookingStep === 2 ? 'text-amber-400' : 'text-stone-400 hover:text-stone-200'
+              }`}
+            >
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                bookingStep === 2 ? 'bg-amber-400 text-stone-950 font-black' : (bookingStep > 2 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-stone-800 text-stone-400')
+              }`}>
+                {bookingStep > 2 ? '✓' : '2'}
+              </span>
+              <span>Paquete & Lugar</span>
+            </button>
+
+            <div className={`h-[1px] flex-1 mx-2 ${bookingStep >= 3 ? 'bg-amber-400/40' : 'bg-stone-800'}`} />
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!formData.clientName.trim() || !formData.clientWhatsApp.trim()) {
+                  setErrorMessage('Por favor completa tus datos primero.');
+                  return;
+                }
+                setErrorMessage('');
+                setBookingStep(3);
+              }}
+              className={`flex items-center gap-1.5 font-bold transition-all cursor-pointer ${
+                bookingStep === 3 ? 'text-amber-400' : 'text-stone-400 hover:text-stone-200'
+              }`}
+            >
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                bookingStep === 3 ? 'bg-amber-400 text-stone-950 font-black' : 'bg-stone-800 text-stone-400'
+              }`}>
+                3
+              </span>
+              <span>Fecha & Hora</span>
+            </button>
+          </div>
+        )}
+
         {/* CUERPO DEL MODAL CON SCROLL AUTOMÁTICO HACIA ARRIBA */}
         <div ref={scrollRef} className="overflow-y-auto p-4 sm:p-6 space-y-4 flex-1 overscroll-contain">
           {submittedBooking ? (
@@ -318,29 +412,9 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
               </div>
             </div>
           ) : (
-            /* FORMULARIO DE RESERVA */
+            /* FORMULARIO DE RESERVA EN 3 PASOS GUIADOS */
             <form onSubmit={handleSubmit} className="space-y-4">
               
-              {preselectedPhoto && (
-                <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
-                  <img
-                    src={preselectedPhoto.url}
-                    alt={preselectedPhoto.title}
-                    className="w-12 h-12 rounded-xl object-cover border border-amber-500/40 shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
-                      Inspirado en foto del catálogo
-                    </span>
-                    <h4 className="text-xs font-bold text-white truncate">{preselectedPhoto.title}</h4>
-                    <span className="text-[11px] text-stone-400 flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                      <span>{preselectedPhoto.location}</span>
-                    </span>
-                  </div>
-                </div>
-              )}
-
               {errorMessage && (
                 <div className="p-3.5 bg-red-950/80 border border-red-500/50 rounded-xl text-red-200 text-xs flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
@@ -348,294 +422,361 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                 </div>
               )}
 
-              {/* 1. CAMPO NOMBRE Y APELLIDO (ARRIBA DE TODO EN GRANDE) */}
-              <div className="bg-stone-950 p-4 rounded-2xl border-2 border-amber-500/60 shadow-lg">
-                <label className="block text-xs font-bold text-amber-400 uppercase tracking-wider mb-1.5 flex items-center gap-2">
-                  <User className="w-4 h-4 text-amber-400" />
-                  <span>Nombre y Apellido *</span>
-                </label>
-                <input
-                  type="text"
-                  name="clientName"
-                  value={formData.clientName}
-                  onChange={handleInputChange}
-                  placeholder="Escribe tu Nombre y Apellido aquí"
-                  required
-                  className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-3 text-sm font-semibold text-white placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
-                />
-              </div>
-
-              {/* 2. WHATSAPP (AVISO OBLIGATORIO) */}
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Número de WhatsApp *</span>
-                </label>
-                <input
-                  type="tel"
-                  name="clientWhatsApp"
-                  value={formData.clientWhatsApp}
-                  onChange={handleInputChange}
-                  placeholder="Ej. 300 123 4567"
-                  required
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
-                />
-                
-                {loyalInfo.isLoyal ? (
-                  <div className="mt-2 bg-gradient-to-r from-amber-950/80 via-stone-900 to-amber-950/80 border-2 border-amber-400/60 rounded-xl p-3 flex items-center gap-2.5 shadow-lg">
-                    <Crown className="w-5 h-5 text-amber-400 shrink-0" />
-                    <div>
-                      <span className="text-xs font-black text-amber-300 block">
-                        👑 ¡Cliente Preferencial VIP Detectado! ({loyalInfo.clientName})
-                      </span>
-                      <p className="text-[11px] text-amber-100/90 leading-tight mt-0.5">
-                        Tienes un <strong>15% de Descuento Especial</strong> aplicado automáticamente en el valor total de tu sesión.
-                      </p>
+              {/* ===== PASO 1: TUS DATOS DE CONTACTO ===== */}
+              {bookingStep === 1 && (
+                <div className="space-y-3.5 animate-in fade-in duration-200">
+                  {preselectedPhoto && (
+                    <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+                      <img
+                        src={preselectedPhoto.url}
+                        alt={preselectedPhoto.title}
+                        className="w-12 h-12 rounded-xl object-cover border border-amber-500/40 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                          Inspirado en foto del catálogo
+                        </span>
+                        <h4 className="text-xs font-bold text-white truncate">{preselectedPhoto.title}</h4>
+                        <span className="text-[11px] text-stone-400 flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                          <span>{preselectedPhoto.location}</span>
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg leading-tight">
-                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400 mt-0.5" />
-                    <span>
-                      <strong>Importante:</strong> Por este WhatsApp recibirás el enlace privado para elegir tus fotos protegidas.
-                    </span>
-                  </div>
-                )}
-              </div>
+                  )}
 
-              {/* CORREO ELECTRÓNICO (OPCIONAL VIP) */}
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Correo Electrónico (Opcional)</span>
-                </label>
-                <input
-                  type="email"
-                  name="clientEmail"
-                  value={formData.clientEmail}
-                  onChange={handleInputChange}
-                  placeholder="ejemplo@correo.com"
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
-                />
-                <p className="text-[11px] text-stone-400 mt-1">
-                  ✉️ Te enviaremos un comprobante formal y recordatorios de tu sesión.
-                </p>
-              </div>
-
-              {/* 3. LUGAR DE LA SESIÓN (ESCENARIOS LIBRES Y ABIERTOS) */}
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Lugar de la Sesión *</span>
-                </label>
-
-                <div className="grid grid-cols-2 gap-2 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => handleLocationTypeChange('san_antero')}
-                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 text-center ${
-                      formData.locationType === 'san_antero'
-                        ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-md shadow-amber-500/15'
-                        : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
-                    }`}
-                  >
-                    <span>📍 Sesión Local / En Locación</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleLocationTypeChange('outside')}
-                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 text-center ${
-                      formData.locationType === 'outside'
-                        ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-md shadow-amber-500/15'
-                        : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
-                    }`}
-                  >
-                    <span>🚗 Locación Especial / Fuera (+ $10k)</span>
-                  </button>
-                </div>
-
-                {formData.locationType === 'san_antero' ? (
-                  <input
-                    type="text"
-                    name="specificLocation"
-                    value={formData.specificLocation}
-                    onChange={handleInputChange}
-                    placeholder="Ej: Playa, Parque, Casa, Hacienda, Casco Urbano, etc."
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    name="specificLocation"
-                    value={formData.specificLocation}
-                    onChange={handleInputChange}
-                    placeholder="Ej: Finca, Hotel campestre, A domicilio, Municipio vecino o Viaje"
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
-                  />
-                )}
-
-                {(() => {
-                  const customLoc = (formData.specificLocation || '').trim();
-                  const targetLocation = customLoc || (formData.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
-
-                  return (
-                    <div className="mt-2.5 bg-gradient-to-r from-sky-950/50 via-stone-900 to-sky-950/50 border border-sky-500/30 rounded-xl p-2.5 flex items-center gap-2 transition-all">
-                      <span className="text-base shrink-0">⛅</span>
-                      <p className="text-[11px] text-sky-200/90 leading-tight">
-                        <strong>Garantía de Clima en {targetLocation}:</strong> Si el clima (lluvia o tormenta) impide realizar la sesión en {targetLocation}, se reprograma para una nueva fecha sin ningún costo adicional.
-                      </p>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* 4. FECHA Y HORA */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <Calendar className="w-3 h-3 text-amber-400" />
-                    <span>Fecha *</span>
-                  </label>
-                  <input
-                    type="date"
-                    name="date"
-                    value={formData.date}
-                    onChange={handleInputChange}
-                    min={new Date().toISOString().split('T')[0]}
-                    required
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-amber-400" />
-                    <span>Hora *</span>
-                  </label>
-                  <input
-                    type="time"
-                    name="time"
-                    value={formData.time}
-                    onChange={handleInputChange}
-                    required
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
-                  />
-                </div>
-              </div>
-
-              {/* 5. PAQUETE DE FOTOS & VALOR (AJUSTADO INVISIBLEMENTE) */}
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
-                  Paquete de Fotos
-                </label>
-
-                <select
-                  name="packageId"
-                  value={formData.packageId}
-                  onChange={handleInputChange}
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-medium"
-                >
-                  {packages.map(p => {
-                    const displayPrice = formData.locationType === 'outside' ? p.price + surchargeAmount : p.price;
-                    return (
-                      <option key={p.id} value={p.id}>
-                        {p.name} (+2 Gratis) — ${formatPrice(displayPrice)} COP
-                      </option>
-                    );
-                  })}
-                </select>
-
-                {/* OPCIONAL: IMPRESIONES 10x15 */}
-                <div className="mt-2.5 p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Printer className="w-4 h-4 text-amber-400" />
-                    <div>
-                      <span className="text-xs text-stone-200 font-semibold block">
-                        Fotos Impresas 10x15 ($7.000 c/u)
-                      </span>
-                      <span className="text-[10px] text-stone-400">Opcional en físico</span>
-                    </div>
+                  <div className="bg-stone-950 p-4 rounded-2xl border-2 border-amber-500/60 shadow-lg">
+                    <label className="block text-xs font-bold text-amber-400 uppercase tracking-wider mb-1.5 flex items-center gap-2">
+                      <User className="w-4 h-4 text-amber-400" />
+                      <span>Nombre y Apellido *</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="clientName"
+                      value={formData.clientName}
+                      onChange={handleInputChange}
+                      placeholder="Escribe tu Nombre y Apellido aquí"
+                      required
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-3 text-sm font-semibold text-white placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                    />
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormData(p => ({ ...p, printedPhotosCount: Math.max(0, p.printedPhotosCount - 1) }))}
-                      className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700"
-                    >
-                      -
-                    </button>
-                    <span className="w-5 text-center text-xs font-bold text-amber-400">
-                      {formData.printedPhotosCount}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setFormData(p => ({ ...p, printedPhotosCount: p.printedPhotosCount + 1 }))}
-                      className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                {/* TARJETA DE PRECIO TOTAL (Limpio y transparente) */}
-                <div className="mt-2.5 p-3 rounded-xl bg-gradient-to-r from-stone-950 via-stone-900 to-stone-950 border border-amber-500/30 flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-stone-400 uppercase tracking-wider block">
-                      Total de la Sesión:
-                    </span>
-                    <span className="text-xs text-stone-200 font-medium">
-                      {currentPackage?.name} (+2 Gratis)
-                    </span>
-                    {loyaltyDiscount > 0 && (
-                      <span className="text-[11px] text-emerald-400 font-semibold block mt-0.5">
-                        👑 Descuento VIP Aplicado (-15%)
-                      </span>
+                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                      <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Número de WhatsApp *</span>
+                    </label>
+                    <input
+                      type="tel"
+                      name="clientWhatsApp"
+                      value={formData.clientWhatsApp}
+                      onChange={handleInputChange}
+                      placeholder="Ej. 300 123 4567"
+                      required
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500 font-mono"
+                    />
+                    
+                    {loyalInfo.isLoyal ? (
+                      <div className="mt-2 bg-gradient-to-r from-amber-950/80 via-stone-900 to-amber-950/80 border-2 border-amber-400/60 rounded-xl p-3 flex items-center gap-2.5 shadow-lg">
+                        <Crown className="w-5 h-5 text-amber-400 shrink-0" />
+                        <div>
+                          <span className="text-xs font-black text-amber-300 block">
+                            👑 ¡Cliente VIP Detectado! ({loyalInfo.clientName})
+                          </span>
+                          <p className="text-[11px] text-amber-100/90 leading-tight mt-0.5">
+                            Tienes un <strong>15% de Descuento Especial</strong> aplicado en tu sesión.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-1 flex items-start gap-1.5 text-[11px] text-emerald-400/90 bg-emerald-500/10 border border-emerald-500/20 p-2.5 rounded-xl leading-tight">
+                        <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+                        <span>
+                          <strong>Tu enlace de fotos:</strong> Te contactaremos por este WhatsApp y te enviaremos tu enlace privado con tus fotos en alta calidad.
+                        </span>
+                      </div>
                     )}
                   </div>
-                  <div className="text-right">
-                    <span className="text-xl font-extrabold text-amber-400 font-mono">
-                      ${formatPrice(calculatedPrice)}
-                    </span>
-                    <span className="text-[10px] text-stone-400 block">COP</span>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Correo Electrónico (Opcional)</span>
+                    </label>
+                    <input
+                      type="email"
+                      name="clientEmail"
+                      value={formData.clientEmail}
+                      onChange={handleInputChange}
+                      placeholder="ejemplo@correo.com"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                    />
+                    <p className="text-[11px] text-stone-400 mt-1">
+                      ✉️ Para recibir tu comprobante oficial digital por correo.
+                    </p>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleNextStep1}
+                      className="w-full bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-stone-950 font-black text-sm py-3.5 rounded-2xl shadow-lg shadow-amber-500/25 hover:from-amber-300 hover:to-amber-500 active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span>Continuar: Elegir Paquete</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* 6. ¿PARA QUIÉN ES LA FOTO O DESCRIPCIÓN? */}
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-amber-400" />
-                  <span>¿Para quién es la sesión o descripción de la foto?</span>
-                </label>
-                <textarea
-                  name="description"
-                  value={formData.description}
-                  onChange={handleInputChange}
-                  rows={2}
-                  placeholder="Ej: Es para un cumpleaños, sesión en la playa con vestido blanco, fotos de pareja, etc."
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500 transition-colors"
-                />
-              </div>
+              {/* ===== PASO 2: ELIGE TU PAQUETE & LUGAR ===== */}
+              {bookingStep === 2 && (
+                <div className="space-y-3.5 animate-in fade-in duration-200">
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-2">
+                      Selecciona tu Paquete de Fotos *
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {packages.map(p => {
+                        const isSelected = formData.packageId === p.id;
+                        const displayPrice = formData.locationType === 'outside' ? p.price + surchargeAmount : p.price;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => setFormData(prev => ({ ...prev, packageId: p.id }))}
+                            className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-amber-500/15 border-amber-400 shadow-md shadow-amber-500/15'
+                                : 'bg-stone-950 border-stone-800 hover:border-stone-700'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold text-white">{p.name}</span>
+                                {isSelected && (
+                                  <CheckCircle2 className="w-4 h-4 text-amber-400" />
+                                )}
+                              </div>
+                              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                                + 2 Fotos Gratis
+                              </span>
+                            </div>
+                            <div className="mt-2 pt-2 border-t border-stone-800/80 flex items-baseline justify-between">
+                              <span className="text-base font-extrabold text-white font-mono">
+                                ${formatPrice(displayPrice)}
+                              </span>
+                              <span className="text-[10px] text-stone-400">COP</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
 
-              {/* BOTÓN SUBMIT */}
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 font-extrabold text-sm py-3.5 rounded-xl shadow-lg shadow-amber-500/25 hover:from-amber-400 hover:to-amber-300 active:scale-98 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {isSubmitting ? (
-                    <span>Procesando reserva...</span>
-                  ) : (
-                    <>
-                      <Calendar className="w-5 h-5 fill-stone-950" />
-                      <span>Confirmar Mi Reserva (${formatPrice(calculatedPrice)} COP)</span>
-                    </>
-                  )}
-                </button>
-              </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Lugar de la Sesión *</span>
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => handleLocationTypeChange('san_antero')}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 text-center cursor-pointer ${
+                          formData.locationType === 'san_antero'
+                            ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-md shadow-amber-500/15'
+                            : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
+                        }`}
+                      >
+                        <span>📍 En San Antero</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleLocationTypeChange('outside')}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1 text-center cursor-pointer ${
+                          formData.locationType === 'outside'
+                            ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-md shadow-amber-500/15'
+                            : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
+                        }`}
+                      >
+                        <span>🚗 Fuera (+ $10k)</span>
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      name="specificLocation"
+                      value={formData.specificLocation}
+                      onChange={handleInputChange}
+                      placeholder={formData.locationType === 'outside' ? 'Ej: Coveñas, Tolú, Finca o Municipio vecino' : 'Ej: Playa Blanca, Parque, Cabaña o Hotel'}
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                    />
+
+                    <div className="mt-2.5 bg-gradient-to-r from-sky-950/50 via-stone-900 to-sky-950/50 border border-sky-500/30 rounded-xl p-2.5 flex items-center gap-2">
+                      <span className="text-base shrink-0">⛅</span>
+                      <p className="text-[11px] text-sky-200/90 leading-tight">
+                        <strong>Garantía Total de Clima:</strong> Si llueve el día de tu sesión, se reprograma gratis sin penalidad.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setBookingStep(1)}
+                      className="w-full bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs py-3 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Volver</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleNextStep2}
+                      className="w-full bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-xs py-3 rounded-xl shadow-md shadow-amber-500/25 active:scale-98 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <span>Elegir Fecha & Hora</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ===== PASO 3: FECHA, HORA Y CONFIRMACIÓN ===== */}
+              {bookingStep === 3 && (
+                <div className="space-y-3.5 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-amber-400" />
+                        <span>Fecha Deseada *</span>
+                      </label>
+                      <input
+                        type="date"
+                        name="date"
+                        value={formData.date}
+                        onChange={handleInputChange}
+                        min={new Date().toISOString().split('T')[0]}
+                        required
+                        className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-amber-400" />
+                        <span>Hora Preferida *</span>
+                      </label>
+                      <input
+                        type="time"
+                        name="time"
+                        value={formData.time}
+                        onChange={handleInputChange}
+                        required
+                        className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* FOTOS IMPRESAS OPCIONALES */}
+                  <div className="p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Printer className="w-4 h-4 text-amber-400" />
+                      <div>
+                        <span className="text-xs text-stone-200 font-semibold block">
+                          Fotos Impresas 10x15 ($7.000 c/u)
+                        </span>
+                        <span className="text-[10px] text-stone-400">Opcional en físico</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormData(p => ({ ...p, printedPhotosCount: Math.max(0, p.printedPhotosCount - 1) }))}
+                        className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700"
+                      >
+                        -
+                      </button>
+                      <span className="w-5 text-center text-xs font-bold text-amber-400">
+                        {formData.printedPhotosCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(p => ({ ...p, printedPhotosCount: p.printedPhotosCount + 1 }))}
+                        className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* NOTAS O DESCRIPCIÓN */}
+                  <div>
+                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Detalles de la sesión (Ocasión, vestuario, etc.)</span>
+                    </label>
+                    <textarea
+                      name="description"
+                      value={formData.description}
+                      onChange={handleInputChange}
+                      rows={2}
+                      placeholder="Ej: Sesión en playa al atardecer, fotos de pareja o cumpleaños..."
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500 transition-colors"
+                    />
+                  </div>
+
+                  {/* RESUMEN TOTAL DE LA SESIÓN */}
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-stone-950 via-stone-900 to-stone-950 border-2 border-amber-500/40 flex items-center justify-between shadow-lg">
+                    <div>
+                      <span className="text-[10px] text-stone-400 uppercase tracking-wider block">
+                        Total de tu Sesión:
+                      </span>
+                      <span className="text-xs text-stone-200 font-bold">
+                        {currentPackage?.name} (+2 Fotos Gratis)
+                      </span>
+                      {loyaltyDiscount > 0 && (
+                        <span className="text-[11px] text-emerald-400 font-semibold block mt-0.5">
+                          👑 Descuento VIP Aplicado (-15%)
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span className="text-2xl font-black text-amber-400 font-mono">
+                        ${formatPrice(calculatedPrice)}
+                      </span>
+                      <span className="text-[10px] text-stone-400 block font-semibold">COP • Sin cobro previo</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 grid grid-cols-3 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setBookingStep(2)}
+                      className="col-span-1 bg-stone-800 hover:bg-stone-700 text-stone-300 font-bold text-xs py-3.5 rounded-2xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Volver</span>
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="col-span-2 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-stone-950 font-black text-sm py-3.5 rounded-2xl shadow-lg shadow-amber-500/25 hover:from-amber-300 hover:to-amber-500 active:scale-98 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSubmitting ? (
+                        <span>Agendando cita...</span>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-5 h-5 text-stone-950" />
+                          <span>Confirmar Reserva</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
             </form>
           )}
         </div>
