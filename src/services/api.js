@@ -1429,6 +1429,12 @@ export async function getAdminBookings() {
   try {
     const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
     deletedIds = new Set(Array.isArray(rawDel) ? rawDel : []);
+    // Proteger permanentemente las 3 reservas reales del negocio
+    const PROTECTED_REAL_BOOKINGS = ['book-real-jennifer-vasquez', 'book-1790280190756', 'book-laura-vanesa-maza-1790651249486'];
+    PROTECTED_REAL_BOOKINGS.forEach(pid => {
+      deletedIds.delete(pid);
+      deletedIds.delete(`book-${pid}`);
+    });
   } catch (e) {}
 
   let serverBookings = [];
