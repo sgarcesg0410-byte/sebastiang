@@ -243,6 +243,36 @@ function getDB() {
         createdAt: "2026-09-19T10:00:00.000Z",
         status: "confirmed",
         isReal: true
+      },
+      {
+        id: "book-1790280190756",
+        clientName: "Marlin torres",
+        clientWhatsApp: "+57 313 666 7262",
+        packageId: "pkg-6fotos",
+        packageName: "6 Fotos Digitales",
+        totalPrice: 75000,
+        locationType: "outside_san_antero",
+        specificLocation: "Locación Especial / Fuera",
+        dateTime: "03/10/2026 a las 3:10 p. m.",
+        description: "Primer mes bebé",
+        createdAt: "2026-09-24T20:03:10.756Z",
+        status: "confirmed",
+        isReal: true
+      },
+      {
+        id: "book-laura-vanesa-maza-1790651249486",
+        clientName: "Laura Vanesa Maza de Hoyos",
+        clientWhatsApp: "+57 313 597 5323",
+        packageId: "pkg-4fotos",
+        packageName: "4 Fotos Digitales",
+        totalPrice: 45000,
+        locationType: "san_antero",
+        specificLocation: "Jose Antonio Galán",
+        dateTime: "29/11/2026 a las 4:00 p. m.",
+        description: "Grado",
+        createdAt: "2026-09-29T03:07:32.000Z",
+        status: "confirmed",
+        isReal: true
       }
     ],
     payments: [],
