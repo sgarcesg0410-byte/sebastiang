@@ -100,7 +100,12 @@ import {
   sendEmailNotification,
   exportCatalogBackup,
   importCatalogBackup,
-  getDeletedCatalogIds
+  exportFullSystemBackup,
+  importFullSystemBackup,
+  getDeletedCatalogIds,
+  getDeletedBookingIds,
+  saveLocalBooking,
+  createBooking
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -313,6 +318,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [bookings, setBookings] = useState(REAL_DEFAULT_BOOKINGS);
   const [editingBooking, setEditingBooking] = useState(null);
   const [isSavingBooking, setIsSavingBooking] = useState(false);
+
+  // Modal de Crear / Restaurar Reserva Manual
+  const [showCreateBookingModal, setShowCreateBookingModal] = useState(false);
+  const [newBookingForm, setNewBookingForm] = useState({
+    clientName: '',
+    clientWhatsApp: '',
+    clientEmail: '',
+    packageId: '',
+    locationType: 'san_antero',
+    specificLocation: '',
+    dateTime: '',
+    description: '',
+    totalPrice: 0,
+    status: 'pending'
+  });
+  const [isCreatingBooking, setIsCreatingBooking] = useState(false);
+  const fullBackupInputRef = useRef(null);
 
   // Modo de visualización de Reservas: Lista tradicional o Calendario Mensual
   const [bookingViewMode, setBookingViewMode] = useState('list'); // 'list' | 'calendar'
@@ -859,7 +881,32 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value) && bRes.value.length > 0 
         ? bRes.value 
         : REAL_DEFAULT_BOOKINGS;
-      setBookings(prev => areArraysEqual(prev, bData) ? prev : bData);
+
+      setBookings(prev => {
+        const rawDel = getDeletedBookingIds();
+        const deletedSet = new Set(Array.isArray(rawDel) ? rawDel : []);
+
+        const map = new Map();
+        // 1. Preservar todas las reservas previas válidas (que no hayan sido eliminadas por el usuario)
+        (prev || []).forEach(b => {
+          if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
+            map.set(b.id, b);
+          }
+        });
+        // 2. Fusionar con las reservas recibidas de la fuente (servidor/nube/local)
+        (bData || []).forEach(b => {
+          if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
+            const existing = map.get(b.id);
+            if (existing) {
+              map.set(b.id, { ...b, ...existing, status: existing.status || b.status });
+            } else {
+              map.set(b.id, b);
+            }
+          }
+        });
+        const merged = Array.from(map.values());
+        return areArraysEqual(prev, merged) ? prev : merged;
+      });
 
       const rawSessions = sRes.status === 'fulfilled' && Array.isArray(sRes.value) ? sRes.value : [];
       const cleanSessions = rawSessions.filter(
@@ -1300,7 +1347,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       // 1. Asegurar que el estado quede como 'confirmed' en Supabase y localmente
       if (confirmingBooking.status !== 'confirmed') {
         await updateBookingStatus(confirmingBooking.id, 'confirmed');
-        setBookings(prev => prev.map(b => b.id === confirmingBooking.id ? { ...b, status: 'confirmed' } : b));
+        const updatedObj = { ...confirmingBooking, status: 'confirmed' };
+        saveLocalBooking(updatedObj);
+        setBookings(prev => {
+          const list = prev || [];
+          const exists = list.some(b => b.id === confirmingBooking.id);
+          if (exists) {
+            return list.map(b => b.id === confirmingBooking.id ? updatedObj : b);
+          }
+          return [updatedObj, ...list];
+        });
       }
       // 2. Si el cliente suministró correo, enviar comprobante formal por email
       if (confirmingBooking.clientEmail && confirmingBooking.clientEmail.includes('@')) {
@@ -1423,11 +1479,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const handleStatusChange = async (bookingId, newStatus) => {
     try {
       await updateBookingStatus(bookingId, newStatus);
+      const target = bookings.find(item => item.id === bookingId);
+      if (target) {
+        saveLocalBooking({ ...target, status: newStatus });
+      }
       setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
       if (newStatus === 'confirmed') {
         const b = bookings.find(item => item.id === bookingId);
         if (b) {
-          handleOpenConfirmBookingModal(b);
+          handleOpenConfirmBookingModal({ ...b, status: newStatus });
         }
       }
     } catch (err) {
@@ -1458,6 +1518,76 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       } catch (err) {
         alert('Error al eliminar reserva: ' + err.message);
       }
+    }
+  };
+
+  const handleCreateBookingManual = async (e) => {
+    if (e) e.preventDefault();
+    if (!newBookingForm.clientName || !newBookingForm.clientWhatsApp) {
+      alert('Por favor ingresa al menos el nombre y número de WhatsApp del cliente.');
+      return;
+    }
+    setIsCreatingBooking(true);
+    try {
+      const selectedPkg = (packages || []).find(p => p.id === newBookingForm.packageId) || packages?.[0] || DEFAULT_PACKAGES[0];
+      const surcharge = newBookingForm.locationType === 'outside' ? (settings?.outOfSanAnteroSurcharge || 10000) : 0;
+      const calculatedPrice = (selectedPkg?.price || 45000) + surcharge;
+      const finalPrice = newBookingForm.totalPrice > 0 ? Number(newBookingForm.totalPrice) : calculatedPrice;
+
+      const bookingData = {
+        clientName: newBookingForm.clientName.trim(),
+        clientWhatsApp: newBookingForm.clientWhatsApp.trim(),
+        clientEmail: (newBookingForm.clientEmail || '').trim(),
+        packageId: selectedPkg?.id || 'pkg-4fotos',
+        packageName: selectedPkg?.name || '4 Fotos Digitales',
+        totalPrice: finalPrice,
+        locationType: newBookingForm.locationType === 'outside' ? 'outside_san_antero' : 'san_antero',
+        specificLocation: (newBookingForm.specificLocation || 'San Antero').trim(),
+        dateTime: newBookingForm.dateTime || new Date().toLocaleDateString('es-CO'),
+        description: (newBookingForm.description || '').trim(),
+        status: newBookingForm.status || 'pending'
+      };
+
+      let createdItem;
+      try {
+        const result = await createBooking(bookingData);
+        createdItem = result?.booking || {
+          id: `book-${Date.now()}`,
+          ...bookingData,
+          createdAt: new Date().toISOString()
+        };
+      } catch (apiErr) {
+        createdItem = {
+          id: `book-${Date.now()}`,
+          ...bookingData,
+          createdAt: new Date().toISOString()
+        };
+      }
+
+      // 1. Guardar de inmediato en almacenamiento local seguro
+      saveLocalBooking(createdItem);
+
+      // 2. Insertar al inicio de la lista de reservas
+      setBookings(prev => [createdItem, ...(prev || []).filter(b => b.id !== createdItem.id)]);
+
+      setShowCreateBookingModal(false);
+      setNewBookingForm({
+        clientName: '',
+        clientWhatsApp: '',
+        clientEmail: '',
+        packageId: '',
+        locationType: 'san_antero',
+        specificLocation: '',
+        dateTime: '',
+        description: '',
+        totalPrice: 0,
+        status: 'pending'
+      });
+      alert(`✓ ¡Reserva de "${createdItem.clientName}" registrada con éxito! Ya está protegida en tu sistema.`);
+    } catch (err) {
+      alert('Error al registrar reserva: ' + (err?.message || err));
+    } finally {
+      setIsCreatingBooking(false);
     }
   };
 
@@ -2023,6 +2153,43 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           const parsed = JSON.parse(evt.target.result);
           const res = await importCatalogBackup(parsed);
           alert(`✓ ¡${res.count} fotos importadas y restauradas con éxito en tu catálogo!`);
+          loadAllAdminData();
+          if (onCatalogUpdated) onCatalogUpdated();
+        } catch (parseErr) {
+          alert('El archivo no es una copia de seguridad válida: ' + parseErr.message);
+        }
+      };
+      reader.readAsText(file);
+    } catch (err) {
+      alert('Error al leer archivo: ' + err.message);
+    }
+  };
+
+  const handleExportFullBackup = async () => {
+    try {
+      const backup = await exportFullSystemBackup();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `respaldo-total-sebastian-g-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Error al exportar respaldo total: ' + err.message);
+    }
+  };
+
+  const handleImportFullBackupFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          const parsed = JSON.parse(evt.target.result);
+          const res = await importFullSystemBackup(parsed);
+          alert(`✓ ¡Respaldo total restaurado! ${res.catalogCount} fotos y ${res.bookingsCount} reservas sincronizadas en este dispositivo.`);
           loadAllAdminData();
           if (onCatalogUpdated) onCatalogUpdated();
         } catch (parseErr) {
@@ -3093,6 +3260,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">Actualizar</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const defaultPkg = (packages || [])[0] || DEFAULT_PACKAGES[0];
+                  setNewBookingForm({
+                    clientName: '',
+                    clientWhatsApp: '',
+                    clientEmail: '',
+                    packageId: defaultPkg?.id || 'pkg-4fotos',
+                    locationType: 'san_antero',
+                    specificLocation: 'San Antero',
+                    dateTime: new Date().toLocaleDateString('es-CO'),
+                    description: '',
+                    totalPrice: defaultPkg?.price || 45000,
+                    status: 'pending'
+                  });
+                  setShowCreateBookingModal(true);
+                }}
+                className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+                title="Registrar manualmente una nueva reserva o restaurar una reserva confirmada"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Nueva Reserva</span>
+              </button>
             </div>
           </div>
 
@@ -3962,6 +4154,185 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs hover:from-amber-400 hover:to-amber-300 disabled:opacity-50"
                 >
                   {isSavingBooking ? 'Guardando...' : 'Guardar Cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA AGREGAR O RESTAURAR NUEVA RESERVA MANUAL */}
+      {showCreateBookingModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md p-4 flex items-center justify-center">
+          <div className="relative w-full max-w-lg bg-stone-900 border border-amber-500/40 rounded-3xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-base font-serif font-bold text-white">
+                    Registrar / Restaurar Nueva Reserva
+                  </h3>
+                  <p className="text-[11px] text-stone-400">
+                    Añade reservas recibidas por WhatsApp, teléfono o correo para protegerlas en tu sistema.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateBookingModal(false)}
+                className="p-1.5 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateBookingManual} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-stone-300 mb-1">Nombre Completo del Cliente *</label>
+                <input
+                  type="text"
+                  value={newBookingForm.clientName}
+                  onChange={(e) => setNewBookingForm(prev => ({ ...prev, clientName: e.target.value }))}
+                  placeholder="Ej: Jennifer Vásquez"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">WhatsApp / Teléfono *</label>
+                  <input
+                    type="text"
+                    value={newBookingForm.clientWhatsApp}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, clientWhatsApp: e.target.value }))}
+                    placeholder="Ej: 3001234567"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white font-mono placeholder-stone-600 focus:border-amber-400 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Correo Electrónico (Opcional)</label>
+                  <input
+                    type="email"
+                    value={newBookingForm.clientEmail}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, clientEmail: e.target.value }))}
+                    placeholder="cliente@ejemplo.com"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Paquete Fotográfico</label>
+                  <select
+                    value={newBookingForm.packageId}
+                    onChange={(e) => {
+                      const selId = e.target.value;
+                      const pkg = (packages || []).find(p => p.id === selId);
+                      setNewBookingForm(prev => ({
+                        ...prev,
+                        packageId: selId,
+                        totalPrice: pkg ? pkg.price : prev.totalPrice
+                      }));
+                    }}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white focus:border-amber-400 outline-none"
+                  >
+                    {(packages || []).map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} (${(p.price || 0).toLocaleString('es-CO')} COP)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Valor Total Cobrado ($ COP)</label>
+                  <input
+                    type="number"
+                    value={newBookingForm.totalPrice || ''}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, totalPrice: Number(e.target.value) }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white font-mono focus:border-amber-400 outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Zona de la Sesión</label>
+                  <select
+                    value={newBookingForm.locationType}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, locationType: e.target.value }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white focus:border-amber-400 outline-none"
+                  >
+                    <option value="san_antero">En San Antero (Tarifa estándar)</option>
+                    <option value="outside">Fuera de San Antero (+ Recargo transporte)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Lugar Específico</label>
+                  <input
+                    type="text"
+                    value={newBookingForm.specificLocation}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, specificLocation: e.target.value }))}
+                    placeholder="Ej: Playa Blanca / Hotel / Cabaña"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Fecha y Hora Programada *</label>
+                  <input
+                    type="text"
+                    value={newBookingForm.dateTime}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, dateTime: e.target.value }))}
+                    placeholder="Ej: 30/09/2026 a las 4:00 p. m."
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-stone-300 mb-1">Estado Inicial</label>
+                  <select
+                    value={newBookingForm.status}
+                    onChange={(e) => setNewBookingForm(prev => ({ ...prev, status: e.target.value }))}
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white focus:border-amber-400 outline-none"
+                  >
+                    <option value="pending">⏳ Pendiente</option>
+                    <option value="confirmed">✓ Confirmada</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-stone-300 mb-1">Notas / Detalles Adicionales</label>
+                <textarea
+                  value={newBookingForm.description}
+                  onChange={(e) => setNewBookingForm(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Detalles sobre vestuario, ocasión especial, requerimientos del cliente..."
+                  rows={2}
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateBookingModal(false)}
+                  className="px-4 py-2 rounded-xl text-stone-400 hover:text-white bg-stone-800 text-xs font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingBooking}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 font-bold text-xs hover:from-amber-400 hover:to-amber-300 shadow-md shadow-amber-500/20 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isCreatingBooking ? 'Guardando...' : 'Guardar y Proteger Reserva'}</span>
                 </button>
               </div>
             </form>
@@ -5495,6 +5866,33 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   accept=".json"
                   className="hidden"
                 />
+                <input
+                  type="file"
+                  ref={fullBackupInputRef}
+                  onChange={handleImportFullBackupFile}
+                  accept=".json"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={handleExportFullBackup}
+                  className="px-3 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 text-xs font-bold rounded-xl shadow-md shadow-amber-500/20 transition-all flex items-center gap-1.5 active:scale-95"
+                  title="Descargar copia de seguridad total con todas las fotos y reservas en formato JSON"
+                >
+                  <DownloadCloud className="w-3.5 h-3.5" />
+                  <span>Respaldo Total (Fotos + Reservas)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fullBackupInputRef.current?.click()}
+                  className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-amber-300 text-xs font-bold rounded-xl border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+                  title="Cargar respaldo total en este computador para tener fotos y reservas al instante"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Restaurar Respaldo Total</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={handleExportCatalog}
@@ -5502,7 +5900,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   title="Descargar una copia de seguridad con todas tus fotos en un archivo JSON"
                 >
                   <DownloadCloud className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Respaldar Fotos</span>
+                  <span>Respaldar Solo Fotos</span>
                 </button>
 
                 <button
@@ -5512,7 +5910,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   title="Restaurar fotos desde un archivo JSON de respaldo"
                 >
                   <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Restaurar Copia</span>
+                  <span>Restaurar Solo Fotos</span>
                 </button>
 
                 {catalog.some(item => isSampleItem(item)) && (

@@ -339,14 +339,7 @@ app.post('/api/bookings', (req, res) => {
 
   runtimeDB.bookings.unshift(newBooking);
 
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.bookings = runtimeDB.bookings;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  saveDB(runtimeDB);
 
   // Disparo asíncrono de correos automáticos (a Sebastián y al cliente si suministró correo)
   sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
@@ -527,6 +520,15 @@ app.post('/api/admin/auth', (req, res) => {
 });
 
 app.get('/api/admin/bookings', (req, res) => {
+  try {
+    const diskDB = getDB();
+    if (diskDB && Array.isArray(diskDB.bookings)) {
+      const map = new Map();
+      (diskDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, b); });
+      (runtimeDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, b); });
+      runtimeDB.bookings = Array.from(map.values());
+    }
+  } catch (e) {}
   res.json(runtimeDB.bookings || []);
 });
 
@@ -537,15 +539,7 @@ app.patch('/api/admin/bookings/:id', (req, res) => {
   if (!booking) return res.status(404).json({ error: 'Reserva no encontrada.' });
 
   Object.assign(booking, updates);
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.bookings = runtimeDB.bookings;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  saveDB(runtimeDB);
 
   res.json({ success: true, booking });
 });
@@ -553,15 +547,7 @@ app.patch('/api/admin/bookings/:id', (req, res) => {
 app.delete('/api/admin/bookings/:id', (req, res) => {
   const { id } = req.params;
   runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id);
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.bookings = runtimeDB.bookings;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  saveDB(runtimeDB);
 
   res.json({ success: true });
 });
