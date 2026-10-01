@@ -6,7 +6,11 @@ import {
   idbDeleteCatalogItem,
   idbGetSessions,
   idbSaveSession,
-  idbDeleteSession
+  idbDeleteSession,
+  idbGetBookings,
+  idbSaveBooking,
+  idbSaveBookingsBatch,
+  idbDeleteBooking
 } from './indexedDb';
 
 const API_BASE = '/api';
@@ -547,20 +551,55 @@ export function getDeletedBookingIds() {
 }
 
 export function saveLocalBooking(booking) {
+  if (!booking || !booking.id) return;
   try {
-    const bookings = getLocalBookings().filter(b => b.id !== booking.id && b.clientName !== 'Camila Rodríguez');
-    bookings.unshift(booking);
+    const enriched = { ...booking, isReal: true };
+    const bookings = getLocalBookings().filter(b => b.id !== enriched.id && b.clientName !== 'Camila Rodríguez');
+    bookings.unshift(enriched);
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(bookings));
     localStorage.setItem('sebastian_g_bookings_last_sync', Date.now().toString());
+
+    // 1. Blindaje en IndexedDB (Bóveda inmutable 100MB+)
+    try {
+      idbSaveBooking(enriched);
+    } catch (e) {}
+
+    // 2. Sincronización inmutable directa a Supabase Cloud (2 capas: catalog y bookings)
+    try {
+      const supaId = enriched.id.startsWith('book-') ? enriched.id : `book-${enriched.id}`;
+      supabase.from('catalog').upsert({
+        id: supaId,
+        title: enriched.clientName || 'Reserva',
+        category: 'booking_data',
+        location: enriched.specificLocation || '',
+        url: JSON.stringify(enriched)
+      }).then(() => {}).catch(() => {});
+
+      supabase.from('bookings').upsert({
+        id: supaId,
+        client_name: enriched.clientName || 'Cliente',
+        client_whatsapp: enriched.clientWhatsApp || '',
+        client_email: enriched.clientEmail || '',
+        package_id: enriched.packageId || 'pkg-4fotos',
+        package_name: enriched.packageName || 'Sesión Fotográfica',
+        total_price: Number(enriched.totalPrice || 0),
+        location_type: enriched.locationType || 'san_antero',
+        specific_location: enriched.specificLocation || '',
+        date_time: enriched.dateTime || '',
+        description: enriched.description || '',
+        status: enriched.status || 'pending'
+      }).then(() => {}).catch(() => {});
+    } catch (e) {}
+
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         const bc = new BroadcastChannel('bookings_realtime_sync');
-        bc.postMessage({ type: 'new_booking', booking });
+        bc.postMessage({ type: 'new_booking', booking: enriched });
         setTimeout(() => bc.close(), 300);
       }
     } catch (e) {}
   } catch (e) {
-    console.warn('No se pudo guardar booking en localStorage:', e);
+    console.warn('No se pudo guardar booking en localStorage/IndexedDB:', e);
   }
 }
 
@@ -1522,6 +1561,12 @@ export async function getAdminBookings() {
     });
   } catch (e) {}
 
+  // 1. Blindaje Bóveda IndexedDB (100MB+ local resistente a reinicios y limpieza)
+  let idbBookings = [];
+  try {
+    idbBookings = await idbGetBookings();
+  } catch (e) {}
+
   let serverBookings = [];
   try {
     const res = await fetch(`${API_BASE}/admin/bookings`);
@@ -1566,7 +1611,8 @@ export async function getAdminBookings() {
         dateTime: b.date_time,
         description: b.description,
         status: b.status,
-        createdAt: b.created_at
+        createdAt: b.created_at,
+        isReal: true
       }));
     }
   } catch (e) {}
@@ -1577,30 +1623,31 @@ export async function getAdminBookings() {
   // 1. Incorporar reservas predeterminadas garantizadas
   REAL_DEFAULT_BOOKINGS.forEach(b => {
     if (b && b.id && !deletedIds.has(b.id)) {
-      map.set(b.id, b);
+      map.set(b.id, { ...b, isReal: true });
     }
   });
 
-  // 2. Fusionar con todas las fuentes
-  [...localBookings, ...serverBookings, ...cloudBookings, ...directBookings].forEach(b => {
+  // 2. Fusionar con todas las fuentes garantizando no pérdida de reservas nuevas o viejas
+  [...idbBookings, ...localBookings, ...serverBookings, ...cloudBookings, ...directBookings].forEach(b => {
     if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       const existing = map.get(b.id);
-      map.set(b.id, existing ? { ...existing, ...b } : b);
+      map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
     }
   });
 
   // 3. Garantizar siempre las 3 reservas reales del negocio
   REAL_DEFAULT_BOOKINGS.forEach(b => {
     if (b && b.id && !deletedIds.has(b.id) && !map.has(b.id)) {
-      map.set(b.id, b);
+      map.set(b.id, { ...b, isReal: true });
     }
   });
 
   const combined = Array.from(map.values()).filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`));
 
-  // Respaldar inmediatamente en caché local
+  // Respaldar inmediatamente en caché local Y en Bóveda IndexedDB
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(combined));
+    idbSaveBookingsBatch(combined);
   } catch (e) {}
 
   return combined;
@@ -1627,14 +1674,15 @@ export async function updateAdminBooking(id, updates) {
   const idx = list.findIndex(b => b.id === id);
   let updatedBooking;
   if (idx >= 0) {
-    list[idx] = { ...list[idx], ...updates };
+    list[idx] = { ...list[idx], ...updates, isReal: true };
     updatedBooking = list[idx];
   } else {
-    updatedBooking = { id, ...updates };
+    updatedBooking = { id, ...updates, isReal: true };
     list.unshift(updatedBooking);
   }
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
+    idbSaveBooking(updatedBooking);
   } catch (e) {}
 
   // Sincronizar actualización de reserva en la nube (Supabase)
@@ -1649,14 +1697,20 @@ export async function updateAdminBooking(id, updates) {
         url: JSON.stringify(updatedBooking)
       });
       try {
-        await supabase.from('bookings').update({
-          status: updatedBooking.status || 'pending',
-          client_name: updatedBooking.clientName,
-          client_whatsapp: updatedBooking.clientWhatsApp,
+        await supabase.from('bookings').upsert({
+          id: supaId,
+          client_name: updatedBooking.clientName || 'Cliente',
+          client_whatsapp: updatedBooking.clientWhatsApp || '',
+          client_email: updatedBooking.clientEmail || '',
+          package_id: updatedBooking.packageId || 'pkg-4fotos',
+          package_name: updatedBooking.packageName || 'Sesión Fotográfica',
           total_price: Number(updatedBooking.totalPrice || 0),
-          date_time: updatedBooking.dateTime,
-          specific_location: updatedBooking.specificLocation
-        }).eq('id', supaId);
+          location_type: updatedBooking.locationType || 'san_antero',
+          specific_location: updatedBooking.specificLocation || '',
+          date_time: updatedBooking.dateTime || '',
+          description: updatedBooking.description || '',
+          status: updatedBooking.status || 'pending'
+        });
       } catch (tblErr) {}
     } catch (e) {}
   }
@@ -1688,6 +1742,11 @@ export async function deleteAdminBooking(id) {
   } catch (e) {}
 
   try {
+    idbDeleteBooking(id);
+    idbDeleteBooking(supaId);
+  } catch (e) {}
+
+  try {
     await fetch(`${API_BASE}/admin/bookings/${id}`, { method: 'DELETE' });
   } catch (err) {
     console.warn('Error al eliminar reserva en servidor:', err);
@@ -1696,6 +1755,8 @@ export async function deleteAdminBooking(id) {
   try {
     await supabase.from('catalog').delete().eq('id', supaId);
     await supabase.from('catalog').delete().eq('id', id);
+    await supabase.from('bookings').delete().eq('id', supaId);
+    await supabase.from('bookings').delete().eq('id', id);
   } catch (e) {}
 
   const list = getLocalBookings().filter(b => b.id !== id && b.id !== supaId);
