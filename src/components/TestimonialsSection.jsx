@@ -46,7 +46,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
   }
 
   return (
-    <section className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">
+    <section id="testimonials-section" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">
       
       {/* CABECERA DE TESTIMONIOS */}
       <div className="text-center max-w-3xl mx-auto mb-14">
@@ -82,6 +82,24 @@ export default function TestimonialsSection({ onOpenBooking }) {
             <span className="text-base sm:text-lg font-black text-purple-400 font-mono">Full HD</span>
             <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">Calidad Original</span>
           </div>
+        </div>
+
+        {/* BOTÓN PARA DEJAR OPINIÓN DIRECTA */}
+        <div className="mt-7 flex justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.history.pushState(null, '', '/calificar');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }
+            }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 hover:border-amber-500/50 text-amber-300 hover:text-amber-200 text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>¿Viviste una sesión con Sebastian G? Deja tu opinión aquí</span>
+          </button>
         </div>
       </div>
 

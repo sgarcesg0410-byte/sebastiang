@@ -96,6 +96,7 @@ import {
   formatDateTime12Hour,
   formatPhotoUrl,
   getReviews,
+  deleteReview,
   getWalletBaseBalances,
   fetchCloudWalletBaseBalances,
   saveWalletBaseBalances,
@@ -319,6 +320,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [isAdjustingBalances, setIsAdjustingBalances] = useState(false);
   const [tempBalances, setTempBalances] = useState({ nequi: 0, daviplata: 0, dale: 0 });
   const [reviewsList, setReviewsList] = useState([]);
+  const [reviewShareClientName, setReviewShareClientName] = useState('');
+  const [reviewShareSession, setReviewShareSession] = useState('');
+  const [copiedReviewLink, setCopiedReviewLink] = useState(false);
+  const [deletingReviewId, setDeletingReviewId] = useState(null);
 
   // Gestión de Precios
   const [editablePackages, setEditablePackages] = useState(DEFAULT_PACKAGES);
@@ -5128,6 +5133,137 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           </div>
 
+          {/* ENLACE DIRECTO PARA SOLICITAR OPINIONES A CLIENTES */}
+          <div className="bg-gradient-to-br from-amber-950/40 via-stone-900 to-stone-900 border border-amber-500/40 rounded-3xl p-5 sm:p-7 shadow-2xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-800">
+              <div className="flex items-start gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 shadow-inner">
+                  <Star className="w-6 h-6 text-amber-400 fill-amber-400" />
+                </div>
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-bold uppercase tracking-wider mb-1">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>Link Oficial de Satisfacción</span>
+                  </div>
+                  <h4 className="text-base sm:text-lg font-serif font-bold text-white">
+                    Enlace Directo para Solicitar Opiniones a tus Clientes
+                  </h4>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    Envía este enlace por WhatsApp al terminar la sesión. El cliente califica en 1 minuto y su reseña se publica al instante en tu página web.
+                  </p>
+                </div>
+              </div>
+
+              {/* Botón de apertura rápida */}
+              <a
+                href="/calificar"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors border border-stone-700 shrink-0 self-start sm:self-auto cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                <span>Abrir Vista de Calificación</span>
+              </a>
+            </div>
+
+            {/* GENERADOR PERSONALIZADO */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-stone-300 font-semibold mb-1">
+                  Nombre del Cliente (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={reviewShareClientName}
+                  onChange={(e) => setReviewShareClientName(e.target.value)}
+                  placeholder="Ej: Jennifer Vásquez"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-stone-300 font-semibold mb-1">
+                  Tipo de Sesión o Paquete (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={reviewShareSession}
+                  onChange={(e) => setReviewShareSession(e.target.value)}
+                  placeholder="Ej: 8 Fotos Playa Coveñas"
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                />
+              </div>
+            </div>
+
+            {/* ENLACE RESULTANTE Y BOTONES DE COPIAR / COMPARTIR */}
+            {(() => {
+              const baseUrl = typeof window !== 'undefined' ? `${window.location.origin}/calificar` : 'https://sebastiang.app/calificar';
+              const params = new URLSearchParams();
+              if (reviewShareClientName.trim()) params.set('cliente', reviewShareClientName.trim());
+              if (reviewShareSession.trim()) params.set('sesion', reviewShareSession.trim());
+              const queryString = params.toString();
+              const fullUrl = queryString ? `${baseUrl}?${queryString}` : baseUrl;
+
+              const clientGreeting = reviewShareClientName.trim() ? ` *${reviewShareClientName.trim()}*` : '';
+              const waText = encodeURIComponent(
+                `🌟 *¡Hola${clientGreeting}!* ✨\n\n` +
+                `Fue un placer realizar tu sesión fotográfica con *Sebastian G* 📸🌊.\n\n` +
+                `Tu opinión es fundamental para nosotros. ¿Nos regalarías 1 minuto para calificar tu experiencia y compartir cómo te sentiste?\n\n` +
+                `⭐ *Puedes dejar tu calificación aquí:*\n${fullUrl}\n\n` +
+                `_¡Tu opinión aparecerá directamente en nuestra página oficial! Muchísimas gracias por tu confianza._ 🙏✨`
+              );
+              const waShareUrl = `https://wa.me/?text=${waText}`;
+
+              return (
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <div className="flex-1 bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2.5 flex items-center gap-2 font-mono text-xs text-amber-300 overflow-x-auto select-all">
+                      <LinkIcon className="w-3.5 h-3.5 text-stone-500 shrink-0" />
+                      <span className="truncate">{fullUrl}</span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(fullUrl);
+                        setCopiedReviewLink(true);
+                        setTimeout(() => setCopiedReviewLink(false), 2500);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-amber-500/20 active:scale-95 shrink-0 cursor-pointer"
+                    >
+                      {copiedReviewLink ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>¡Enlace Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          <span>Copiar Enlace</span>
+                        </>
+                      )}
+                    </button>
+
+                    <a
+                      href={waShareUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/20 active:scale-95 shrink-0 cursor-pointer"
+                    >
+                      <MessageCircle className="w-4 h-4 fill-stone-950" />
+                      <span>Compartir por WhatsApp</span>
+                    </a>
+                  </div>
+
+                  <p className="text-[11px] text-stone-400 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>Enlace permanente directo: <strong className="text-white">https://sebastiang.app/calificar</strong> (también compatible con <code className="text-amber-300">/opiniones</code>)</span>
+                  </p>
+                </div>
+              );
+            })()}
+          </div>
+
           {/* LISTA DE OPINIONES */}
           {reviewsList.length === 0 ? (
             <div className="p-8 sm:p-12 text-center bg-stone-900/60 border border-stone-800 rounded-3xl text-stone-400 space-y-3">
@@ -5136,7 +5272,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 Aún no hay opiniones de clientes registradas
               </h4>
               <p className="text-xs max-w-lg mx-auto text-stone-400 leading-relaxed">
-                Cuando tus clientes reciban la entrega de sus fotos en su galería digital, se les habilitará automáticamente la opción de calificar tu servicio con estrellas, comentario y recomendación, y aparecerán aquí y en la página central.
+                Usa el enlace directo de arriba para compartirlo con tus clientes por WhatsApp. Cuando califiquen, su opinión aparecerá de inmediato aquí y en la página principal con sus estrellas.
               </p>
             </div>
           ) : (
@@ -5144,7 +5280,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               {reviewsList.map((review, idx) => (
                 <div
                   key={review.id || idx}
-                  className="bg-stone-900/90 border border-stone-800 hover:border-amber-500/40 rounded-3xl p-5 flex flex-col justify-between shadow-xl transition-all space-y-4"
+                  className="bg-stone-900/90 border border-stone-800 hover:border-amber-500/40 rounded-3xl p-5 flex flex-col justify-between shadow-xl transition-all space-y-4 relative group"
                 >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -5153,12 +5289,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <Star key={i} className="w-4 h-4 text-amber-400 fill-amber-400" />
                         ))}
                       </div>
-                      {review.recommends && (
-                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Recomienda</span>
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {review.recommend !== false && review.recommends !== false && (
+                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Recomienda</span>
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={deletingReviewId === review.id}
+                          onClick={async () => {
+                            if (!window.confirm(`¿Deseas eliminar la reseña de "${review.clientName || 'Cliente'}"? Se quitará de la página web oficial.`)) return;
+                            try {
+                              setDeletingReviewId(review.id);
+                              await deleteReview(review.id);
+                              setReviewsList(prev => prev.filter(r => r.id !== review.id));
+                            } catch (e) {
+                              alert('Error al eliminar reseña: ' + (e.message || 'Intenta de nuevo'));
+                            } finally {
+                              setDeletingReviewId(null);
+                            }
+                          }}
+                          className="p-1.5 text-stone-500 hover:text-red-400 hover:bg-stone-800 rounded-lg transition-colors cursor-pointer"
+                          title="Eliminar reseña de la página"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <p className="text-xs text-stone-200 italic leading-relaxed">
@@ -5172,7 +5330,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         {review.clientName || 'Cliente Satisfecho'}
                       </h5>
                       <span className="text-[10px] text-amber-400/90 font-medium">
-                        {review.sessionType || review.packageTitle || 'Sesión Fotográfica'}
+                        {review.sessionTitle || review.sessionType || review.packageTitle || 'Sesión Fotográfica'}
                       </span>
                     </div>
                     {review.date && (

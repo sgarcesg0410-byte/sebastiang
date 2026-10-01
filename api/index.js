@@ -1191,4 +1191,163 @@ app.post('/api/admin/pin/recover', (req, res) => {
   res.json({ success: true, verified: true, currentPin: runtimeDB.settings.adminPin });
 });
 
+// --- CALIFICACIONES & RESEÑAS PÚBLICAS Y DE CLIENTES ---
+app.get('/api/reviews', async (req, res) => {
+  let reviews = runtimeDB.reviews || [];
+
+  // Sincronizar con Supabase Cloud para recopilar reseñas almacenadas
+  try {
+    const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.review_data&select=*&order=created_at.desc`, {
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`
+      }
+    });
+    if (supaRes.ok) {
+      const rows = await supaRes.json();
+      if (Array.isArray(rows)) {
+        const cloudReviews = rows.map(r => {
+          try { return JSON.parse(r.url); } catch (e) { return null; }
+        }).filter(Boolean);
+
+        const map = new Map();
+        [...reviews, ...cloudReviews].forEach(rev => {
+          if (rev && rev.id) map.set(rev.id, rev);
+        });
+        reviews = Array.from(map.values());
+        runtimeDB.reviews = reviews;
+      }
+    }
+  } catch (err) {
+    console.warn('Error obteniendo reseñas desde Supabase:', err);
+  }
+
+  // Filtrar reseñas temporales si existieran
+  reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+  res.json(reviews);
+});
+
+// Guardar reseña pública directa (desde https://sebastiang.app/calificar)
+app.post('/api/reviews', async (req, res) => {
+  const { clientName, sessionTitle, rating, recommend, comment } = req.body || {};
+  if (!clientName || !comment) {
+    return res.status(400).json({ error: 'Faltan nombre del cliente o comentario.' });
+  }
+
+  const newReview = {
+    id: `rev-${Date.now()}`,
+    clientName: String(clientName).trim(),
+    sessionTitle: String(sessionTitle || 'Sesión Fotográfica').trim(),
+    rating: Number(rating) || 5,
+    recommend: recommend !== false,
+    comment: String(comment).trim(),
+    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    verified: true,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!runtimeDB.reviews) runtimeDB.reviews = [];
+  runtimeDB.reviews.unshift(newReview);
+  saveDB(runtimeDB);
+
+  // Persistir en Supabase Cloud para inmutabilidad y sincronización en tiempo real
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `rev-${newReview.id}`,
+        title: newReview.clientName,
+        category: 'review_data',
+        location: `${newReview.rating} estrellas`,
+        url: JSON.stringify(newReview)
+      })
+    });
+  } catch (err) {
+    console.warn('Error al guardar reseña en Supabase:', err);
+  }
+
+  // Disparo de notificación Push 24/7 al fotógrafo
+  sendOneSignalPush({
+    title: `⭐ ¡Nueva Calificación de ${newReview.clientName}!`,
+    message: `${'⭐'.repeat(newReview.rating)} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'review', reviewId: newReview.id }
+  }).catch(err => console.error('Error OneSignal Push reseña:', err));
+
+  res.status(201).json({ success: true, review: newReview });
+});
+
+// Guardar reseña desde galería de cliente
+app.post('/api/gallery/:token/review', async (req, res) => {
+  const { clientName, sessionTitle, rating, recommend, comment } = req.body || {};
+  const newReview = {
+    id: `rev-${Date.now()}`,
+    clientName: String(clientName || 'Cliente').trim(),
+    sessionTitle: String(sessionTitle || 'Sesión Fotográfica').trim(),
+    rating: Number(rating) || 5,
+    recommend: recommend !== false,
+    comment: String(comment || '').trim(),
+    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    verified: true,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!runtimeDB.reviews) runtimeDB.reviews = [];
+  runtimeDB.reviews.unshift(newReview);
+  saveDB(runtimeDB);
+
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `rev-${newReview.id}`,
+        title: newReview.clientName,
+        category: 'review_data',
+        location: `${newReview.rating} estrellas`,
+        url: JSON.stringify(newReview)
+      })
+    });
+  } catch (err) {}
+
+  sendOneSignalPush({
+    title: `⭐ ¡Nueva Reseña de ${newReview.clientName}!`,
+    message: `${'⭐'.repeat(newReview.rating)} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
+    url: 'https://sebastiang.app/?mode=admin',
+    data: { type: 'review', reviewId: newReview.id }
+  }).catch(err => console.error('Error Push galería reseña:', err));
+
+  res.json({ success: true, review: newReview });
+});
+
+// Eliminar reseña desde el panel de administración
+app.delete('/api/admin/reviews/:id', async (req, res) => {
+  const { id } = req.params;
+  runtimeDB.reviews = (runtimeDB.reviews || []).filter(r => r.id !== id);
+  saveDB(runtimeDB);
+
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.rev-${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`
+      }
+    });
+  } catch (err) {}
+
+  res.json({ success: true, id });
+});
+
 export default app;
