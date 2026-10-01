@@ -102,9 +102,6 @@ export default function SecurityOverlay({ children, enabled = true }) {
 
     // 2. APAGÓN POR PÉRDIDA DE FOCO (Panel de notificaciones, cambio de app, botones físicos)
     const handleBlur = () => {
-      if (isTouchDevice && !document.hidden) {
-        return;
-      }
       isBlurredRef.current = true;
       triggerInstantBlackout();
     };
@@ -114,8 +111,7 @@ export default function SecurityOverlay({ children, enabled = true }) {
       isBlurredRef.current = false;
       if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
       releaseTimeoutRef.current = setTimeout(() => {
-        const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
-        if (hasFocusOrActive) {
+        if (document.hasFocus() || !document.hidden) {
           releaseInstantBlackout();
         }
       }, 50);
@@ -129,18 +125,15 @@ export default function SecurityOverlay({ children, enabled = true }) {
         isBlurredRef.current = false;
         if (releaseTimeoutRef.current) clearTimeout(releaseTimeoutRef.current);
         releaseTimeoutRef.current = setTimeout(() => {
-          const hasFocusOrActive = isTouchDevice ? !document.hidden : (document.hasFocus() && !document.hidden);
-          if (hasFocusOrActive) {
-            releaseInstantBlackout();
-          }
+          releaseInstantBlackout();
         }, 50);
       }
     };
 
     // 4. MONITOR DE SEGURIDAD (Silencioso)
     const focusCheckInterval = setInterval(() => {
-      const shouldTrigger = isTouchDevice ? document.hidden : (!document.hasFocus() || document.hidden);
-      if (shouldTrigger) {
+      const isWindowActive = document.hasFocus() || (!document.hidden && document.visibilityState === 'visible');
+      if (!isWindowActive) {
         if (!isBlackoutActiveRef.current) {
           isBlurredRef.current = true;
           triggerInstantBlackout();

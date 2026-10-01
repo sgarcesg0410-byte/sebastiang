@@ -70,7 +70,7 @@ html.security-blackout [role="dialog"] img {
   }
 }
 
-/* Marca de Agua Elegante y Sutil (Logo Central Transparente) */
+/* Marca de Agua Protectora Anti-Robo */
 .watermark-overlay {
   position: absolute;
   inset: 0;
@@ -83,6 +83,31 @@ html.security-blackout [role="dialog"] img {
   z-index: 20;
 }
 
+.watermark-pattern {
+  position: absolute;
+  inset: -60%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  transform: rotate(-35deg);
+  opacity: 0.38;
+  pointer-events: none;
+  user-select: none;
+}
+
+.watermark-pattern-row {
+  display: flex;
+  white-space: nowrap;
+  gap: 2.5rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+}
+
 .watermark-content {
   display: flex;
   flex-direction: column;
@@ -91,8 +116,9 @@ html.security-blackout [role="dialog"] img {
   text-align: center;
   pointer-events: none;
   user-select: none;
-  opacity: 0.22;
+  opacity: 0.65;
   transition: opacity 0.3s ease;
+  z-index: 2;
 }
 
 @keyframes shimmer {

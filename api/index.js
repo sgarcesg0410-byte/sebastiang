@@ -843,14 +843,18 @@ app.delete('/api/admin/sessions/:id', (req, res) => {
 
   res.json({ success: true });
 });
-
 app.post('/api/admin/sessions', (req, res) => {
   const {
     clientName,
     clientWhatsApp,
     packageTitle,
     maxPhotosAllowed,
-    photos
+    photos,
+    totalPrice,
+    packagePrice,
+    sessionBasePrice,
+    bookingId,
+    location
   } = req.body;
 
   if (!clientName || !clientWhatsApp || !photos || photos.length === 0) {
@@ -861,6 +865,7 @@ app.post('/api/admin/sessions', (req, res) => {
   const expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const cleanName = clientName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
   const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
+  const finalPrice = Number(totalPrice || packagePrice || sessionBasePrice || 0);
 
   const newSession = {
     id: `sess-${Date.now()}`,
@@ -868,6 +873,11 @@ app.post('/api/admin/sessions', (req, res) => {
     clientName: clientName.trim(),
     clientWhatsApp: clientWhatsApp.trim(),
     packageTitle: packageTitle || 'Sesión Fotográfica',
+    totalPrice: finalPrice,
+    packagePrice: finalPrice,
+    sessionBasePrice: finalPrice,
+    bookingId: bookingId || null,
+    location: location || '',
     maxPhotosAllowed: Number(maxPhotosAllowed) || photos.length,
     createdAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
@@ -883,6 +893,26 @@ app.post('/api/admin/sessions', (req, res) => {
   };
 
   runtimeDB.sessions.unshift(newSession);
+
+  // Sincronizar sesión con Supabase Cloud
+  try {
+    fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `sess-${token}`,
+        title: newSession.clientName,
+        category: 'session_data',
+        location: newSession.clientWhatsApp,
+        url: JSON.stringify(newSession)
+      })
+    }).catch(e => console.warn('Sync session to Supabase warning:', e));
+  } catch(e) {}
 
   try {
     const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
