@@ -1149,6 +1149,7 @@ export async function submitGallerySelection(token, selections) {
       const parsed = JSON.parse(supaData.url);
       parsed.status = 'submitted';
       parsed.submittedAt = new Date().toISOString();
+      parsed.selectedCount = selectedPhotos.length;
       parsed.photos = (parsed.photos || []).map(p => {
         const u = selMap.get(p.id);
         return u ? { ...p, selected: u.selected, clientComment: u.comment } : p;
@@ -1158,6 +1159,29 @@ export async function submitGallerySelection(token, selections) {
   } catch (errSupaSync) {
     console.warn('Error al actualizar selección en Supabase:', errSupaSync);
   }
+
+  // Notificar instantáneamente a todos los navegadores/pestañas del Administrador
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('sessions_realtime_sync');
+      bc.postMessage({ token, status: 'submitted', count: selectedPhotos.length, clientName });
+      bc.close();
+    }
+  } catch (e) {}
+
+  // Enviar Push Notification 24/7 a través de OneSignal al teléfono del fotógrafo
+  try {
+    fetch('/api/send-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: `📸 ¡${clientName} envió su selección!`,
+        message: `Eligió ${selectedPhotos.length} fotos de su paquete "${packageTitle}". ¡Lista para edición!`,
+        url: 'https://sebastiang.app/?mode=admin',
+        data: { type: 'session', targetTab: 'sessions', token }
+      })
+    }).catch(() => {});
+  } catch (e) {}
 
   // Generar texto resumen impecable para WhatsApp
   let summary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n\n`;
@@ -1190,6 +1214,63 @@ export async function submitGallerySelection(token, selections) {
     secondaryWhatsAppUrl: serverResult?.secondaryWhatsAppUrl || secondaryWhatsAppUrl,
     summary: serverResult?.summaryText || serverResult?.summary || summary
   };
+}
+
+export async function syncLiveGallerySelection(token, selections, selectedCount) {
+  if (!token || token === 'demo-cliente-2026') return;
+
+  // 1. Notificar al backend de Vercel
+  try {
+    fetch(`${API_BASE}/gallery/${token}/live-selection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selections, selectedCount })
+    }).catch(() => {});
+  } catch (e) {}
+
+  // 2. Actualizar Supabase Cloud para que Realtime dispare en el panel del administrador en 0ms
+  try {
+    const { data: supaData } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('id', `sess-${token}`)
+      .single();
+
+    if (supaData && supaData.url) {
+      const parsed = JSON.parse(supaData.url);
+      const selMap = new Map();
+      (selections || []).forEach(item => {
+        selMap.set(item.id, {
+          selected: Boolean(item.selected),
+          comment: (item.clientComment || '').trim()
+        });
+      });
+
+      parsed.photos = (parsed.photos || []).map(p => {
+        const u = selMap.get(p.id);
+        return u ? { ...p, selected: u.selected, clientComment: u.comment } : p;
+      });
+      parsed.selectedCount = selectedCount;
+      parsed.lastSelectionUpdate = new Date().toISOString();
+
+      await supabase
+        .from('catalog')
+        .update({ url: JSON.stringify(parsed) })
+        .eq('id', `sess-${token}`);
+
+      // Actualizar local
+      saveLocalSession(parsed);
+
+      // Notificar pestañas locales en tiempo real
+      if (typeof window !== 'undefined' && window.BroadcastChannel) {
+        const bc = new BroadcastChannel('sessions_realtime_sync');
+        bc.postMessage({ token, status: 'selecting', count: selectedCount, clientName: parsed.clientName });
+        bc.close();
+      }
+    }
+  } catch (err) {
+    console.warn('Error en syncLiveGallerySelection:', err);
+  }
 }
 
 // --- SISTEMA DE AUTENTICACIÓN CON DOBLE FACTOR (2FA) & DISPOSITIVOS CONFIABLES ---

@@ -544,7 +544,7 @@ app.post('/api/send-email', async (req, res) => {
   }
 });
 
-app.get('/api/gallery/:token', (req, res) => {
+app.get('/api/gallery/:token', async (req, res) => {
   const { token } = req.params;
   let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
@@ -572,6 +572,25 @@ app.get('/api/gallery/:token', (req, res) => {
     };
   }
 
+  // Si no está en memoria, consultar directamente en Supabase Cloud
+  if (!session && token !== 'demo-cliente-2026') {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (rows && rows.length > 0 && rows[0].url) {
+          session = JSON.parse(rows[0].url);
+          runtimeDB.sessions = runtimeDB.sessions || [];
+          runtimeDB.sessions.push(session);
+        }
+      }
+    } catch (errSupa) {
+      console.warn('Error consultando sesión en Supabase:', errSupa);
+    }
+  }
+
   if (!session) return res.status(404).json({ error: 'Galería no encontrada.' });
 
   const now = Date.now();
@@ -593,10 +612,87 @@ app.get('/api/gallery/:token', (req, res) => {
   });
 });
 
-app.post('/api/gallery/:token/submit', (req, res) => {
+// Sincronización en vivo mientras el cliente selecciona fotos en su celular
+app.post('/api/gallery/:token/live-selection', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { selections, selectedCount } = req.body || {};
+
+    let session = (runtimeDB.sessions || []).find(s => s.token === token);
+    if (!session) {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (rows && rows.length > 0 && rows[0].url) {
+          session = JSON.parse(rows[0].url);
+          runtimeDB.sessions = runtimeDB.sessions || [];
+          runtimeDB.sessions.push(session);
+        }
+      }
+    }
+
+    if (session) {
+      if (Array.isArray(selections)) {
+        const selMap = new Map();
+        selections.forEach(item => {
+          selMap.set(item.id, {
+            selected: Boolean(item.selected),
+            comment: (item.clientComment || '').trim()
+          });
+        });
+        session.photos = (session.photos || []).map(p => {
+          const update = selMap.get(p.id);
+          if (update) return { ...p, selected: update.selected, clientComment: update.comment };
+          return p;
+        });
+      }
+      session.selectedCount = selectedCount || (session.photos ? session.photos.filter(p => p.selected).length : 0);
+      session.lastSelectionUpdate = new Date().toISOString();
+
+      // Guardar en Supabase para que Realtime notifique al Panel de Administrador inmediatamente
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: JSON.stringify(session)
+        })
+      });
+    }
+
+    res.json({ success: true, selectedCount: session?.selectedCount || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/gallery/:token/submit', async (req, res) => {
   const { token } = req.params;
   const { selections } = req.body;
-  const session = runtimeDB.sessions.find(s => s.token === token);
+  let session = (runtimeDB.sessions || []).find(s => s.token === token);
+
+  // Si no está en memoria, buscar en Supabase Cloud
+  if (!session) {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (rows && rows.length > 0 && rows[0].url) {
+          session = JSON.parse(rows[0].url);
+          runtimeDB.sessions = runtimeDB.sessions || [];
+          runtimeDB.sessions.push(session);
+        }
+      }
+    } catch (errSupa) {}
+  }
+
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   if (session.status === 'submitted') {
@@ -622,9 +718,27 @@ app.post('/api/gallery/:token/submit', (req, res) => {
 
   session.status = 'submitted';
   session.submittedAt = new Date().toISOString();
+  const selectedPhotos = session.photos.filter(p => p.selected);
+  session.selectedCount = selectedPhotos.length;
+
+  // Actualizar en Supabase Cloud de forma inmutable
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: JSON.stringify(session)
+      })
+    });
+  } catch (errSupa) {
+    console.warn('Error al actualizar selección en Supabase:', errSupa);
+  }
 
   // Armar lista detallada de fotos seleccionadas con sus notas
-  const selectedPhotos = session.photos.filter(p => p.selected);
   let summary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n\n`;
   summary += `👤 *Cliente:* ${session.clientName}\n`;
   summary += `📦 *Sesión:* ${session.packageTitle}\n`;
@@ -647,10 +761,10 @@ app.post('/api/gallery/:token/submit', (req, res) => {
 
   // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
   sendOneSignalPush({
-    title: '✨ ¡Fotos Seleccionadas por Cliente!',
-    message: `${session.clientName} ha seleccionado ${selectedPhotos.length} fotos de su sesión`,
+    title: `📸 ¡${session.clientName || 'Cliente'} envió sus fotos!`,
+    message: `Eligió ${selectedPhotos.length} fotos de su paquete "${session.packageTitle}". ¡Lista para procesar!`,
     url: 'https://sebastiang.app/?mode=admin',
-    data: { type: 'selection', token: session.token }
+    data: { type: 'session', targetTab: 'sessions', token: session.token }
   }).catch(err => console.error('Error OneSignal Push selección:', err));
 
   res.json({

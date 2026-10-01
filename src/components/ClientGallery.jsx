@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Shield, 
   Lock, 
@@ -24,7 +24,7 @@ import {
   ThumbsUp
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { getGalleryByToken, submitGallerySelection, createPayment, submitGalleryReview, getReviews } from '../services/api';
+import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 import { NequiLogo, DaviPlataLogo, DaleLogo } from './PaymentLogos';
 
@@ -186,21 +186,29 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     });
   };
 
-  // Manejar comentario por foto
-  const handleCommentChange = (photoId, commentText) => {
-    if (galleryData?.isExpired || galleryData?.isSubmitted || submissionResult) return;
+  // Sincronización continua en vivo hacia el fotógrafo mientras el cliente elige fotos
+  const liveSyncTimerRef = useRef(null);
+  useEffect(() => {
+    if (!token || token === 'demo-cliente-2026' || !galleryData) return;
+    if (galleryData.isSubmitted || galleryData.status === 'submitted' || submissionResult) return;
 
-    setSelections(prev => {
-      const current = prev[photoId] || { selected: false, comment: '' };
-      return {
-        ...prev,
-        [photoId]: {
-          ...current,
-          comment: commentText
-        }
-      };
-    });
-  };
+    if (liveSyncTimerRef.current) clearTimeout(liveSyncTimerRef.current);
+    liveSyncTimerRef.current = setTimeout(() => {
+      const payload = Object.entries(selections).map(([id, val]) => ({
+        id,
+        selected: Boolean(val?.selected),
+        clientComment: val?.comment || ''
+      }));
+      const count = payload.filter(p => p.selected).length;
+      if (count > 0 || Object.keys(selections).length > 0) {
+        syncLiveGallerySelection(token, payload, count).catch(() => {});
+      }
+    }, 700);
+
+    return () => {
+      if (liveSyncTimerRef.current) clearTimeout(liveSyncTimerRef.current);
+    };
+  }, [selections, token, galleryData, submissionResult]);
 
   // Detección automática del valor base contratado según paquete de fotos y reserva real
   const getSessionBasePrice = (data) => {
@@ -771,31 +779,17 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     src={photo.url}
                     alt={photo.title}
                     objectFit="cover"
-                    watermark={true}
-                    watermarkText="SEBASTIAN G • MUESTRA DE SELECCIÓN"
+                    watermark={false}
                   />
 
-                  {/* MARCA DE AGUA: PATRÓN DIAGONAL REPETITIVO Y LOGO CENTRAL BLINDADO */}
-                  <div className="watermark-overlay z-20 pointer-events-none">
-                    <div className="watermark-pattern">
-                      {[...Array(6)].map((_, i) => (
-                        <div key={i} className="watermark-pattern-row">
-                          SEBASTIAN G • MUESTRA OFICIAL • PROHIBIDA SU DESCARGA O CAPTURA • 
-                        </div>
-                      ))}
-                    </div>
-                    <div className="watermark-content">
+                  {/* MARCA DE AGUA: EXCLUSIVAMENTE EL LOGOTIPO DEL FOTÓGRAFO EN EL CENTRO */}
+                  <div className="watermark-overlay z-20 pointer-events-none flex items-center justify-center">
+                    <div className="watermark-content flex items-center justify-center">
                       <img
                         src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
                         alt="Sebastian G"
-                        className="w-14 h-14 sm:w-16 sm:h-16 object-contain rounded-2xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.85)]"
+                        className="w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-2xl drop-shadow-[0_4px_16px_rgba(0,0,0,0.85)] opacity-85"
                       />
-                      <span className="text-[11px] sm:text-xs font-serif tracking-[0.25em] text-white/95 uppercase mt-1 font-black drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
-                        {watermarkText}
-                      </span>
-                      <span className="text-[9px] tracking-wider text-amber-300 font-mono font-bold uppercase mt-0.5 bg-black/60 px-2 py-0.5 rounded border border-amber-400/40">
-                        COPIA PROTEGIDA • SELECCIÓN DE CLIENTE
-                      </span>
                     </div>
                   </div>
 

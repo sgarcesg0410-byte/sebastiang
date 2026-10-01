@@ -423,6 +423,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const knownBookingIdsRef = useRef(null);
   const knownPaymentIdsRef = useRef(null);
   const knownSubmittedSessionTokensRef = useRef(null);
+  const knownSessionSelectionCountsRef = useRef(null);
   const knownReviewIdsRef = useRef(null);
 
   useEffect(() => {
@@ -1157,7 +1158,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
       knownPaymentIdsRef.current = new Set((payData || []).map(p => p?.id).filter(Boolean));
 
-      // Detección exacta de selección de fotos lista por parte del cliente
+      // Detección en tiempo real de fotos siendo elegidas por el cliente
+      if (knownSessionSelectionCountsRef.current !== null && Array.isArray(cleanSessions)) {
+        cleanSessions.forEach(s => {
+          if (!s || !s.token) return;
+          const currentCount = s.selectedCount || (s.photos ? s.photos.filter(p => p.selected).length : 0);
+          const prevCount = knownSessionSelectionCountsRef.current.get(s.token) || 0;
+          if (currentCount > prevCount && s.status !== 'submitted') {
+            playNotificationChime();
+            setRealtimeAlert({
+              type: 'session',
+              clientName: s.clientName || 'Cliente',
+              packageName: `Eligiendo fotos en vivo: ${currentCount} foto(s) seleccionada(s)`,
+              targetTab: 'sessions'
+            });
+            setTimeout(() => setRealtimeAlert(null), 10000);
+          }
+        });
+      }
+      const newSelectionCounts = new Map();
+      (cleanSessions || []).forEach(s => {
+        if (s?.token) {
+          const cnt = s.selectedCount || (s.photos ? s.photos.filter(p => p.selected).length : 0);
+          newSelectionCounts.set(s.token, cnt);
+        }
+      });
+      knownSessionSelectionCountsRef.current = newSelectionCounts;
+
+      // Detección exacta de selección oficial completada y enviada por el cliente
       if (knownSubmittedSessionTokensRef.current !== null && Array.isArray(cleanSessions)) {
         const freshSubmitted = cleanSessions.filter(
           s => s?.token && s.status === 'submitted' && !knownSubmittedSessionTokensRef.current.has(s.token)
@@ -1168,6 +1196,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           let cleanPhone = (latestSess.clientWhatsApp || '').replace(/\D/g, '');
           if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) cleanPhone = '57' + cleanPhone;
           const waUrl = cleanPhone ? `https://wa.me/${cleanPhone}` : null;
+
+          playNotificationChime();
 
           sendSystemPushNotification({
             title: `🖼️ ¡Selección Lista: ${latestSess.clientName || 'Cliente'}!`,
@@ -1180,7 +1210,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           setRealtimeAlert({
             type: 'session',
             clientName: latestSess.clientName || 'Cliente',
-            packageName: `${latestSess.packageTitle || 'Sesión'} (${count} fotos)`,
+            packageName: `¡Selección oficial enviada! (${count} fotos)`,
             whatsappUrl: waUrl,
             targetTab: 'sessions'
           });
@@ -1267,7 +1297,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       });
 
     // 4. Canales locales BroadcastChannel para sincronización 0ms entre pestañas y ventanas
-    let bcCatalog, bcBookings, bcPayments, bcReviews, bcWallets;
+    let bcCatalog, bcBookings, bcPayments, bcReviews, bcWallets, bcSessions;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bcCatalog = new BroadcastChannel('catalog_realtime_sync');
@@ -1285,6 +1315,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         bcWallets = new BroadcastChannel('wallet_balances_sync');
         bcWallets.onmessage = () => {
           fetchCloudWalletBaseBalances().then(b => setWalletBaseBalances(b));
+        };
+
+        bcSessions = new BroadcastChannel('sessions_realtime_sync');
+        bcSessions.onmessage = (ev) => {
+          triggerSilentRefresh(20);
+          if (ev.data) {
+            playNotificationChime();
+            const isSub = ev.data.status === 'submitted';
+            setRealtimeAlert({
+              type: 'session',
+              clientName: ev.data.clientName || 'Cliente',
+              packageName: isSub ? `¡Selección oficial enviada! (${ev.data.count} fotos)` : `Eligiendo fotos en vivo: ${ev.data.count} elegida(s)`,
+              targetTab: 'sessions'
+            });
+            setTimeout(() => setRealtimeAlert(null), 12000);
+          }
         };
       }
     } catch (e) {}
@@ -1351,6 +1397,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       if (bcPayments) bcPayments.close();
       if (bcReviews) bcReviews.close();
       if (bcWallets) bcWallets.close();
+      if (bcSessions) bcSessions.close();
       if (swMessageListener && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         navigator.serviceWorker.removeEventListener('message', swMessageListener);
       }
@@ -3375,9 +3422,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <PackageCheck className="w-3.5 h-3.5 shrink-0 text-purple-400" />
               <span>Galerías & Entrega</span>
               {safeSessions.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-purple-900 text-purple-200 border border-purple-500/40'}`}>
-                  {safeSessions.length}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-purple-900 text-purple-200 border border-purple-500/40'}`}>
+                    {safeSessions.length}
+                  </span>
+                  {safeSessions.some(s => s.status === 'submitted') && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-black bg-emerald-400 text-stone-950 animate-pulse shadow-sm shadow-emerald-500/50">
+                      {safeSessions.filter(s => s.status === 'submitted').length} {safeSessions.filter(s => s.status === 'submitted').length === 1 ? 'lista' : 'listas'}
+                    </span>
+                  )}
+                </div>
               )}
             </button>
 
