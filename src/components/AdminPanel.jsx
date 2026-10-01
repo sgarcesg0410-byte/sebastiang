@@ -50,7 +50,8 @@ import {
   Printer,
   ChevronLeft,
   List,
-  Fingerprint
+  Fingerprint,
+  Search
 } from 'lucide-react';
 import {
   isBiometricsSupported,
@@ -114,7 +115,10 @@ import {
   createBooking,
   syncLocalCatalogToCloud,
   forceSyncAllCatalogToCloud,
-  checkCatalogSyncStatus
+  checkCatalogSyncStatus,
+  createPayment,
+  getVipClients,
+  saveVipClient
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -356,6 +360,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   // Modo de visualización de Reservas: Lista tradicional o Calendario Mensual
   const [bookingViewMode, setBookingViewMode] = useState('list'); // 'list' | 'calendar'
+  const [bookingFilterStatus, setBookingFilterStatus] = useState('active'); // 'active' | 'completed' | 'all'
+  const [vipClients, setVipClients] = useState([]);
+  const [vipSearchQuery, setVipSearchQuery] = useState('');
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [selectedCalendarDay, setSelectedCalendarDay] = useState(null);
 
@@ -383,9 +390,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [quickWhatsAppTarget, setQuickWhatsAppTarget] = useState(null);
   const [lastSentWhatsAppUrl, setLastSentWhatsAppUrl] = useState('');
 
-  // Apertura segura de WhatsApp que NUNCA navega la página actual ni recarga el WebView del APK
-  const openWhatsAppSafely = (url) => {
-    if (!url) return;
+  // Apertura segura de WhatsApp con soporte de líneas (Línea 1 vs Línea 2) y puente nativo Android
+  const openWhatsAppSafely = (url, line = 'line1', clientPhone = '', rawText = '') => {
+    if (!url && !clientPhone) return;
+
+    let phone = clientPhone;
+    let text = rawText;
+    if (!phone && url) {
+      const match = url.match(/(?:phone=|wa\.me\/)([0-9]+)/);
+      if (match) phone = match[1];
+    }
+    if (!text && url) {
+      const textMatch = url.match(/text=([^&]+)/);
+      if (textMatch) {
+        try {
+          text = decodeURIComponent(textMatch[1]);
+        } catch (e) {
+          text = textMatch[1];
+        }
+      }
+    }
+
+    // Si estamos en la APK nativa de Android con puente integrado
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.openWhatsAppWithLine) {
+      try {
+        window.AndroidNotificationBridge.openWhatsAppWithLine(phone || '', text || '', line);
+        return;
+      } catch (err) {
+        console.warn('Error en puente Android openWhatsAppWithLine:', err);
+      }
+    }
+
     try {
       const link = document.createElement('a');
       link.href = url;
@@ -1252,6 +1287,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         }
       }
       knownReviewIdsRef.current = new Set((revData || []).map(r => r?.id).filter(Boolean));
+
+      // Sincronizar directorio de Clientes VIP
+      try {
+        const loadedVips = await getVipClients();
+        if (Array.isArray(loadedVips)) {
+          setVipClients(loadedVips);
+        }
+      } catch (e) {}
     } catch (err) {
       console.error('Error cargando datos de administración:', err);
     } finally {
@@ -1876,27 +1919,234 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
   };
 
-  const generateReceiptPdfBlob = async () => {
-    const element = document.getElementById('sebastian-g-digital-receipt');
-    if (!element) return null;
+  const generateVectorReceiptPdf = (booking, paidAmount, paymentMethod, notes) => {
+    if (!booking) return null;
+    const total = Number(booking.totalPrice || 0);
+    const paid = Number(paidAmount || 0);
+    const balance = Math.max(0, total - paid);
+    const voucherNum = `REC-${String(booking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
+    const rawName = (booking.clientName || 'Cliente').trim();
+    const loc = booking.specificLocation || (booking.locationType === 'outside' ? 'Locación Especial' : 'San Antero');
+    const isFull = balance === 0;
 
-    const canvas = await html2canvas(element, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: '#0c0a09',
-      logging: false
-    });
-
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
     const pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
       format: 'a4'
     });
 
-    const imgWidth = 210;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+    const pageWidth = 210;
+    const margin = 16;
+    let y = 18;
+
+    // Barra superior decorativa dorada
+    pdf.setFillColor(245, 158, 11);
+    pdf.rect(0, 0, pageWidth, 5, 'F');
+
+    // Encabezado Corporativo
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(22);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text('SEBASTIAN G', margin, y);
+
+    // Etiqueta de Número de Recibo (derecha)
+    pdf.setFillColor(254, 243, 199);
+    pdf.setDrawColor(245, 158, 11);
+    pdf.roundedRect(pageWidth - margin - 46, y - 6, 46, 10, 2, 2, 'FD');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text(voucherNum, pageWidth - margin - 23, y, { align: 'center' });
+
+    y += 5;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text('FOTOGRAFÍA & RETOQUE PROFESIONAL', margin, y);
+
+    const emissionDate = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(`Fecha de emisión: ${emissionDate}`, pageWidth - margin, y, { align: 'right' });
+
+    y += 4;
+    pdf.text('San Antero, Córdoba, Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app', margin, y);
+
+    y += 5;
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.5);
+    pdf.line(margin, y, pageWidth - margin, y);
+
+    // Cajas de Datos: Cliente y Sesión
+    y += 7;
+    const colWidth = (pageWidth - margin * 2 - 8) / 2;
+
+    // Caja Cliente
+    pdf.setFillColor(248, 250, 252);
+    pdf.setDrawColor(226, 232, 240);
+    pdf.roundedRect(margin, y, colWidth, 32, 3, 3, 'FD');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text('CLIENTE TITULAR', margin + 4, y + 6);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(rawName, margin + 4, y + 13);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`WhatsApp: ${booking.clientWhatsApp || 'No registrado'}`, margin + 4, y + 20);
+    if (booking.clientEmail) {
+      pdf.text(`Correo: ${booking.clientEmail}`, margin + 4, y + 26);
+    }
+
+    // Caja Detalles de la Cita
+    pdf.roundedRect(margin + colWidth + 8, y, colWidth, 32, 3, 3, 'FD');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text('DETALLES DE LA CITA', margin + colWidth + 12, y + 6);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(formatDateTime12Hour(booking.dateTime), margin + colWidth + 12, y + 13);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`Locación: ${loc}`, margin + colWidth + 12, y + 20);
+    pdf.text(`Paquete: ${booking.packageName}`, margin + colWidth + 12, y + 26);
+
+    // Tabla de Desglose Financiero
+    y += 38;
+    const tableWidth = pageWidth - margin * 2;
+    pdf.setFillColor(241, 245, 249);
+    pdf.rect(margin, y, tableWidth, 8, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.setTextColor(51, 65, 85);
+    pdf.text('CONCEPTO / SERVICIO', margin + 4, y + 5.5);
+    pdf.text('VALOR', pageWidth - margin - 4, y + 5.5, { align: 'right' });
+
+    y += 8;
+    pdf.setDrawColor(226, 232, 240);
+    pdf.line(margin, y, pageWidth - margin, y);
+
+    // Fila 1: Sesión
+    y += 2;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(10);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(`Sesión Fotográfica (${booking.packageName})`, margin + 4, y + 6);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(`$${total.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
+    y += 10;
+    pdf.line(margin, y, pageWidth - margin, y);
+
+    // Fila 2: Fotos impresas si aplica
+    if (Number(booking.printedPhotosCount) > 0) {
+      y += 2;
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico`, margin + 4, y + 5);
+      pdf.text('Incluido', pageWidth - margin - 4, y + 5, { align: 'right' });
+      y += 8;
+      pdf.line(margin, y, pageWidth - margin, y);
+    }
+
+    // Fila Total
+    y += 2;
+    pdf.setFillColor(248, 250, 252);
+    pdf.rect(margin, y, tableWidth, 9, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text('TOTAL PACTADO:', margin + 4, y + 6);
+    pdf.text(`$${total.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
+    y += 9;
+    pdf.line(margin, y, pageWidth - margin, y);
+
+    // Fila Monto Recibido
+    pdf.setFillColor(236, 253, 245);
+    pdf.rect(margin, y, tableWidth, 9, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(4, 120, 87);
+    pdf.text(`VALOR RECIBIDO / ABONADO (${paymentMethod}):`, margin + 4, y + 6);
+    pdf.text(`$${paid.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
+    y += 9;
+    pdf.line(margin, y, pageWidth - margin, y);
+
+    // Fila Saldo Pendiente
+    pdf.setFillColor(255, 251, 235);
+    pdf.rect(margin, y, tableWidth, 9, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text('SALDO PENDIENTE:', margin + 4, y + 6);
+    pdf.text(`$${balance.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
+    y += 9;
+    pdf.line(margin, y, pageWidth - margin, y);
+
+    // Garantía de Clima
+    y += 6;
+    pdf.setFillColor(248, 250, 252);
+    pdf.setDrawColor(203, 213, 225);
+    pdf.roundedRect(margin, y, tableWidth, 18, 3, 3, 'FD');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text(`Garantía de Clima en ${loc}:`, margin + 4, y + 6);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`En caso de lluvia o clima adverso en ${loc}, tu sesión se reprograma para una nueva fecha`, margin + 4, y + 11);
+    pdf.text('sin ningún costo ni penalidad. Documento electrónico oficial emitido en sebastiang.app', margin + 4, y + 15);
+
+    // Firma y Sello Oficial
+    y += 24;
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 6;
+
+    pdf.setFont('times', 'bolditalic');
+    pdf.setFontSize(16);
+    pdf.setTextColor(180, 83, 9);
+    pdf.text('Sebastian G', margin, y + 6);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text('Fotógrafo Profesional Titular', margin, y + 11);
+
+    // Sello circular / badge
+    const stampText = isFull ? 'PAGADO TOTAL (100%)' : 'ABONO CONFIRMADO (50%)';
+    if (isFull) {
+      pdf.setFillColor(209, 250, 229);
+      pdf.setDrawColor(16, 185, 129);
+      pdf.roundedRect(pageWidth - margin - 60, y, 60, 12, 6, 6, 'FD');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(6, 95, 70);
+      pdf.text(stampText, pageWidth - margin - 30, y + 8, { align: 'center' });
+    } else {
+      pdf.setFillColor(254, 243, 199);
+      pdf.setDrawColor(245, 158, 11);
+      pdf.roundedRect(pageWidth - margin - 60, y, 60, 12, 6, 6, 'FD');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(146, 64, 14);
+      pdf.text(stampText, pageWidth - margin - 30, y + 8, { align: 'center' });
+    }
+
+    // Enlace de verificación pública al final
+    y += 20;
+    const verifyUrl = `https://sebastiang.app/#recibo=${booking.id}&paid=${paid}&method=${encodeURIComponent(paymentMethod)}`;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(148, 163, 184);
+    pdf.text(`Verifica o descarga este comprobante en línea: ${verifyUrl}`, pageWidth / 2, y, { align: 'center' });
+
     return pdf;
   };
 
@@ -1904,21 +2154,300 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     if (!receiptBooking) return;
     setIsGeneratingPdf(true);
     try {
-      const pdf = await generateReceiptPdfBlob();
+      const pdf = generateVectorReceiptPdf(receiptBooking, receiptPaidAmount, receiptPaymentMethod, receiptNotes);
       if (pdf) {
         const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
         pdf.save(`Comprobante-SebastianG-${voucherNum}.pdf`);
       }
     } catch (err) {
-      console.error('Error generando PDF:', err);
-      window.print();
+      console.error('Error generando PDF vectorial:', err);
+      handlePrintReceipt();
     } finally {
       setIsGeneratingPdf(false);
     }
   };
 
   const handlePrintReceipt = () => {
-    window.print();
+    if (!receiptBooking) return;
+    const total = Number(receiptBooking.totalPrice || 0);
+    const paid = Number(receiptPaidAmount || 0);
+    const balance = Math.max(0, total - paid);
+    const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
+    const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'Locación Especial' : 'San Antero');
+    const isFull = balance === 0;
+
+    const printHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Comprobante de Pago Oficial • ${receiptBooking.clientName}</title>
+        <style>
+          @page { size: portrait; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #1e293b;
+            background: #ffffff;
+            margin: 0;
+            padding: 24px;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .receipt-box {
+            max-width: 680px;
+            margin: 0 auto;
+            border: 2px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 28px;
+            background: #ffffff;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #f59e0b;
+            padding-bottom: 16px;
+            margin-bottom: 20px;
+          }
+          .brand-title {
+            font-size: 24px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            margin: 0;
+            color: #0f172a;
+            font-family: serif;
+          }
+          .brand-sub {
+            font-size: 11px;
+            color: #b45309;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 700;
+            margin: 4px 0 2px;
+          }
+          .brand-info {
+            font-size: 10px;
+            color: #64748b;
+            margin: 0;
+          }
+          .voucher-badge {
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #fcd34d;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-weight: 900;
+            font-size: 14px;
+            text-align: right;
+            display: inline-block;
+          }
+          .emission-date {
+            font-size: 10px;
+            color: #64748b;
+            margin-top: 4px;
+            text-align: right;
+          }
+          .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+          }
+          .card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 14px;
+          }
+          .card-title {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #b45309;
+            font-weight: 800;
+            margin: 0 0 6px;
+          }
+          .card p {
+            margin: 3px 0;
+            font-size: 12px;
+            color: #1e293b;
+          }
+          .table-box {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+          }
+          .table-header {
+            background: #f1f5f9;
+            padding: 10px 16px;
+            font-size: 11px;
+            font-weight: 800;
+            color: #334155;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #e2e8f0;
+          }
+          .table-row {
+            padding: 10px 16px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #f1f5f9;
+          }
+          .table-row.total {
+            font-weight: 800;
+            font-size: 13px;
+            border-top: 2px solid #e2e8f0;
+            background: #f8fafc;
+          }
+          .table-row.paid {
+            font-weight: 800;
+            color: #047857;
+            background: #ecfdf5;
+          }
+          .table-row.balance {
+            font-weight: 800;
+            color: #b45309;
+            background: #fffbeb;
+          }
+          .guarantee-box {
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 11px;
+            color: #475569;
+            margin-bottom: 20px;
+          }
+          .footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 16px;
+          }
+          .signature {
+            font-family: serif;
+            font-style: italic;
+            font-size: 18px;
+            font-weight: bold;
+            color: #b45309;
+            margin: 0;
+          }
+          .status-stamp {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            ${isFull 
+              ? 'background: #d1fae5; color: #065f46; border: 1.5px solid #10b981;' 
+              : 'background: #fef3c7; color: #92400e; border: 1.5px solid #f59e0b;'}
+          }
+        </style>
+      </head>
+      <body>
+        <div class="receipt-box">
+          <div class="header">
+            <div>
+              <h1 class="brand-title">SEBASTIAN G</h1>
+              <div class="brand-sub">Fotografía & Retoque Profesional</div>
+              <p class="brand-info">San Antero, Córdoba, Colombia • Tel: +57 324 4725167 • sebastiang.app</p>
+            </div>
+            <div>
+              <div class="voucher-badge">${voucherNum}</div>
+              <div class="emission-date">Fecha: ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-title">Cliente Titular</div>
+              <p><strong>${receiptBooking.clientName}</strong></p>
+              <p>WhatsApp: <strong>${receiptBooking.clientWhatsApp}</strong></p>
+              ${receiptBooking.clientEmail ? `<p>Correo: ${receiptBooking.clientEmail}</p>` : ''}
+            </div>
+            <div class="card">
+              <div class="card-title">Detalles de la Cita</div>
+              <p>Fecha/Hora: <strong>${formatDateTime12Hour(receiptBooking.dateTime)}</strong></p>
+              <p>Locación: <strong>${loc}</strong></p>
+              <p>Paquete: <strong>${receiptBooking.packageName}</strong></p>
+            </div>
+          </div>
+
+          <div class="table-box">
+            <div class="table-header">
+              <span>CONCEPTO</span>
+              <span>VALOR</span>
+            </div>
+            <div class="table-row">
+              <span>Sesión Fotográfica (${receiptBooking.packageName})</span>
+              <span>$${total.toLocaleString('es-CO')} COP</span>
+            </div>
+            ${Number(receiptBooking.printedPhotosCount) > 0 ? `
+              <div class="table-row" style="color: #64748b; font-size: 11px;">
+                <span>+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico</span>
+                <span>Incluido</span>
+              </div>
+            ` : ''}
+            <div class="table-row total">
+              <span>TOTAL PACTADO:</span>
+              <span>$${total.toLocaleString('es-CO')} COP</span>
+            </div>
+            <div class="table-row paid">
+              <span>VALOR RECIBIDO / ABONADO (${receiptPaymentMethod}):</span>
+              <span>$${paid.toLocaleString('es-CO')} COP</span>
+            </div>
+            <div class="table-row balance">
+              <span>SALDO PENDIENTE:</span>
+              <span>$${balance.toLocaleString('es-CO')} COP</span>
+            </div>
+          </div>
+
+          <div class="guarantee-box">
+            <strong style="color: #b45309;">⛅ Garantía de Clima en ${loc}:</strong> En caso de lluvia o clima adverso, tu sesión se reprograma para una nueva fecha sin ningún costo ni penalidad.<br>
+            <span style="font-size: 10px; color: #94a3b8;">Documento electrónico emitido en sebastiang.app • Válido como soporte oficial de reserva.</span>
+          </div>
+
+          <div class="footer">
+            <div>
+              <div class="signature">Sebastian G</div>
+              <div style="font-size: 10px; color: #64748b;">Fotógrafo Profesional Titular</div>
+            </div>
+            <div>
+              <div class="status-stamp">${isFull ? '✓ PAGADO TOTAL (100%)' : '✓ ABONO CONFIRMADO (50%)'}</div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    let iframe = document.getElementById('receipt-print-iframe');
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'receipt-print-iframe';
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+    }
+    const doc = iframe.contentWindow || iframe.contentDocument.document || iframe.contentDocument;
+    doc.document.open();
+    doc.document.write(printHtml);
+    doc.document.close();
+    setTimeout(() => {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    }, 300);
   };
 
   const handleSendReceiptWhatsApp = async (chosenLine = receiptWhatsAppLine) => {
@@ -1940,8 +2469,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.id}&paid=${paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
     const lineInfo = chosenLine === 'line2'
-      ? '+57 302 369 6513 (Línea 2)'
-      : '+57 324 472 5167 (Línea 1)';
+      ? '+57 302 369 6513 (Línea 2 - WhatsApp Business)'
+      : '+57 324 472 5167 (Línea 1 - Principal)';
 
     const text =
       `🧾 *COMPROBANTE DE PAGO OFICIAL • SEBASTIAN G* 📸✨\n\n` +
@@ -1961,10 +2490,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en ${loc}, tu sesión se reprograma sin ningún costo ni penalidad.\n\n` +
       `📞 *Contacto Oficial Fotógrafo:* Sebastian G • ${lineInfo}\n\n` +
       `📄 *DESCARGA O VISUALIZA TU RECIBO EN PDF AQUÍ:*\n${voucherOnlineUrl}\n\n` +
-      `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está agendada. Nos vemos muy pronto 📸`;
+      `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está garantizada. Nos vemos muy pronto 📸`;
 
+    // Generar el archivo PDF vectorial nítido
     try {
-      const pdf = await generateReceiptPdfBlob();
+      const pdf = generateVectorReceiptPdf(receiptBooking, paid, receiptPaymentMethod, receiptNotes);
       if (pdf) {
         const pdfBlob = pdf.output('blob');
         const pdfFile = new File([pdfBlob], `Comprobante-SebastianG-${voucherNum}.pdf`, { type: 'application/pdf' });
@@ -1976,20 +2506,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             title: `Comprobante de Pago Oficial • ${receiptBooking.clientName}`,
             text: text
           });
-          setIsGeneratingPdf(false);
-          return;
+        } else {
+          // Descarga directa del archivo PDF oficial
+          pdf.save(`Comprobante-SebastianG-${voucherNum}.pdf`);
         }
-
-        // Descarga el archivo PDF y abre WhatsApp con el enlace de respaldo
-        pdf.save(`Comprobante-SebastianG-${voucherNum}.pdf`);
       }
     } catch (e) {
-      console.warn('Fallback a WhatsApp regular:', e);
+      console.warn('Fallback al abrir WhatsApp:', e);
     } finally {
       setIsGeneratingPdf(false);
     }
 
-    // Auto-registrar este pago en el saldo de fotos si no existe
+    // Auto-registrar pago en el sistema
     try {
       if (paid > 0) {
         const existingPay = (payments || []).find(
@@ -2017,8 +2545,49 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       console.warn('Error auto-registrando pago desde recibo:', e);
     }
 
+    // CUANDO SE PAGA EL 100%: Quitar de agenda activa y registrar permanentemente como CLIENTE VIP
+    if (balance === 0 || receiptType === 'total' || paid >= total) {
+      try {
+        await updateAdminBooking(receiptBooking.id, { status: 'completed' });
+        setBookings(prev => prev.map(b => b.id === receiptBooking.id ? { ...b, status: 'completed' } : b));
+
+        // Registrar en directorio VIP
+        const vipSaved = await saveVipClient({
+          id: `vip-${clientPhone}`,
+          name: receiptBooking.clientName,
+          phone: receiptBooking.clientWhatsApp,
+          email: receiptBooking.clientEmail,
+          location: receiptBooking.specificLocation || 'San Antero',
+          totalPrice: total,
+          amountPaid: paid,
+          packageName: receiptBooking.packageName,
+          dateTime: receiptBooking.dateTime,
+          incrementSession: true,
+          notes: receiptNotes
+        });
+
+        if (vipSaved) {
+          setVipClients(prev => {
+            const exists = prev.find(v => v.id === vipSaved.id);
+            return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
+          });
+        }
+      } catch (err) {
+        console.warn('Error archivando reserva completada a Clientes VIP:', err);
+      }
+    } else if (receiptBooking.status === 'pending') {
+      // Si es un abono, confirmar la reserva
+      try {
+        await updateAdminBooking(receiptBooking.id, { status: 'confirmed' });
+        setBookings(prev => prev.map(b => b.id === receiptBooking.id ? { ...b, status: 'confirmed' } : b));
+      } catch (err) {}
+    }
+
+    // Cerrar modal de recibo tras enviar
+    setReceiptBooking(null);
+
     const waUrl = `https://wa.me/${clientPhone}?text=${encodeURIComponent(text)}`;
-    openWhatsAppSafely(waUrl);
+    openWhatsAppSafely(waUrl, chosenLine, clientPhone, text);
   };
 
   // Manejador de subida de fotos para clientes (optimizado para Android, móviles y PC)
@@ -3606,11 +4175,80 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           </div>
 
-          {bookings.length === 0 ? (
-            <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
-              No hay reservas registradas todavía.
-            </div>
-          ) : bookingViewMode === 'calendar' ? (
+          {(() => {
+            const activeBookings = bookings.filter(b => b.status !== 'completed');
+            const completedBookings = bookings.filter(b => b.status === 'completed');
+            const displayedBookings = bookingFilterStatus === 'completed'
+              ? completedBookings
+              : bookingFilterStatus === 'all'
+              ? bookings
+              : activeBookings;
+
+            return (
+              <div className="space-y-5">
+                {/* BARRA DE FILTRO DE RESERVAS */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-2 bg-stone-950/80 border border-stone-800 rounded-2xl">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBookingFilterStatus('active')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+                        bookingFilterStatus === 'active'
+                          ? 'bg-amber-400 text-stone-950 shadow-md font-black'
+                          : 'text-stone-400 hover:text-white bg-stone-900/60'
+                      }`}
+                    >
+                      <span>📅 En Agenda / Activas</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        bookingFilterStatus === 'active' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'
+                      }`}>
+                        {activeBookings.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingFilterStatus('completed')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+                        bookingFilterStatus === 'completed'
+                          ? 'bg-emerald-500 text-stone-950 shadow-md font-black'
+                          : 'text-stone-400 hover:text-white bg-stone-900/60'
+                      }`}
+                    >
+                      <span>🏆 Pagadas 100% / Completadas</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        bookingFilterStatus === 'completed' ? 'bg-stone-950 text-emerald-300' : 'bg-stone-800 text-stone-300'
+                      }`}>
+                        {completedBookings.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingFilterStatus('all')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+                        bookingFilterStatus === 'all'
+                          ? 'bg-stone-800 text-white font-bold'
+                          : 'text-stone-400 hover:text-white bg-stone-900/60'
+                      }`}
+                    >
+                      <span>🌐 Todas</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-stone-900 text-stone-400 font-bold">
+                        {bookings.length}
+                      </span>
+                    </button>
+                  </div>
+
+                  <span className="text-[11px] text-stone-400 italic hidden md:inline">
+                    {bookingFilterStatus === 'active' ? 'Mostrando solo sesiones activas pendientes' : bookingFilterStatus === 'completed' ? 'Sesiones terminadas y pagadas al 100%' : 'Todas las reservas'}
+                  </span>
+                </div>
+
+                {bookings.length === 0 ? (
+                  <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
+                    No hay reservas registradas todavía.
+                  </div>
+                ) : bookingViewMode === 'calendar' ? (
             /* VISTA DE CALENDARIO MENSUAL INTERACTIVO */
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Cuadrícula del Calendario (2 Columnas) */}
@@ -3968,9 +4606,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           ) : (
             /* VISTA DE LISTA DE RESERVAS */
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {bookings.map((booking) => {
-                const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
+            displayedBookings.length === 0 ? (
+              <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400 space-y-1">
+                <p className="text-white font-bold text-sm">
+                  {bookingFilterStatus === 'active'
+                    ? '🎉 No hay reservas pendientes en la agenda activa.'
+                    : bookingFilterStatus === 'completed'
+                    ? 'Aún no hay reservas completadas o pagadas al 100%.'
+                    : 'No hay reservas registradas todavía.'}
+                </p>
+                <p className="text-xs text-stone-400">
+                  {bookingFilterStatus === 'active' && 'Las reservas pagadas al 100% se archivan automáticamente y sus clientes se preservan en Clientes VIP.'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {displayedBookings.map((booking) => {
+                  const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
                 let clientPhoneClean = (booking.clientWhatsApp || '').replace(/\D/g, '');
                 if (clientPhoneClean.length === 10 && !clientPhoneClean.startsWith('57')) {
                   clientPhoneClean = '57' + clientPhoneClean;
@@ -4349,7 +5001,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 );
               })}
             </div>
+            )
           )}
+        </div>
+      );
+    })()}
         </div>
       )}
 
@@ -5460,61 +6116,237 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       )}
 
       {/* PESTAÑA: PROGRAMA DE FIDELIZACIÓN VIP */}
-      {activeTab === 'loyalty' && (
-        <div className="space-y-6 text-left">
-          <div>
-            <h3 className="text-xl font-serif font-bold text-white">
-              Programa de Fidelización & Clientes VIP
-            </h3>
-            <p className="text-xs text-stone-400">
-              Detección automática por número de WhatsApp con aplicación automática de 15% de descuento en sesiones recurrentes.
-            </p>
-          </div>
+      {activeTab === 'loyalty' && (() => {
+        // Combinar clientes guardados en vipClients con las reservas completadas y clientes existentes
+        const clientMap = new Map();
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-gradient-to-br from-amber-950/50 via-stone-900 to-stone-900 border border-amber-500/40 rounded-3xl p-6 shadow-xl">
-              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4">
-                <Crown className="w-6 h-6" />
+        // 1. Clientes registrados en vipClients
+        (vipClients || []).forEach(v => {
+          if (!v) return;
+          const cleanPhone = (v.phone || v.clientWhatsApp || '').replace(/\D/g, '');
+          const key = cleanPhone || v.id;
+          if (key) clientMap.set(key, { ...v, cleanPhone });
+        });
+
+        // 2. Extraer de reservas completadas para asegurar 100% de cobertura
+        (bookings || []).forEach(b => {
+          if (!b) return;
+          const cleanPhone = (b.clientWhatsApp || '').replace(/\D/g, '');
+          const key = cleanPhone || b.id;
+          if (!key) return;
+          const existing = clientMap.get(key);
+          const bPrice = Number(b.totalPrice) || 0;
+          if (existing) {
+            if (!existing.packages?.includes(b.packageName) && b.packageName) {
+              existing.packages = [...(existing.packages || []), b.packageName];
+            }
+            if (b.status === 'completed' && !existing.isCompletedCounted) {
+              existing.sessionsCount = Math.max(existing.sessionsCount || 1, 1);
+            }
+          } else {
+            clientMap.set(key, {
+              id: `vip-${cleanPhone || b.id}`,
+              name: b.clientName || 'Cliente',
+              phone: b.clientWhatsApp || '',
+              cleanPhone,
+              email: b.clientEmail || '',
+              location: b.specificLocation || 'San Antero',
+              totalSpent: bPrice,
+              sessionsCount: b.status === 'completed' ? 1 : 0,
+              lastSessionDate: b.dateTime || b.createdAt,
+              packages: [b.packageName].filter(Boolean),
+              status: 'VIP',
+              vipDiscount: 15,
+              notes: b.description || ''
+            });
+          }
+        });
+
+        const allVips = Array.from(clientMap.values()).sort((a, b) => 
+          new Date(b.lastSessionDate || 0) - new Date(a.lastSessionDate || 0)
+        );
+
+        const filteredVips = vipSearchQuery.trim()
+          ? allVips.filter(v => 
+              (v.name || '').toLowerCase().includes(vipSearchQuery.toLowerCase()) ||
+              (v.phone || '').includes(vipSearchQuery) ||
+              (v.email || '').toLowerCase().includes(vipSearchQuery.toLowerCase())
+            )
+          : allVips;
+
+        const totalVipRevenue = allVips.reduce((sum, v) => sum + (Number(v.totalSpent) || 0), 0);
+
+        return (
+          <div className="space-y-6 text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-serif font-bold text-white flex items-center gap-2">
+                  <span>Directorio de Clientes VIP & Fidelización</span>
+                  <span className="text-xs font-sans font-bold text-amber-400 bg-amber-400/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                    {allVips.length} Clientes VIP
+                  </span>
+                </h3>
+                <p className="text-xs text-stone-400">
+                  Historial blindado de clientes con sesiones completadas. Reconocimiento automático con 15% de descuento.
+                </p>
               </div>
-              <h4 className="text-lg font-serif font-bold text-white mb-2">
-                Fidelización Automática (15% OFF)
-              </h4>
-              <p className="text-xs text-stone-300 leading-relaxed mb-4">
-                Cuando un cliente que ya realizó una sesión contigo vuelve a ingresar su número de WhatsApp para reservar o seleccionar fotos, la plataforma lo reconoce al instante como <strong>Cliente VIP</strong> y le otorga un <strong>15% de descuento directo</strong>.
-              </p>
-              <div className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800 space-y-1.5 text-xs text-stone-300">
-                <div className="flex justify-between">
-                  <span className="text-stone-400">Descuento aplicado:</span>
-                  <span className="font-bold text-amber-400">15% de Descuento</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-stone-400">Activación:</span>
-                  <span className="font-semibold text-emerald-400">Automática por WhatsApp</span>
-                </div>
+
+              <div className="relative w-full sm:w-72">
+                <input
+                  type="text"
+                  value={vipSearchQuery}
+                  onChange={(e) => setVipSearchQuery(e.target.value)}
+                  placeholder="Buscar por nombre o teléfono..."
+                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-400"
+                />
               </div>
             </div>
 
-            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6">
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider mb-4">
-                Clientes Recurrentes Registrados
-              </h4>
-              <div className="space-y-3">
-                {bookings.map((b) => (
-                  <div key={b.id} className="bg-stone-950 p-3.5 rounded-2xl border border-stone-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-white block">{b.clientName}</span>
-                      <span className="text-[11px] text-stone-400">{b.clientWhatsApp}</span>
-                    </div>
-                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      Cliente VIP (15% OFF)
-                    </span>
+            {/* Tarjetas de Métricas VIP */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="p-4 bg-stone-900 border border-stone-800 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-amber-400">Total Clientes VIP</span>
+                  <div className="text-2xl font-black text-white font-mono mt-0.5">{allVips.length}</div>
+                </div>
+                <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <Crown className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="p-4 bg-stone-900 border border-stone-800 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-emerald-400">Facturación Generada</span>
+                  <div className="text-xl font-black text-emerald-400 font-mono mt-0.5">
+                    ${totalVipRevenue.toLocaleString('es-CO')} COP
                   </div>
-                ))}
+                </div>
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="p-4 bg-stone-900 border border-stone-800 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-purple-400">Beneficio Activo</span>
+                  <div className="text-xl font-black text-purple-300 font-mono mt-0.5">15% OFF</div>
+                  <span className="text-[10px] text-stone-400">Automático por WhatsApp</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <Sparkles className="w-5 h-5" />
+                </div>
               </div>
             </div>
+
+            {/* Listado de Clientes VIP */}
+            {filteredVips.length === 0 ? (
+              <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
+                {vipSearchQuery ? 'No se encontraron clientes que coincidan con la búsqueda.' : 'Aún no hay clientes VIP registrados.'}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredVips.map((vip) => {
+                  let phoneClean = (vip.cleanPhone || vip.phone || '').replace(/\D/g, '');
+                  if (phoneClean.length === 10 && !phoneClean.startsWith('57')) phoneClean = '57' + phoneClean;
+                  const firstName = (vip.name || 'Cliente').split(' ')[0];
+
+                  const inviteText = `¡Hola ${firstName}! Te saluda Sebastian G 📸✨ Como eres parte de mis Clientes VIP, tienes un 15% de descuento reservado para tu próxima sesión o evento especial. ¿Te gustaría conocer las fechas disponibles para esta temporada?`;
+
+                  return (
+                    <div
+                      key={vip.id || vip.phone}
+                      className="bg-stone-900 border border-stone-800 hover:border-amber-500/40 rounded-3xl p-5 space-y-4 shadow-md transition-all flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                            <Crown className="w-3 h-3 text-amber-400" />
+                            <span>CLIENTE VIP (15% OFF)</span>
+                          </span>
+                          <span className="text-[10px] text-stone-400 font-mono">
+                            {vip.sessionsCount || 1} {(vip.sessionsCount || 1) === 1 ? 'sesión' : 'sesiones'}
+                          </span>
+                        </div>
+
+                        <h4 className="text-base font-serif font-bold text-white">
+                          {vip.name}
+                        </h4>
+
+                        <div className="space-y-1 text-xs">
+                          <p className="text-stone-300 flex items-center gap-1.5">
+                            <span className="text-stone-500">📱</span>
+                            <span className="font-mono text-emerald-400 font-semibold">{vip.phone}</span>
+                          </p>
+                          {vip.email && (
+                            <p className="text-stone-400 truncate flex items-center gap-1.5">
+                              <span className="text-stone-500">✉️</span>
+                              <span className="truncate">{vip.email}</span>
+                            </p>
+                          )}
+                          <p className="text-stone-400 truncate flex items-center gap-1.5">
+                            <span className="text-stone-500">📍</span>
+                            <span>{vip.location || 'San Antero'}</span>
+                          </p>
+                        </div>
+
+                        <div className="p-3 bg-stone-950 rounded-xl border border-stone-800 space-y-1 text-[11px]">
+                          <div className="flex justify-between">
+                            <span className="text-stone-400">Total Invertido:</span>
+                            <span className="font-mono font-bold text-amber-400">
+                              ${(Number(vip.totalSpent) || 0).toLocaleString('es-CO')} COP
+                            </span>
+                          </div>
+                          {vip.packages && vip.packages.length > 0 && (
+                            <div className="flex justify-between text-stone-400">
+                              <span>Paquetes:</span>
+                              <span className="text-stone-300 truncate max-w-[130px] font-medium">
+                                {vip.packages.join(', ')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Botones de Acción Rápida con Cliente VIP */}
+                      <div className="pt-2 border-t border-stone-800 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuickWhatsAppTarget({
+                              type: 'vip_offer',
+                              title: `Oferta VIP para ${vip.name}`,
+                              clientName: vip.name,
+                              clientPhone: phoneClean,
+                              text: inviteText
+                            });
+                          }}
+                          className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow transition-all active:scale-95"
+                          title="Enviar saludo VIP por WhatsApp eligiendo línea"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Contactar VIP</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(`${vip.name} • ${vip.phone}`);
+                            alert(`✓ Datos de ${vip.name} copiados al portapapeles`);
+                          }}
+                          className="p-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 transition-colors"
+                          title="Copiar datos"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* PESTAÑA 2: SUBIR FOTOS PARA CLIENTE CON CALIDAD LIGHTROOM ULTRA HD */}
       {activeTab === 'create-session' && (
@@ -7808,7 +8640,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 type="button"
                 onClick={() => {
                   const url = `https://wa.me/${quickWhatsAppTarget.clientPhone}?text=${encodeURIComponent(quickWhatsAppTarget.text || '')}`;
-                  openWhatsAppSafely(url);
+                  openWhatsAppSafely(url, 'line1', quickWhatsAppTarget.clientPhone, quickWhatsAppTarget.text || '');
                   setQuickWhatsAppTarget(null);
                 }}
                 className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-700 via-emerald-600 to-emerald-700 hover:from-emerald-600 hover:to-emerald-500 text-white font-bold text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all border border-emerald-400/50"
@@ -7818,7 +8650,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   <div className="font-mono text-sm font-black text-white">324 472 5167</div>
                 </div>
                 <span className="text-[10px] bg-emerald-950 px-2 py-1 rounded-lg border border-emerald-400/40 text-emerald-300 font-bold">
-                  📲 Abrir
+                  📲 Abrir WhatsApp
                 </span>
               </button>
 
@@ -7826,17 +8658,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 type="button"
                 onClick={() => {
                   const url = `https://wa.me/${quickWhatsAppTarget.clientPhone}?text=${encodeURIComponent(quickWhatsAppTarget.text || '')}`;
-                  openWhatsAppSafely(url);
+                  openWhatsAppSafely(url, 'line2', quickWhatsAppTarget.clientPhone, quickWhatsAppTarget.text || '');
                   setQuickWhatsAppTarget(null);
                 }}
                 className="p-3.5 rounded-xl bg-gradient-to-r from-teal-700 via-teal-600 to-teal-700 hover:from-teal-600 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all border border-teal-400/50"
               >
                 <div className="text-left">
-                  <div className="text-[10px] text-teal-200 font-bold uppercase">Línea 2 (Secundaria)</div>
+                  <div className="text-[10px] text-teal-200 font-bold uppercase">Línea 2 (Business)</div>
                   <div className="font-mono text-sm font-black text-white">302 369 6513</div>
                 </div>
                 <span className="text-[10px] bg-teal-950 px-2 py-1 rounded-lg border border-teal-400/40 text-teal-300 font-bold">
-                  📲 Abrir
+                  📲 Abrir Business
                 </span>
               </button>
             </div>
