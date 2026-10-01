@@ -149,9 +149,6 @@ export default function TestimonialsSection({ onOpenBooking }) {
                   <h4 className="text-sm font-serif font-bold text-white leading-tight">
                     {rev.clientName}
                   </h4>
-                  <span className="text-[10px] text-amber-400 font-medium block">
-                    {rev.sessionTitle || 'Sesión Fotográfica'}
-                  </span>
                 </div>
               </div>
 

@@ -405,10 +405,14 @@ export function getLocalReviews() {
     const list = raw ? JSON.parse(raw) : [];
     if (Array.isArray(list)) {
       // Filtrar y eliminar de inmediato cualquier comentario de muestra no real
-      const clean = list.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
-      if (clean.length !== list.length) {
-        localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(clean));
-      }
+      const clean = list.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')).map(r => {
+        const item = { ...r };
+        delete item.sessionTitle;
+        delete item.sessionType;
+        delete item.packageTitle;
+        return item;
+      });
+      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(clean));
       return clean;
     }
   } catch (e) {}
@@ -1959,7 +1963,14 @@ export async function getReviews() {
   [...localReviews, ...serverReviews, ...cloudReviews].forEach(r => {
     if (r && r.id) map.set(r.id, r);
   });
-  const combined = Array.from(map.values());
+  const combined = Array.from(map.values()).map(r => {
+    if (!r) return r;
+    const clean = { ...r };
+    delete clean.sessionTitle;
+    delete clean.sessionType;
+    delete clean.packageTitle;
+    return clean;
+  });
   if (cloudReviews.length > 0) {
     try {
       localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
@@ -1987,7 +1998,6 @@ export async function submitGalleryReview(token, reviewData) {
   const newReview = serverReview || {
     id: `rev-${Date.now()}`,
     clientName: (reviewData.clientName || 'Cliente').trim(),
-    sessionTitle: reviewData.sessionTitle || 'Sesión Fotográfica',
     rating: Number(reviewData.rating) || 5,
     recommend: reviewData.recommend !== false,
     comment: (reviewData.comment || '').trim(),
@@ -2023,7 +2033,6 @@ export async function submitGalleryReview(token, reviewData) {
   const waMsg = encodeURIComponent(
     `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tus fotos:*\n\n` +
     `👤 *Cliente:* ${newReview.clientName}\n` +
-    `📦 *Sesión:* ${newReview.sessionTitle}\n` +
     `⭐ *Calificación:* ${starsText} (${newReview.rating}/5 Estrellas)\n` +
     `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
     `💬 *Comentario:* "${newReview.comment}"\n\n` +

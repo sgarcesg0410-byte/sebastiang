@@ -1222,14 +1222,20 @@ app.get('/api/reviews', async (req, res) => {
     console.warn('Error obteniendo reseñas desde Supabase:', err);
   }
 
-  // Filtrar reseñas temporales si existieran
-  reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+  // Filtrar reseñas temporales y remover datos de paquetes o sesiones
+  reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')).map(r => {
+    const clean = { ...r };
+    delete clean.sessionTitle;
+    delete clean.sessionType;
+    delete clean.packageTitle;
+    return clean;
+  });
   res.json(reviews);
 });
 
 // Guardar reseña pública directa (desde https://sebastiang.app/calificar)
 app.post('/api/reviews', async (req, res) => {
-  const { clientName, sessionTitle, rating, recommend, comment } = req.body || {};
+  const { clientName, rating, recommend, comment } = req.body || {};
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan nombre del cliente o comentario.' });
   }
@@ -1237,7 +1243,6 @@ app.post('/api/reviews', async (req, res) => {
   const newReview = {
     id: `rev-${Date.now()}`,
     clientName: String(clientName).trim(),
-    sessionTitle: String(sessionTitle || 'Sesión Fotográfica').trim(),
     rating: Number(rating) || 5,
     recommend: recommend !== false,
     comment: String(comment).trim(),
@@ -1285,11 +1290,10 @@ app.post('/api/reviews', async (req, res) => {
 
 // Guardar reseña desde galería de cliente
 app.post('/api/gallery/:token/review', async (req, res) => {
-  const { clientName, sessionTitle, rating, recommend, comment } = req.body || {};
+  const { clientName, rating, recommend, comment } = req.body || {};
   const newReview = {
     id: `rev-${Date.now()}`,
     clientName: String(clientName || 'Cliente').trim(),
-    sessionTitle: String(sessionTitle || 'Sesión Fotográfica').trim(),
     rating: Number(rating) || 5,
     recommend: recommend !== false,
     comment: String(comment || '').trim(),

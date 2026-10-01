@@ -122,8 +122,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
         rating: reviewRating,
         recommend: reviewRecommend,
         comment: reviewComment.trim(),
-        clientName: galleryData?.clientName || 'Cliente',
-        sessionTitle: galleryData?.packageTitle || 'Sesión Fotográfica'
+        clientName: galleryData?.clientName || 'Cliente'
       });
       setSubmittedReview(res.review || {
         rating: reviewRating,
