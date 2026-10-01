@@ -3293,9 +3293,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white">
               Panel de Control • Sebastian G
             </h1>
-            <p className="text-xs text-stone-400 mt-0.5">
-              Línea 1: {settings.photographerWhatsApp || '+573244725167'} • Línea 2: {settings.photographerWhatsApp2 || '+573023696513'}
-            </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setActiveTab('reviews')}
+              className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
+            >
+              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+              <span>⭐ Link de Opiniones para Clientes</span>
+            </button>
           </div>
         </div>
 
@@ -6001,6 +6009,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         >
                           <MessageCircle className="w-4 h-4" />
                           <span>📲 Enviar Enlace Full HD al WhatsApp del Cliente</span>
+                        </a>
+                      )}
+
+                      {session.status === 'delivered' && (
+                        <a
+                          href={`https://wa.me/${(session.clientWhatsApp || '').replace(/\D/g, '')}?text=${encodeURIComponent(
+                            `🌟 *¡Hola ${session.clientName}!* ✨\n\n` +
+                            `Espero que estés disfrutando muchísimo tus fotografías finales con *Sebastian G* 📸🌊.\n\n` +
+                            `¿Nos regalarías 1 minuto para calificar tu experiencia y dejarnos una breve opinión sobre el servicio y las fotos? Tu testimonio es muy valioso para nosotros.\n\n` +
+                            `⭐ *Puedes dejar tu calificación aquí:*\n` +
+                            `${window.location.origin}/calificar?cliente=${encodeURIComponent(session.clientName)}\n\n` +
+                            `_¡Aparecerá publicada en nuestra página web oficial! Muchas gracias por tu confianza._ 🙏✨`
+                          )}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full font-bold text-xs py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                        >
+                          <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                          <span>⭐ Pedir Calificación por WhatsApp a {session.clientName ? session.clientName.split(' ')[0] : 'Cliente'}</span>
                         </a>
                       )}
 
