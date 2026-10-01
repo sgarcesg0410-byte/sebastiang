@@ -104,52 +104,21 @@ export default function ProtectedCanvasImage({
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
 
-    // Marca de agua digital en pixeles horneada en el Canvas (imposible de retirar o burlar)
+    // Marca de agua central protegida en pixeles (únicamente en el centro)
     if (watermark) {
       ctx.save();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      // 1. Trama diagonal repetitiva a 45 grados en todo el lienzo
-      ctx.save();
-      ctx.translate(targetWidth / 2, targetHeight / 2);
-      ctx.rotate(-Math.PI / 4);
-
-      const diagStep = Math.max(70, Math.floor(targetHeight * 0.22));
-      const diagFontSize = Math.max(12, Math.floor(targetWidth * 0.04));
-      ctx.font = `800 ${diagFontSize}px sans-serif`;
-      ctx.lineWidth = Math.max(2, diagFontSize * 0.12);
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.42)';
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-      ctx.shadowBlur = 6;
-
-      const repeatText = (watermarkText || 'SEBASTIAN G • MUESTRA EXCLUSIVA').toUpperCase();
-      const bound = Math.max(targetWidth, targetHeight) * 1.5;
-      for (let y = -bound; y <= bound; y += diagStep) {
-        ctx.strokeText(repeatText, 0, y);
-        ctx.fillText(repeatText, 0, y);
-      }
-      ctx.restore();
-
-      // 2. Distintivo central prominente con relieve y máxima visibilidad
-      const centerTitleSize = Math.max(18, Math.floor(targetWidth * 0.08));
+      const centerTitleSize = Math.max(16, Math.floor(targetWidth * 0.07));
       ctx.font = `900 ${centerTitleSize}px sans-serif`;
-      ctx.lineWidth = Math.max(3, centerTitleSize * 0.14);
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-      ctx.shadowBlur = 10;
-      ctx.strokeText('SEBASTIAN G', targetWidth / 2, targetHeight / 2 - 14);
-      ctx.fillText('SEBASTIAN G', targetWidth / 2, targetHeight / 2 - 14);
-
-      const centerSubSize = Math.max(10, Math.floor(targetWidth * 0.034));
-      ctx.font = `700 ${centerSubSize}px sans-serif`;
-      ctx.lineWidth = Math.max(2, centerSubSize * 0.12);
+      ctx.lineWidth = Math.max(2.5, centerTitleSize * 0.12);
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.fillStyle = '#fbbf24'; // Color ámbar
-      ctx.strokeText('MUESTRA OFICIAL • PROHIBIDA SU DESCARGA O CAPTURA', targetWidth / 2, targetHeight / 2 + 18);
-      ctx.fillText('MUESTRA OFICIAL • PROHIBIDA SU DESCARGA O CAPTURA', targetWidth / 2, targetHeight / 2 + 18);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+      ctx.shadowBlur = 8;
+      ctx.strokeText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
+      ctx.fillText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
 
       ctx.restore();
     }
