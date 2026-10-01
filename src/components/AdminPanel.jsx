@@ -996,24 +996,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const map = new Map();
         // 1. Incorporar siempre las 3 reservas reales oficiales garantizadas
         REAL_DEFAULT_BOOKINGS.forEach(b => {
-          if (b && b.id) map.set(b.id, b);
+          if (b && b.id) map.set(b.id, { ...b, isReal: true });
         });
 
         // 2. Preservar todas las reservas previas válidas
         (prev || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
-            map.set(b.id, existing ? { ...existing, ...b } : b);
+            map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
           }
         });
-        // 3. Fusionar con las reservas recibidas de la fuente (servidor/nube/local)
+        // 3. Fusionar con las reservas recibidas de la fuente (servidor/nube/local/idb)
         (bData || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
             if (existing) {
-              map.set(b.id, { ...existing, ...b, status: b.status || existing.status });
+              map.set(b.id, { ...existing, ...b, status: b.status || existing.status, isReal: true });
             } else {
-              map.set(b.id, b);
+              map.set(b.id, { ...b, isReal: true });
             }
           }
         });
@@ -1714,7 +1714,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         specificLocation: (newBookingForm.specificLocation || 'San Antero').trim(),
         dateTime: newBookingForm.dateTime || new Date().toLocaleDateString('es-CO'),
         description: (newBookingForm.description || '').trim(),
-        status: newBookingForm.status || 'pending'
+        status: newBookingForm.status || 'pending',
+        isReal: true
       };
 
       let createdItem;

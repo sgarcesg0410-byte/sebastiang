@@ -470,7 +470,8 @@ app.post('/api/bookings', (req, res) => {
     dateTime,
     description: (description || '').trim(),
     createdAt: new Date().toISOString(),
-    status: 'pending'
+    status: 'pending',
+    isReal: true
   };
 
   runtimeDB.bookings.unshift(newBooking);
@@ -786,36 +787,120 @@ app.post('/api/admin/auth', (req, res) => {
   }
 });
 
-app.get('/api/admin/bookings', (req, res) => {
+app.get('/api/admin/bookings', async (req, res) => {
   try {
     const diskDB = getDB();
-    if (diskDB && Array.isArray(diskDB.bookings)) {
-      const map = new Map();
-      (diskDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, b); });
-      (runtimeDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, b); });
-      runtimeDB.bookings = Array.from(map.values());
+    const map = new Map();
+    (diskDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, { ...b, isReal: true }); });
+    (runtimeDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, { ...b, isReal: true }); });
+
+    // Consultar Supabase Cloud en paralelo (catálogo booking_data y tabla bookings)
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.booking_data&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (Array.isArray(rows)) {
+          rows.forEach(r => {
+            try {
+              const b = JSON.parse(r.url);
+              if (b && b.id) {
+                const existing = map.get(b.id);
+                map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
+              }
+            } catch (err) {}
+          });
+        }
+      }
+    } catch (errCloud) {
+      console.warn('Error recuperando reservas de Supabase catalog:', errCloud);
     }
-  } catch (e) {}
+
+    try {
+      const supaBookingsRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaBookingsRes.ok) {
+        const rows = await supaBookingsRes.json();
+        if (Array.isArray(rows)) {
+          rows.forEach(b => {
+            if (b && b.id) {
+              const formatted = {
+                id: b.id,
+                clientName: b.client_name,
+                clientWhatsApp: b.client_whatsapp,
+                clientEmail: b.client_email,
+                packageId: b.package_id,
+                packageName: b.package_name,
+                totalPrice: Number(b.total_price || 0),
+                locationType: b.location_type,
+                specificLocation: b.specific_location,
+                dateTime: b.date_time,
+                description: b.description,
+                status: b.status,
+                createdAt: b.created_at,
+                isReal: true
+              };
+              const existing = map.get(b.id);
+              map.set(b.id, existing ? { ...existing, ...formatted, isReal: true } : formatted);
+            }
+          });
+        }
+      }
+    } catch (errDirect) {
+      console.warn('Error recuperando reservas de Supabase bookings:', errDirect);
+    }
+
+    runtimeDB.bookings = Array.from(map.values());
+  } catch (e) {
+    console.warn('Error en /api/admin/bookings:', e);
+  }
   res.json(runtimeDB.bookings || []);
 });
 
-app.patch('/api/admin/bookings/:id', (req, res) => {
+app.patch('/api/admin/bookings/:id', async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
-  const booking = (runtimeDB.bookings || []).find(b => b.id === id);
-  if (!booking) return res.status(404).json({ error: 'Reserva no encontrada.' });
+  let booking = (runtimeDB.bookings || []).find(b => b.id === id);
+  if (!booking) {
+    booking = { id, ...updates, isReal: true };
+    if (!runtimeDB.bookings) runtimeDB.bookings = [];
+    runtimeDB.bookings.unshift(booking);
+  } else {
+    Object.assign(booking, updates, { isReal: true });
+  }
 
-  Object.assign(booking, updates);
   saveDB(runtimeDB);
-  syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
+  await syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
 
   res.json({ success: true, booking });
 });
 
-app.delete('/api/admin/bookings/:id', (req, res) => {
+app.delete('/api/admin/bookings/:id', async (req, res) => {
   const { id } = req.params;
-  runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id);
+  const supaId = id.startsWith('book-') ? id : `book-${id}`;
+  runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id && b.id !== supaId);
   saveDB(runtimeDB);
+
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+    });
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+    });
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(supaId)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+    });
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+    });
+  } catch (e) {}
 
   res.json({ success: true });
 });

@@ -4,9 +4,10 @@
 // y protegiendo las fotos de catálogo y sesiones del fotógrafo ante cualquier desconexión.
 
 const DB_NAME = 'SebastianG_Storage_v1';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const CATALOG_STORE = 'catalog';
 const SESSIONS_STORE = 'sessions';
+const BOOKINGS_STORE = 'bookings';
 
 let dbPromise = null;
 
@@ -29,6 +30,9 @@ function getDB() {
           }
           if (!db.objectStoreNames.contains(SESSIONS_STORE)) {
             db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' });
+          }
+          if (!db.objectStoreNames.contains(BOOKINGS_STORE)) {
+            db.createObjectStore(BOOKINGS_STORE, { keyPath: 'id' });
           }
         };
         req.onsuccess = (e) => {
@@ -196,3 +200,78 @@ export async function idbDeleteSession(id) {
     return false;
   }
 }
+
+// --- BLINDAJE DE RESERVAS EN INDEXEDDB (BÓVEDA INMUTABLE) ---
+export async function idbGetBookings() {
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(BOOKINGS_STORE)) return resolve([]);
+        const tx = db.transaction(BOOKINGS_STORE, 'readonly');
+        const store = tx.objectStore(BOOKINGS_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+        req.onerror = () => resolve([]);
+      });
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function idbSaveBooking(booking) {
+  if (!booking || !booking.id) return false;
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(BOOKINGS_STORE)) return resolve(false);
+        const tx = db.transaction(BOOKINGS_STORE, 'readwrite');
+        const store = tx.objectStore(BOOKINGS_STORE);
+        store.put(booking);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function idbSaveBookingsBatch(bookings) {
+  if (!Array.isArray(bookings) || bookings.length === 0) return false;
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(BOOKINGS_STORE)) return resolve(false);
+        const tx = db.transaction(BOOKINGS_STORE, 'readwrite');
+        const store = tx.objectStore(BOOKINGS_STORE);
+        for (const b of bookings) {
+          if (b && b.id) store.put(b);
+        }
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function idbDeleteBooking(id) {
+  if (!id) return false;
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(BOOKINGS_STORE)) return resolve(true);
+        const tx = db.transaction(BOOKINGS_STORE, 'readwrite');
+        const store = tx.objectStore(BOOKINGS_STORE);
+        store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
