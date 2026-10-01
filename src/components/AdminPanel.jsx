@@ -5167,32 +5167,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
 
             {/* GENERADOR PERSONALIZADO */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div>
-                <label className="block text-stone-300 font-semibold mb-1">
-                  Nombre del Cliente (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={reviewShareClientName}
-                  onChange={(e) => setReviewShareClientName(e.target.value)}
-                  placeholder="Ej: Jennifer Vásquez"
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-stone-300 font-semibold mb-1">
-                  Tipo de Sesión o Paquete (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={reviewShareSession}
-                  onChange={(e) => setReviewShareSession(e.target.value)}
-                  placeholder="Ej: 8 Fotos Playa Coveñas"
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
-                />
-              </div>
+            <div className="max-w-md text-xs">
+              <label className="block text-stone-300 font-semibold mb-1">
+                Nombre del Cliente (Opcional)
+              </label>
+              <input
+                type="text"
+                value={reviewShareClientName}
+                onChange={(e) => setReviewShareClientName(e.target.value)}
+                placeholder="Ej: Jennifer Vásquez"
+                className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+              />
             </div>
 
             {/* ENLACE RESULTANTE Y BOTONES DE COPIAR / COMPARTIR */}
@@ -5200,7 +5185,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               const baseUrl = typeof window !== 'undefined' ? `${window.location.origin}/calificar` : 'https://sebastiang.app/calificar';
               const params = new URLSearchParams();
               if (reviewShareClientName.trim()) params.set('cliente', reviewShareClientName.trim());
-              if (reviewShareSession.trim()) params.set('sesion', reviewShareSession.trim());
               const queryString = params.toString();
               const fullUrl = queryString ? `${baseUrl}?${queryString}` : baseUrl;
 
@@ -5329,9 +5313,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       <h5 className="text-xs font-bold text-white">
                         {review.clientName || 'Cliente Satisfecho'}
                       </h5>
-                      <span className="text-[10px] text-amber-400/90 font-medium">
-                        {review.sessionTitle || review.sessionType || review.packageTitle || 'Sesión Fotográfica'}
-                      </span>
                     </div>
                     {review.date && (
                       <span className="text-[10px] text-stone-400 font-mono">

@@ -18,7 +18,6 @@ import { submitGalleryReview, getSettings, DEFAULT_SETTINGS } from '../services/
 
 export default function PublicReviewView({ onBackToHome }) {
   const [clientName, setClientName] = useState('');
-  const [sessionTitle, setSessionTitle] = useState('8 Fotos Digitales (+ 2 Fotos Gratis)');
   const [rating, setRating] = useState(5);
   const [hoverRating, setHoverRating] = useState(0);
   const [recommend, setRecommend] = useState(true);
@@ -36,9 +35,6 @@ export default function PublicReviewView({ onBackToHome }) {
       const urlParams = new URLSearchParams(window.location.search);
       const nameParam = urlParams.get('cliente') || urlParams.get('nombre') || urlParams.get('client');
       if (nameParam) setClientName(decodeURIComponent(nameParam));
-
-      const sessParam = urlParams.get('sesion') || urlParams.get('paquete');
-      if (sessParam) setSessionTitle(decodeURIComponent(sessParam));
     }
   }, []);
 
@@ -57,7 +53,6 @@ export default function PublicReviewView({ onBackToHome }) {
       setIsSubmitting(true);
       const res = await submitGalleryReview('public-review', {
         clientName: clientName.trim(),
-        sessionTitle: sessionTitle.trim(),
         rating,
         recommend,
         comment: comment.trim()
@@ -74,7 +69,6 @@ export default function PublicReviewView({ onBackToHome }) {
 
       setSubmittedReview(res?.review || {
         clientName,
-        sessionTitle,
         rating,
         recommend,
         comment
@@ -108,7 +102,6 @@ export default function PublicReviewView({ onBackToHome }) {
   const waShareMsg = encodeURIComponent(
     `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tu servicio de fotografía:*\n\n` +
     `👤 *Cliente:* ${clientName}\n` +
-    `📦 *Sesión:* ${sessionTitle}\n` +
     `⭐ *Calificación:* ${starsString} (${rating}/5 Estrellas)\n` +
     `👍 *¿Nos recomienda?:* ${recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
     `💬 *Opinión:* "${comment}"\n\n` +
@@ -216,24 +209,6 @@ export default function PublicReviewView({ onBackToHome }) {
                 />
               </div>
 
-              {/* TIPO DE SESIÓN */}
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
-                  ¿Qué sesión realizaste?
-                </label>
-                <select
-                  value={sessionTitle}
-                  onChange={(e) => setSessionTitle(e.target.value)}
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-xs sm:text-sm text-stone-200 focus:outline-none focus:border-amber-500 font-medium"
-                >
-                  <option value="8 Fotos Digitales (+ 2 Fotos Gratis)">8 Fotos (+ 2 Gratis) - Sesión en Playa / San Antero</option>
-                  <option value="6 Fotos Digitales (+ 2 Fotos Gratis)">6 Fotos (+ 2 Gratis) - Sesión en Coveñas</option>
-                  <option value="4 Fotos Digitales (+ 2 Fotos Gratis)">4 Fotos (+ 2 Gratis) - Retratos Personales</option>
-                  <option value="10 Fotos Digitales (+ 2 Fotos Gratis)">10 Fotos (+ 2 Gratis) - Sesión Familiar o Quinceañera</option>
-                  <option value="Sesión de Pareja al Atardecer">Sesión de Pareja al Atardecer</option>
-                  <option value="Sesión Fotográfica Profesional">Otra Sesión Personalizada</option>
-                </select>
-              </div>
 
               {/* COMENTARIO / OPINIÓN */}
               <div>
@@ -337,7 +312,7 @@ export default function PublicReviewView({ onBackToHome }) {
 
               <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-[11px] text-stone-400">
                 <span className="font-semibold text-white">{submittedReview.clientName}</span>
-                <span className="text-amber-400/90">{submittedReview.sessionTitle}</span>
+                <span className="text-emerald-400 font-medium">✓ Opinión Verificada</span>
               </div>
             </div>
 
