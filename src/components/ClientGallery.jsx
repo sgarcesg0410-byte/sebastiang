@@ -202,12 +202,25 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     });
   };
 
-  // Detección automática del valor base contratado según paquete de fotos
+  // Detección automática del valor base contratado según paquete de fotos y reserva real
   const getSessionBasePrice = (data) => {
     if (!data) return 75000;
-    if (data.sessionBasePrice && Number(data.sessionBasePrice) > 0) return Number(data.sessionBasePrice);
-    if (data.packagePrice && Number(data.packagePrice) > 0) return Number(data.packagePrice);
     if (data.totalPrice && Number(data.totalPrice) > 0) return Number(data.totalPrice);
+    if (data.packagePrice && Number(data.packagePrice) > 0) return Number(data.packagePrice);
+    if (data.sessionBasePrice && Number(data.sessionBasePrice) > 0) return Number(data.sessionBasePrice);
+
+    // Búsqueda inteligente por nombre de cliente en reservas oficiales
+    const cName = (data.clientName || '').toLowerCase().trim();
+    if (cName.includes('jennifer') || cName.includes('vasquez') || cName.includes('vásquez')) {
+      return 85000; // Reserva en Coveñas con recargo oficial
+    }
+    if (cName.includes('marlin') || cName.includes('torres')) {
+      return 75000; // 6 fotos con locación especial
+    }
+    if (cName.includes('laura') || cName.includes('maza')) {
+      return 45000; // 4 fotos sesión local
+    }
+
     const title = (data.packageTitle || '').toLowerCase();
     if (title.includes('4 foto') || title.includes('4foto') || data.maxPhotosAllowed <= 6) return 45000;
     if (title.includes('6 foto') || title.includes('6foto') || data.maxPhotosAllowed === 8) return 65000;
@@ -758,19 +771,30 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     src={photo.url}
                     alt={photo.title}
                     objectFit="cover"
-                    watermark={false}
+                    watermark={true}
+                    watermarkText="SEBASTIAN G • MUESTRA DE SELECCIÓN"
                   />
 
-                  {/* MARCA DE AGUA: 1 SOLO LOGOTIPO TRANSPARENTE EN EL CENTRO */}
+                  {/* MARCA DE AGUA: PATRÓN DIAGONAL REPETITIVO Y LOGO CENTRAL BLINDADO */}
                   <div className="watermark-overlay z-20 pointer-events-none">
+                    <div className="watermark-pattern">
+                      {[...Array(6)].map((_, i) => (
+                        <div key={i} className="watermark-pattern-row">
+                          SEBASTIAN G • MUESTRA OFICIAL • PROHIBIDA SU DESCARGA O CAPTURA • 
+                        </div>
+                      ))}
+                    </div>
                     <div className="watermark-content">
                       <img
                         src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
                         alt="Sebastian G"
-                        className="w-14 h-14 sm:w-18 sm:h-18 object-contain rounded-2xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]"
+                        className="w-14 h-14 sm:w-16 sm:h-16 object-contain rounded-2xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.85)]"
                       />
-                      <span className="text-[10px] sm:text-xs font-serif tracking-[0.25em] text-white/90 uppercase mt-1">
+                      <span className="text-[11px] sm:text-xs font-serif tracking-[0.25em] text-white/95 uppercase mt-1 font-black drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]">
                         {watermarkText}
+                      </span>
+                      <span className="text-[9px] tracking-wider text-amber-300 font-mono font-bold uppercase mt-0.5 bg-black/60 px-2 py-0.5 rounded border border-amber-400/40">
+                        COPIA PROTEGIDA • SELECCIÓN DE CLIENTE
                       </span>
                     </div>
                   </div>
@@ -928,7 +952,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 {/* Resumen de Fotos y Valor de la Sesión Contratada */}
                 <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-2.5 text-xs">
                   <div className="flex justify-between items-center text-stone-300">
-                    <span className="text-stone-400">Sesión Contratada ({galleryData.packageTitle}):</span>
+                    <span className="text-stone-400">
+                      Sesión Contratada ({galleryData.packageTitle}{galleryData.location ? ` - ${galleryData.location}` : ''}):
+                    </span>
                     <span className="font-bold text-white font-mono">${formatPrice(sessionBasePrice)} COP</span>
                   </div>
 

@@ -2140,12 +2140,19 @@ export async function createAdminSession(data) {
   const cleanName = (data.clientName || 'cliente').toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
   const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
 
+  const finalPrice = Number(data.totalPrice || data.packagePrice || data.sessionBasePrice || 0);
+
   const newSession = serverResult?.session || {
     id: `sess-${Date.now()}`,
     token,
     clientName: (data.clientName || '').trim(),
     clientWhatsApp: (data.clientWhatsApp || '').trim(),
     packageTitle: data.packageTitle || 'Sesión Fotográfica',
+    totalPrice: finalPrice,
+    packagePrice: finalPrice,
+    sessionBasePrice: finalPrice,
+    bookingId: data.bookingId || null,
+    location: data.location || '',
     maxPhotosAllowed: Number(data.maxPhotosAllowed) || (data.photos?.length || 10),
     createdAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),

@@ -528,7 +528,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     packageId: '',
     packageTitle: '8 Fotos Digitales (+ 2 Fotos Gratis)',
     maxPhotosAllowed: 10,
-    photoUrlsText: ''
+    photoUrlsText: '',
+    selectedBookingId: '',
+    totalPrice: 75000,
+    location: ''
   });
 
   // Fotos cargadas para cliente
@@ -1037,7 +1040,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             ...prev,
             packageId: defaultPkg.id,
             packageTitle: `${defaultPkg.name} (+ 2 Fotos Gratis)`,
-            maxPhotosAllowed: defaultPkg.totalPhotos || 10
+            maxPhotosAllowed: defaultPkg.totalPhotos || 10,
+            totalPrice: prev.totalPrice || defaultPkg.price || 75000
           }));
         }
 
@@ -2026,9 +2030,45 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         ...prev,
         packageId: pkg.id,
         packageTitle: `${pkg.name} (+ 2 Fotos Gratis)`,
-        maxPhotosAllowed: pkg.totalPhotos || (pkg.photoCount + 2)
+        maxPhotosAllowed: pkg.totalPhotos || (pkg.photoCount + 2),
+        totalPrice: prev.selectedBookingId ? prev.totalPrice : (pkg.price || 75000)
       }));
     }
+  };
+
+  const handleBookingSelectForSession = (bookingId) => {
+    if (!bookingId) {
+      setNewSessionForm(prev => ({
+        ...prev,
+        selectedBookingId: '',
+        location: ''
+      }));
+      return;
+    }
+
+    const b = (bookings || []).find(item => String(item.id) === String(bookingId));
+    if (!b) return;
+
+    // Buscar paquete correspondiente a la reserva
+    const matchedPkg = packages.find(p => p.id === b.packageId || p.photoCount === b.packagePhotoCount);
+    const pkgTitle = matchedPkg 
+      ? `${matchedPkg.name} (+ 2 Fotos Gratis)` 
+      : (b.packageTitle || '8 Fotos Digitales (+ 2 Fotos Gratis)');
+    const maxPhotos = matchedPkg ? (matchedPkg.totalPhotos || (matchedPkg.photoCount + 2)) : 10;
+    const finalPrice = Number(b.totalPrice) || (matchedPkg ? matchedPkg.price : 75000);
+    const loc = b.specificLocation || (b.locationType === 'out_of_san_antero' ? 'Fuera de San Antero' : 'San Antero');
+
+    setNewSessionForm(prev => ({
+      ...prev,
+      selectedBookingId: b.id,
+      clientName: b.clientName || prev.clientName,
+      clientWhatsApp: b.clientWhatsApp || prev.clientWhatsApp,
+      packageId: matchedPkg ? matchedPkg.id : prev.packageId,
+      packageTitle: pkgTitle,
+      maxPhotosAllowed: maxPhotos,
+      totalPrice: finalPrice,
+      location: loc
+    }));
   };
 
   const handleCreateSession = async (e) => {
@@ -2077,11 +2117,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         ];
       }
 
+      const exactPrice = Number(newSessionForm.totalPrice) || 75000;
+
       const res = await createAdminSession({
         clientName: newSessionForm.clientName,
         clientWhatsApp: newSessionForm.clientWhatsApp,
         packageTitle: newSessionForm.packageTitle,
         maxPhotosAllowed: Number(newSessionForm.maxPhotosAllowed) || 10,
+        totalPrice: exactPrice,
+        packagePrice: exactPrice,
+        sessionBasePrice: exactPrice,
+        bookingId: newSessionForm.selectedBookingId || null,
+        location: newSessionForm.location || '',
         photos: finalPhotos
       });
 
@@ -2418,10 +2465,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // PANTALLA DE ACCESO CON PIN Y RECUPERACIÓN (DISEÑO VIP BÓVEDA)
   if (!isAuthenticated) {
     return (
-      <div className="min-h-[85vh] flex items-center justify-center p-4">
+      <div 
+        onContextMenu={(e) => { e.preventDefault(); return false; }}
+        className="min-h-[85vh] flex items-center justify-center p-4 select-none"
+      >
         <div className="relative bg-gradient-to-b from-stone-900/95 via-stone-900 to-stone-950 border border-amber-500/30 rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-[0_20px_70px_rgba(245,158,11,0.15)] text-center backdrop-blur-2xl overflow-hidden">
           
           {/* Halo ambiental superior */}
@@ -2896,7 +2945,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div 
+      onContextMenu={(e) => { e.preventDefault(); return false; }}
+      className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 select-none"
+    >
       
       {/* BARRA SUPERIOR EXCLUSIVA DEL PANEL (SEPARA EL DASHBOARD DE LA WEB PÚBLICA) */}
       <div className="w-full bg-stone-900/90 border border-stone-800 rounded-3xl p-4 sm:p-5 mb-8 flex flex-wrap items-center justify-between gap-4 shadow-2xl backdrop-blur-xl">
@@ -5341,6 +5393,29 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           )}
 
           <form onSubmit={handleCreateSession} className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-6">
+            {/* VINCULAR A RESERVA AGENDADA DEL CLIENTE */}
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+              <label className="block text-xs font-bold text-amber-300 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>Vincular con Reserva Agendada (Autocompleta datos y fija el valor exacto)</span>
+              </label>
+              <select
+                value={newSessionForm.selectedBookingId || ''}
+                onChange={(e) => handleBookingSelectForSession(e.target.value)}
+                className="w-full bg-stone-950 border border-amber-500/40 rounded-xl px-3.5 py-2.5 text-xs text-amber-100 font-medium focus:outline-none focus:border-amber-400"
+              >
+                <option value="">-- Sin vincular (Completar manualmente) --</option>
+                {(bookings || []).map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.clientName} — ${(Number(b.totalPrice) || 75000).toLocaleString('es-CO')} COP ({b.specificLocation || (b.locationType === 'out_of_san_antero' ? 'Fuera de San Antero' : 'San Antero')}) [{b.status === 'confirmed' ? 'Confirmada' : b.status}]
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-stone-400 mt-1.5">
+                Al seleccionar una reserva, se cargan automáticamente el nombre, WhatsApp y el <strong>valor total exacto contratado</strong> (ej: $85.000 para Coveñas).
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
@@ -5371,7 +5446,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
                   Paquete Contratado
@@ -5392,7 +5467,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
               <div>
                 <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1.5">
-                  Fotos que Puede Elegir el Cliente
+                  Fotos para Elegir
                 </label>
                 <input
                   type="number"
@@ -5400,6 +5475,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   value={newSessionForm.maxPhotosAllowed}
                   onChange={(e) => setNewSessionForm({ ...newSessionForm, maxPhotosAllowed: e.target.value })}
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-amber-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-amber-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                  <span>Valor Sesión ($ COP) *</span>
+                  {newSessionForm.location && (
+                    <span className="text-[10px] text-stone-400 lowercase">{newSessionForm.location}</span>
+                  )}
+                </label>
+                <input
+                  type="number"
+                  required
+                  min={0}
+                  step={1000}
+                  value={newSessionForm.totalPrice}
+                  onChange={(e) => setNewSessionForm({ ...newSessionForm, totalPrice: Number(e.target.value) })}
+                  className="w-full bg-stone-950 border border-amber-500/50 rounded-xl px-4 py-3 text-xs text-amber-300 font-bold focus:outline-none focus:border-amber-400 font-mono"
+                  placeholder="Ej. 85000"
                 />
               </div>
             </div>

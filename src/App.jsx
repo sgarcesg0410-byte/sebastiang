@@ -229,6 +229,32 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    // Bloqueo global de inspección y clic derecho en toda la aplicación (Admin, Web y Galería)
+    const blockInspect = (e) => {
+      if (
+        e.key === 'F12' ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
+        ((e.ctrlKey || e.metaKey) && ['u', 'U', 's', 'S'].includes(e.key))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+    const blockContextMenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    };
+    window.addEventListener('keydown', blockInspect, true);
+    window.addEventListener('contextmenu', blockContextMenu, true);
+    return () => {
+      window.removeEventListener('keydown', blockInspect, true);
+      window.removeEventListener('contextmenu', blockContextMenu, true);
+    };
+  }, []);
+
   const loadInitialData = async () => {
     try {
       setLoading(true);
@@ -301,7 +327,7 @@ export default function App() {
       )}
 
       {/* PROTECCIÓN GLOBAL DE SEGURIDAD ANTI-CAPTURAS Y ANTI-GESTOS */}
-      <SecurityOverlay enabled={currentView !== 'admin'}>
+      <SecurityOverlay enabled={true}>
         {/* CONTENIDO SEGÚN VISTA */}
         <main className="flex-1">
           {currentView === 'home' && (
