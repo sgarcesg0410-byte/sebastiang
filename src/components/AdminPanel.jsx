@@ -474,6 +474,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setPushStatusMessage('');
     playPushNotificationChime('booking');
     const testWhatsApp = 'https://wa.me/573244725167';
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.testNativeNotification) {
+      window.AndroidNotificationBridge.testNativeNotification();
+    }
     try {
       await sendSystemPushNotification({
         title: '📸 ¡Prueba de Reserva en Tiempo Real!',
@@ -3038,22 +3041,51 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="flex items-center gap-1.5 bg-stone-950/90 border border-emerald-500/40 px-3 py-1.5 rounded-xl">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-0.5" />
               <span className="text-[11px] font-bold text-emerald-300">Push Flotante Activo</span>
-              <button
-                type="button"
-                onClick={handleTestPush}
-                className="ml-1 text-[11px] text-stone-300 hover:text-amber-300 underline font-semibold"
-                title="Hacer sonar y probar una notificación flotante de prueba"
-              >
-                (Probar Alerta)
-              </button>
-              {typeof window !== 'undefined' && window.AndroidNotificationBridge?.openNotificationSettings && (
+              {typeof window !== 'undefined' && window.AndroidNotificationBridge ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.AndroidNotificationBridge.testNativeNotification) {
+                        window.AndroidNotificationBridge.testNativeNotification();
+                      } else {
+                        handleTestPush();
+                      }
+                    }}
+                    className="ml-1 text-[11px] text-amber-300 hover:text-amber-200 underline font-bold"
+                    title="Disparar sonido VIP y alerta nativa flotante en este teléfono"
+                  >
+                    🔊 Probar Alerta APK
+                  </button>
+                  {window.AndroidNotificationBridge.requestIgnoreBatteryOptimizations && (
+                    <button
+                      type="button"
+                      onClick={() => window.AndroidNotificationBridge.requestIgnoreBatteryOptimizations()}
+                      className="ml-1 text-[11px] text-emerald-400 hover:text-emerald-300 font-bold"
+                      title="Permitir alertas 24/7 con pantalla apagada desactivando el ahorro de batería de Android"
+                    >
+                      ⚡ Alertas 24/7
+                    </button>
+                  )}
+                  {window.AndroidNotificationBridge.openNotificationSettings && (
+                    <button
+                      type="button"
+                      onClick={() => window.AndroidNotificationBridge.openNotificationSettings()}
+                      className="ml-1 text-[11px] text-amber-400 hover:text-amber-200 underline font-bold"
+                      title="Configurar permisos de notificaciones flotantes en los ajustes de Android"
+                    >
+                      ⚙️ Ajustes
+                    </button>
+                  )}
+                </>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => window.AndroidNotificationBridge.openNotificationSettings()}
-                  className="ml-1 text-[11px] text-amber-400 hover:text-amber-200 underline font-bold"
-                  title="Configurar permisos de notificaciones flotantes en los ajustes de Android"
+                  onClick={handleTestPush}
+                  className="ml-1 text-[11px] text-stone-300 hover:text-amber-300 underline font-semibold"
+                  title="Hacer sonar y probar una notificación flotante de prueba"
                 >
-                  ⚙️ Ajustes Android
+                  (Probar Alerta)
                 </button>
               )}
             </div>
