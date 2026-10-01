@@ -4,10 +4,11 @@
 // y protegiendo las fotos de catálogo y sesiones del fotógrafo ante cualquier desconexión.
 
 const DB_NAME = 'SebastianG_Storage_v1';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const CATALOG_STORE = 'catalog';
 const SESSIONS_STORE = 'sessions';
 const BOOKINGS_STORE = 'bookings';
+const VIP_CLIENTS_STORE = 'vip_clients';
 
 let dbPromise = null;
 
@@ -33,6 +34,9 @@ function getDB() {
           }
           if (!db.objectStoreNames.contains(BOOKINGS_STORE)) {
             db.createObjectStore(BOOKINGS_STORE, { keyPath: 'id' });
+          }
+          if (!db.objectStoreNames.contains(VIP_CLIENTS_STORE)) {
+            db.createObjectStore(VIP_CLIENTS_STORE, { keyPath: 'id' });
           }
         };
         req.onsuccess = (e) => {
@@ -266,6 +270,62 @@ export async function idbDeleteBooking(id) {
         const tx = db.transaction(BOOKINGS_STORE, 'readwrite');
         const store = tx.objectStore(BOOKINGS_STORE);
         store.delete(id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+// --- BLINDAJE DE CLIENTES VIP EN INDEXEDDB ---
+export async function idbGetVipClients() {
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(VIP_CLIENTS_STORE)) return resolve([]);
+        const tx = db.transaction(VIP_CLIENTS_STORE, 'readonly');
+        const store = tx.objectStore(VIP_CLIENTS_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+        req.onerror = () => resolve([]);
+      });
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function idbSaveVipClient(client) {
+  if (!client || !client.id) return false;
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(VIP_CLIENTS_STORE)) return resolve(false);
+        const tx = db.transaction(VIP_CLIENTS_STORE, 'readwrite');
+        const store = tx.objectStore(VIP_CLIENTS_STORE);
+        store.put(client);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function idbSaveVipClientsBatch(clients) {
+  if (!Array.isArray(clients) || clients.length === 0) return false;
+  try {
+    return await withDB((db) => {
+      return new Promise((resolve) => {
+        if (!db.objectStoreNames.contains(VIP_CLIENTS_STORE)) return resolve(false);
+        const tx = db.transaction(VIP_CLIENTS_STORE, 'readwrite');
+        const store = tx.objectStore(VIP_CLIENTS_STORE);
+        for (const c of clients) {
+          if (c && c.id) store.put(c);
+        }
         tx.oncomplete = () => resolve(true);
         tx.onerror = () => resolve(false);
       });

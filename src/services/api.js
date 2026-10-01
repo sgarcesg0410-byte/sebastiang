@@ -10,12 +10,16 @@ import {
   idbGetBookings,
   idbSaveBooking,
   idbSaveBookingsBatch,
-  idbDeleteBooking
+  idbDeleteBooking,
+  idbGetVipClients,
+  idbSaveVipClient,
+  idbSaveVipClientsBatch
 } from './indexedDb';
 
 const API_BASE = '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
 const LOCAL_BOOKINGS_KEY = 'sebastian_g_bookings_v1';
+const LOCAL_VIP_CLIENTS_KEY = 'sebastian_g_vip_clients_v1';
 const LOCAL_CATALOG_KEY = 'sebastian_g_catalog_v1';
 const LOCAL_DELETED_CATALOG_KEY = 'sebastian_g_deleted_catalog_ids_v2';
 const LOCAL_SAMPLES_PURGED_KEY = 'sebastian_g_samples_purged_v1';
@@ -1774,6 +1778,136 @@ export async function deleteAdminBooking(id) {
   } catch (e) {}
 
   return { success: true };
+}
+
+// --- DIRECTORIO PERSISTENTE DE CLIENTES VIP ---
+export function getLocalVipClients() {
+  try {
+    const raw = localStorage.getItem(LOCAL_VIP_CLIENTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export async function getVipClients() {
+  const localList = getLocalVipClients();
+  let idbList = [];
+  try {
+    idbList = await idbGetVipClients();
+  } catch (e) {}
+
+  let cloudList = [];
+  try {
+    const { data } = await supabase
+      .from('catalog')
+      .select('*')
+      .eq('category', 'vip_client');
+    if (data && data.length > 0) {
+      cloudList = data.map(item => {
+        try {
+          return typeof item.url === 'string' && item.url.startsWith('{')
+            ? JSON.parse(item.url)
+            : { id: item.id, name: item.title, phone: item.location };
+        } catch (e) {
+          return null;
+        }
+      }).filter(Boolean);
+    }
+  } catch (e) {}
+
+  const map = new Map();
+  const all = [...cloudList, ...idbList, ...localList];
+  for (const c of all) {
+    if (!c) continue;
+    const phoneKey = (c.phone || c.clientWhatsApp || '').replace(/\D/g, '');
+    const key = phoneKey || c.id;
+    if (!key) continue;
+    const existing = map.get(key);
+    if (!existing || new Date(c.updatedAt || 0) > new Date(existing.updatedAt || 0)) {
+      map.set(key, c);
+    }
+  }
+
+  const merged = Array.from(map.values()).sort((a, b) => 
+    new Date(b.lastSessionDate || b.updatedAt || 0) - new Date(a.lastSessionDate || a.updatedAt || 0)
+  );
+
+  try {
+    localStorage.setItem(LOCAL_VIP_CLIENTS_KEY, JSON.stringify(merged));
+    idbSaveVipClientsBatch(merged);
+  } catch (e) {}
+
+  return merged;
+}
+
+export async function saveVipClient(clientData) {
+  if (!clientData) return null;
+  const rawPhone = (clientData.phone || clientData.clientWhatsApp || '').replace(/\D/g, '');
+  const cleanPhone = rawPhone.length === 10 && !rawPhone.startsWith('57') ? '57' + rawPhone : rawPhone;
+  const id = clientData.id || `vip-${cleanPhone || Date.now()}`;
+
+  const currentList = getLocalVipClients();
+  const existingIdx = currentList.findIndex(c => {
+    const p = (c.phone || c.clientWhatsApp || '').replace(/\D/g, '');
+    return p === cleanPhone || c.id === id;
+  });
+
+  let clientToSave;
+  if (existingIdx >= 0) {
+    const existing = currentList[existingIdx];
+    clientToSave = {
+      ...existing,
+      name: clientData.name || clientData.clientName || existing.name,
+      phone: clientData.phone || clientData.clientWhatsApp || existing.phone,
+      email: clientData.email || clientData.clientEmail || existing.email,
+      location: clientData.location || clientData.specificLocation || existing.location,
+      totalSpent: (Number(existing.totalSpent) || 0) + (Number(clientData.amountPaid || clientData.totalPrice) || 0),
+      sessionsCount: (Number(existing.sessionsCount) || 1) + (clientData.incrementSession ? 1 : 0),
+      lastSessionDate: clientData.dateTime || new Date().toISOString(),
+      packages: Array.from(new Set([...(existing.packages || []), clientData.packageName].filter(Boolean))),
+      status: 'VIP',
+      vipDiscount: 15,
+      notes: clientData.notes ? `${existing.notes ? existing.notes + ' | ' : ''}${clientData.notes}` : existing.notes,
+      updatedAt: new Date().toISOString()
+    };
+    currentList[existingIdx] = clientToSave;
+  } else {
+    clientToSave = {
+      id,
+      name: (clientData.name || clientData.clientName || 'Cliente').trim(),
+      phone: (clientData.phone || clientData.clientWhatsApp || '').trim(),
+      email: (clientData.email || clientData.clientEmail || '').trim(),
+      location: clientData.location || clientData.specificLocation || 'San Antero',
+      totalSpent: Number(clientData.amountPaid || clientData.totalPrice) || 0,
+      sessionsCount: 1,
+      lastSessionDate: clientData.dateTime || new Date().toISOString(),
+      packages: [clientData.packageName].filter(Boolean),
+      status: 'VIP',
+      vipDiscount: 15,
+      notes: clientData.notes || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    currentList.unshift(clientToSave);
+  }
+
+  try {
+    localStorage.setItem(LOCAL_VIP_CLIENTS_KEY, JSON.stringify(currentList));
+    idbSaveVipClient(clientToSave);
+  } catch (e) {}
+
+  try {
+    await supabase.from('catalog').upsert({
+      id: `vip-${id}`,
+      title: clientToSave.name,
+      category: 'vip_client',
+      location: clientToSave.phone,
+      url: JSON.stringify(clientToSave)
+    });
+  } catch (e) {}
+
+  return clientToSave;
 }
 
 // --- PAGOS EN TIEMPO REAL (NEQUI, DAVIPLATA, DALE) ---
