@@ -192,7 +192,7 @@ export function addDeletedCatalogId(id) {
   } catch (e) {}
 }
 
-const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
   photographerWhatsApp: "+573244725167",
   photographerWhatsApp2: "+573023696513",
@@ -1899,6 +1899,33 @@ export async function updatePaymentStatus(id, status) {
 }
 
 // --- CALIFICACIONES & RESEÑAS DE SATISFACCIÓN (TESTIMONIOS) ---
+export async function deleteReview(id) {
+  try {
+    await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch (e) {}
+
+  try {
+    await supabase.from('catalog').delete().eq('id', `rev-${id}`);
+    await supabase.from('catalog').delete().eq('id', id);
+  } catch (e) {}
+
+  try {
+    const reviews = getLocalReviews().filter(r => r && r.id !== id);
+    localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(reviews));
+  } catch (e) {}
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('reviews_realtime_sync');
+      bc.postMessage({ type: 'DELETE_REVIEW', id });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
+  } catch (e) {}
+
+  return { success: true };
+}
+
 export async function getReviews() {
   let serverReviews = [];
   try {

@@ -7,6 +7,7 @@ import BookingModal from './components/BookingModal';
 const ClientGallery = React.lazy(() => import('./components/ClientGallery'));
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 const PublicReceiptView = React.lazy(() => import('./components/PublicReceiptView'));
+const PublicReviewView = React.lazy(() => import('./components/PublicReviewView'));
 
 function ModuleLoader({ message = "Cargando módulo..." }) {
   return (
@@ -57,12 +58,15 @@ export default function App() {
       if (path.startsWith('/galeria/')) {
         return 'gallery';
       }
+      if (path === '/calificar' || path === '/calificar/' || path === '/opiniones' || path === '/opiniones/' || path === '/review' || hash === '#calificar' || urlParams.get('calificar')) {
+        return 'review';
+      }
       if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/' || hash === '#admin') {
         return 'admin';
       }
     }
     return 'home';
-  }); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt'
+  }); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt' | 'review'
 
   const [activeGalleryToken, setActiveGalleryToken] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -83,7 +87,7 @@ export default function App() {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-      if (window.location.pathname.startsWith('/galeria/') || isStandalone || urlParams.get('mode') === 'admin') {
+      if (window.location.pathname.startsWith('/galeria/') || window.location.pathname.startsWith('/calificar') || window.location.pathname.startsWith('/opiniones') || isStandalone || urlParams.get('mode') === 'admin' || urlParams.get('calificar')) {
         return false;
       }
     }
@@ -155,6 +159,8 @@ export default function App() {
         setActiveGalleryToken(urlToken);
         setCurrentView('gallery');
       }
+    } else if (path === '/calificar' || path === '/calificar/' || path === '/opiniones' || path === '/opiniones/' || path === '/review' || window.location.hash === '#calificar' || urlParams.get('calificar')) {
+      setCurrentView('review');
     } else if (path === '/admin' || path === '/admin/' || urlParams.get('mode') === 'admin') {
       setCurrentView('admin');
     }
@@ -162,12 +168,15 @@ export default function App() {
     const handlePopState = () => {
       const p = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
+      const h = window.location.hash || '';
       if (p.startsWith('/galeria/')) {
         const urlToken = p.replace('/galeria/', '').trim();
         if (urlToken) {
           setActiveGalleryToken(urlToken);
           setCurrentView('gallery');
         }
+      } else if (p === '/calificar' || p === '/calificar/' || p === '/opiniones' || p === '/opiniones/' || p === '/review' || h === '#calificar' || params.get('calificar')) {
+        setCurrentView('review');
       } else if (p === '/admin' || p === '/admin/' || params.get('mode') === 'admin') {
         setCurrentView('admin');
       } else {
@@ -309,7 +318,7 @@ export default function App() {
       )}
 
       {/* BARRA SUPERIOR (SOLO SE MUESTRA EN VISTAS PÚBLICAS, NO EN EL DASHBOARD DEL FOTÓGRAFO) */}
-      {currentView !== 'admin' && (
+      {currentView !== 'admin' && currentView !== 'receipt' && currentView !== 'review' && (
         <Navbar
           currentView={currentView}
           setCurrentView={(view) => {
@@ -384,6 +393,24 @@ export default function App() {
             </React.Suspense>
           )}
 
+          {currentView === 'review' && (
+            <React.Suspense fallback={<ModuleLoader message="Cargando formulario de opiniones..." />}>
+              <PublicReviewView
+                onBackToHome={() => {
+                  setCurrentView('home');
+                  if (typeof window !== 'undefined') {
+                    window.history.pushState(null, '', '/');
+                  }
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  setTimeout(() => {
+                    const elem = document.getElementById('testimonials-section');
+                    if (elem) elem.scrollIntoView({ behavior: 'smooth' });
+                  }, 250);
+                }}
+              />
+            </React.Suspense>
+          )}
+
           {currentView === 'admin' && (
             <React.Suspense fallback={<ModuleLoader message="Iniciando entorno administrativo seguro..." />}>
               <AdminPanel
@@ -418,8 +445,8 @@ export default function App() {
         onOpenBooking={() => handleOpenBooking(null)}
       />
 
-      {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD Y DEL RECIBO) */}
-      {currentView !== 'admin' && currentView !== 'receipt' && (
+      {/* FOOTER (SOLO EN VISTAS PÚBLICAS, AISLADO DEL DASHBOARD, RECIBO Y CALIFICACIONES) */}
+      {currentView !== 'admin' && currentView !== 'receipt' && currentView !== 'review' && (
         <footer className="relative bg-[#090807] border-t border-stone-800/80 text-stone-300 pt-16 pb-12 px-4 sm:px-6 lg:px-8 overflow-hidden">
           {/* Luz ambiental decorativa superior */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 max-w-4xl h-[1px] bg-gradient-to-r from-transparent via-amber-500/30 to-transparent pointer-events-none" />
