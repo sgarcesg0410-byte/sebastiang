@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Lock, 
+  RotateCcw,
+  Undo2,
   Calendar, 
   Image as ImageIcon, 
   Settings, 
@@ -1780,6 +1782,114 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       alert(`✓ ¡Saldo final de $${remainingAmount.toLocaleString('es-CO')} COP acreditado a ${method.toUpperCase()}!\n\n🏆 La reserva de ${booking.clientName} quedó PAGADA AL 100% y se archivó automáticamente en 'Pagadas 100%'.\n⭐ Datos preservados en el Directorio VIP con su 15% de beneficio.`);
     } catch (err) {
       alert('Error al registrar saldo final: ' + err.message);
+    }
+  };
+
+  // Revertir completamente pagos erróneos de una reserva y devolverla a la agenda como pendiente
+  const handleRevertBookingPayment = async (booking) => {
+    const bId = String(booking.id);
+    const relatedPayments = (payments || []).filter(
+      p => String(p.sessionToken) === bId && p.status !== 'rejected'
+    );
+    const totalPaid = relatedPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+    const confirmMsg = relatedPayments.length > 0
+      ? `¿Deseas revertir los pagos por error de ${booking.clientName}?\n\n• Se anularán $${totalPaid.toLocaleString('es-CO')} COP en pagos erróneos.\n• La reserva regresará a la agenda como PENDIENTE de pago.\n• Desaparecerá de 'Pagadas 100%'.\n\n¿Confirmar corrección?`
+      : `¿Deseas reabrir la reserva de ${booking.clientName}?\n\nLa reserva regresará a la agenda activa como PENDIENTE.\n\n¿Confirmar?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      // 1. Eliminar pagos asociados en Supabase y localmente
+      for (const p of relatedPayments) {
+        const supaId = String(p.id).startsWith('pay-') ? p.id : `pay-${p.id}`;
+        try {
+          await supabase.from('catalog').delete().eq('id', supaId);
+          await supabase.from('catalog').delete().eq('id', p.id);
+        } catch (e) {}
+
+        try {
+          await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+        } catch (e) {}
+      }
+
+      // 2. Actualizar estado de pagos en memoria y localStorage
+      const updatedPayments = (payments || []).filter(p => String(p.sessionToken) !== bId);
+      setPayments(updatedPayments);
+      try {
+        localStorage.setItem('sebastian_g_payments_v1', JSON.stringify(updatedPayments));
+      } catch (e) {}
+
+      // 3. Devolver la reserva a 'pending'
+      await updateBookingStatus(booking.id, 'pending');
+      const target = bookings.find(item => item.id === booking.id);
+      if (target) {
+        saveLocalBooking({ ...target, status: 'pending' });
+      }
+      setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'pending' } : b));
+
+      // 4. Si el cliente fue agregado al Directorio VIP por error en esta sesión, limpiar
+      const clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+      const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+      try {
+        await supabase.from('catalog').delete().eq('id', `vip-${activePhone}`);
+        setVipClients(prev => prev.filter(v => v.id !== `vip-${activePhone}`));
+      } catch (e) {}
+
+      // 5. Broadcast realtime
+      try {
+        if (typeof window !== 'undefined' && window.BroadcastChannel) {
+          const bc = new BroadcastChannel('payments_realtime_sync');
+          bc.postMessage({ type: 'revert_payments', bookingId: booking.id });
+          setTimeout(() => bc.close(), 300);
+        }
+      } catch (e) {}
+
+      alert(`✓ ¡Corrección exitosa!\n\nSe anularon los pagos registrados por error.\nLa reserva de ${booking.clientName} ahora está nuevamente en la agenda como PENDIENTE.`);
+    } catch (err) {
+      alert('Error al revertir pago: ' + err.message);
+    }
+  };
+
+  // Revertir un pago específico (ej. si abonó el 50% real pero se marcó por error el segundo 50%)
+  const handleRevertSpecificPayment = async (booking, payment) => {
+    const amountNum = Number(payment.amount || 0);
+    const conceptText = payment.concept || payment.method || 'Pago';
+    if (!window.confirm(`¿Deseas anular este pago de $${amountNum.toLocaleString('es-CO')} COP (${conceptText}) registrado por error?`)) return;
+
+    try {
+      const supaId = String(payment.id).startsWith('pay-') ? payment.id : `pay-${payment.id}`;
+      try {
+        await supabase.from('catalog').delete().eq('id', supaId);
+        await supabase.from('catalog').delete().eq('id', payment.id);
+      } catch (e) {}
+
+      try {
+        await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(payment.id)}`, { method: 'DELETE' });
+      } catch (e) {}
+
+      const updatedPayments = (payments || []).filter(p => p.id !== payment.id);
+      setPayments(updatedPayments);
+      try {
+        localStorage.setItem('sebastian_g_payments_v1', JSON.stringify(updatedPayments));
+      } catch (e) {}
+
+      const remainingPayments = updatedPayments.filter(
+        p => String(p.sessionToken) === String(booking.id) && p.status !== 'rejected'
+      );
+      const newPaid = remainingPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const newStatus = newPaid > 0 ? 'confirmed' : 'pending';
+
+      await updateBookingStatus(booking.id, newStatus);
+      const target = bookings.find(item => item.id === booking.id);
+      if (target) {
+        saveLocalBooking({ ...target, status: newStatus });
+      }
+      setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: newStatus } : b));
+
+      alert(`✓ Pago de $${amountNum.toLocaleString('es-CO')} COP anulado con éxito.\nLa reserva volvió a: ${newStatus === 'confirmed' ? 'CON ABONO (50%)' : 'PENDIENTE'}.`);
+    } catch (err) {
+      alert('Error al anular pago específico: ' + err.message);
     }
   };
 
@@ -5008,16 +5118,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                               <span className="font-bold text-white">${totalPaid.toLocaleString('es-CO')} / ${totalPrice.toLocaleString('es-CO')} COP</span>
                             </div>
 
-                            {/* Detalle si ya tiene pagos registrados */}
+                            {/* Detalle si ya tiene pagos registrados con botón de anular */}
                             {bookingPayments.length > 0 && (
-                              <div className="space-y-1 pt-1 border-t border-stone-800/60">
+                              <div className="space-y-1.5 pt-1.5 border-t border-stone-800/60">
                                 {bookingPayments.map((p, idx) => (
-                                  <div key={p.id || idx} className="flex items-center justify-between text-[10px] text-stone-400">
-                                    <span className="capitalize text-stone-300 font-semibold flex items-center gap-1">
-                                      <span className={`w-1.5 h-1.5 rounded-full ${p.method === 'nequi' ? 'bg-[#ff007a]' : p.method === 'daviplata' ? 'bg-[#ed1c24]' : 'bg-[#ffdd00]'}`} />
-                                      {p.method} • {p.concept || 'Pago'}
+                                  <div key={p.id || idx} className="flex items-center justify-between text-[10px] text-stone-400 bg-stone-950/60 px-2 py-1 rounded-md border border-stone-800/60">
+                                    <span className="capitalize text-stone-300 font-semibold flex items-center gap-1.5 truncate">
+                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.method === 'nequi' ? 'bg-[#ff007a]' : p.method === 'daviplata' ? 'bg-[#ed1c24]' : 'bg-[#ffdd00]'}`} />
+                                      <span className="truncate">{p.method} • {p.concept || 'Pago'}</span>
                                     </span>
-                                    <span className="font-mono text-emerald-400 font-bold">+${Number(p.amount).toLocaleString('es-CO')}</span>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className="font-mono text-emerald-400 font-bold">+${Number(p.amount).toLocaleString('es-CO')}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRevertSpecificPayment(booking, p)}
+                                        className="text-stone-500 hover:text-rose-400 p-0.5 rounded transition-colors"
+                                        title="Anular este pago específico si fue registrado por error"
+                                      >
+                                        <Trash2 className="w-3 h-3 text-stone-400 hover:text-rose-400" />
+                                      </button>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -5096,6 +5216,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                                     🟡 Dale!
                                   </button>
                                 </div>
+                              </div>
+                            )}
+
+                            {/* BOTÓN DE CORRECCIÓN: SI SE REGISTRÓ PAGO O SE MARCÓ PAGADA POR ERROR */}
+                            {(isFullyPaid || hasDeposit || bookingPayments.length > 0 || booking.status === 'completed') && (
+                              <div className="pt-2 border-t border-stone-800/80">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRevertBookingPayment(booking)}
+                                  className="w-full py-1.5 px-2 bg-rose-950/20 hover:bg-rose-950/60 border border-rose-500/20 hover:border-rose-500/50 text-rose-300/90 hover:text-rose-200 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                                  title="Si marcaste pagada o abonada esta sesión por error, pulsa aquí para devolverla a la agenda como pendiente y anular el pago"
+                                >
+                                  <RotateCcw className="w-3 h-3 text-rose-400 shrink-0" />
+                                  <span>¿Marcada por error? Revertir pago y volver a abrir</span>
+                                </button>
                               </div>
                             )}
                           </div>
