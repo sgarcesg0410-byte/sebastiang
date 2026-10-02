@@ -3,6 +3,7 @@ import { Camera, Download, MessageCircle, ArrowLeft, CheckCircle2, ShieldCheck, 
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { getAdminBookings, formatDateTime12Hour } from '../services/api';
+import { LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 
 export default function PublicReceiptView({ bookingId, onBack }) {
   const [booking, setBooking] = useState(null);
@@ -64,6 +65,17 @@ export default function PublicReceiptView({ bookingId, onBack }) {
       const pageWidth = 210;
       const margin = 16;
       let y = 18;
+
+      // Marca de agua oficial en grande de fondo (sutil 6.5% opacidad)
+      try {
+        const wmW = 150;
+        const wmH = 76.5; // Aspect ratio 500x255
+        const wmX = (pageWidth - wmW) / 2;
+        const wmY = 90;
+        pdf.addImage(LOGO_WATERMARK_FAINT, 'PNG', wmX, wmY, wmW, wmH, undefined, 'FAST');
+      } catch (e) {
+        console.warn('Error agregando marca de agua al PDF público:', e);
+      }
 
       pdf.setFillColor(245, 158, 11);
       pdf.rect(0, 0, pageWidth, 5, 'F');
@@ -287,9 +299,19 @@ export default function PublicReceiptView({ bookingId, onBack }) {
         {/* Tarjeta del Recibo para Visualización y Exportación PDF */}
         <div
           id="public-receipt-card"
-          className="bg-stone-950 text-white border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl"
+          className="relative overflow-hidden bg-stone-950 text-white border border-amber-500/30 rounded-3xl p-6 sm:p-8 shadow-2xl"
         >
-          {/* Encabezado Corporativo */}
+          {/* Marca de Agua con Logo Oficial */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+            <img 
+              src={LOGO_WATERMARK_WHITE} 
+              alt="Marca de agua" 
+              className="w-3/4 max-w-[420px] opacity-[0.06] -rotate-6 filter drop-shadow"
+            />
+          </div>
+
+          <div className="relative z-10 space-y-5">
+            {/* Encabezado Corporativo */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-stone-800 pb-4 gap-3">
             <div>
               <div className="flex items-center gap-2">
@@ -397,6 +419,7 @@ export default function PublicReceiptView({ bookingId, onBack }) {
                 {balance === 0 ? '✓ PAGADO TOTAL (100%)' : '✓ ABONO REGISTRADO (50%)'}
               </span>
             </div>
+          </div>
           </div>
         </div>
 

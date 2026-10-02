@@ -125,6 +125,7 @@ import { getLocalAnalytics } from '../services/analytics';
 import { NequiLogo, DaviPlataLogo, DaleLogo, WalletAccountCard } from './PaymentLogos';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { LOGO_WATERMARK_BLACK, LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 
 import {
   sendSystemPushNotification,
@@ -2072,6 +2073,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const margin = 16;
     let y = 18;
 
+    // Marca de agua oficial de Sebastian G de fondo (grande, elegante y sutil sin tapar la información)
+    try {
+      const wmW = 135;
+      const wmH = (wmW * 255) / 500;
+      const wmX = (pageWidth - wmW) / 2;
+      const wmY = 105;
+      pdf.addImage(LOGO_WATERMARK_FAINT, 'PNG', wmX, wmY, wmW, wmH, undefined, 'FAST');
+    } catch (wmErr) {
+      console.warn('Error al estampar marca de agua en PDF:', wmErr);
+    }
+
     // Barra superior decorativa dorada
     pdf.setFillColor(245, 158, 11);
     pdf.rect(0, 0, pageWidth, 5, 'F');
@@ -2334,12 +2346,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             print-color-adjust: exact !important;
           }
           .receipt-box {
+            position: relative;
             max-width: 680px;
             margin: 0 auto;
             border: 2px solid #e2e8f0;
             border-radius: 16px;
             padding: 28px;
             background: #ffffff;
+            overflow: hidden;
+          }
+          .watermark-bg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-8deg);
+            width: 480px;
+            max-width: 82%;
+            opacity: 0.055;
+            pointer-events: none;
+            z-index: 0;
+            user-select: none;
+          }
+          .receipt-content {
+            position: relative;
+            z-index: 1;
           }
           .header {
             display: flex;
@@ -2492,7 +2522,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       </head>
       <body>
         <div class="receipt-box">
-          <div class="header">
+          <img class="watermark-bg" src="${LOGO_WATERMARK_BLACK}" alt="Marca de agua" />
+          <div class="receipt-content">
+            <div class="header">
             <div>
               <h1 class="brand-title">SEBASTIAN G</h1>
               <div class="brand-sub">Fotografía & Retoque Profesional</div>
@@ -2568,6 +2600,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div class="status-stamp">${isFull ? '✓ PAGADO TOTAL (100%)' : '✓ ABONO CONFIRMADO (50%)'}</div>
             </div>
           </div>
+        </div>
         </div>
       </body>
       </html>
@@ -9013,8 +9046,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
 
             {/* Recibo Oficial Imprimible y Compartible */}
-            <div id="sebastian-g-digital-receipt" className="bg-stone-950 text-white border border-amber-500/30 rounded-2xl p-5 sm:p-7 space-y-4 shadow-inner">
-              {/* Encabezado Corporativo */}
+            <div id="sebastian-g-digital-receipt" className="relative overflow-hidden bg-stone-950 text-white border border-amber-500/30 rounded-2xl p-5 sm:p-7 shadow-inner">
+              {/* Marca de Agua con Logo Oficial */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+                <img 
+                  src={LOGO_WATERMARK_WHITE} 
+                  alt="Marca de agua" 
+                  className="w-3/4 max-w-[420px] opacity-[0.06] -rotate-6 filter drop-shadow"
+                />
+              </div>
+
+              <div className="relative z-10 space-y-4">
+                {/* Encabezado Corporativo */}
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-stone-800 pb-3.5 gap-2">
                 <div>
                   <div className="flex items-center gap-2">
@@ -9151,6 +9194,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     );
                   })()}
                 </div>
+              </div>
               </div>
             </div>
 
