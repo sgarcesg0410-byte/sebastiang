@@ -16,7 +16,9 @@ import {
   idbSaveVipClientsBatch
 } from './indexedDb';
 
-const API_BASE = '/api';
+const API_BASE = (typeof window !== 'undefined' && window.location.protocol === 'file:')
+  ? 'https://sebastiang.app/api'
+  : '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
 const LOCAL_BOOKINGS_KEY = 'sebastian_g_bookings_v1';
 const LOCAL_VIP_CLIENTS_KEY = 'sebastian_g_vip_clients_v1';
