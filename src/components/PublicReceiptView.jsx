@@ -66,12 +66,12 @@ export default function PublicReceiptView({ bookingId, onBack }) {
       const margin = 16;
       let y = 18;
 
-      // Marca de agua oficial en grande de fondo (sutil 6.5% opacidad)
+      // Marca de agua oficial del sistema en grande de fondo (sutil 8.5% opacidad)
       try {
-        const wmW = 150;
-        const wmH = 76.5; // Aspect ratio 500x255
+        const wmW = 105;
+        const wmH = 105; // Logo cuadrado 1:1
         const wmX = (pageWidth - wmW) / 2;
-        const wmY = 90;
+        const wmY = 85;
         pdf.addImage(LOGO_WATERMARK_FAINT, 'PNG', wmX, wmY, wmW, wmH, undefined, 'FAST');
       } catch (e) {
         console.warn('Error agregando marca de agua al PDF público:', e);
@@ -301,12 +301,12 @@ export default function PublicReceiptView({ bookingId, onBack }) {
           id="public-receipt-card"
           className="relative overflow-hidden bg-stone-950 text-white border border-amber-500/30 rounded-3xl p-6 sm:p-8 shadow-2xl"
         >
-          {/* Marca de Agua con Logo Oficial */}
+          {/* Marca de Agua con Logo Oficial del Sistema */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
             <img 
               src={LOGO_WATERMARK_WHITE} 
-              alt="Marca de agua" 
-              className="w-3/4 max-w-[420px] opacity-[0.06] -rotate-6 filter drop-shadow"
+              alt="Logo del Sistema" 
+              className="w-52 h-52 sm:w-64 sm:h-64 object-contain opacity-[0.10] filter drop-shadow-2xl"
             />
           </div>
 

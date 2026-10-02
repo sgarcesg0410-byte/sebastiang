@@ -2359,10 +2359,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             position: absolute;
             top: 50%;
             left: 50%;
-            transform: translate(-50%, -50%) rotate(-8deg);
-            width: 480px;
-            max-width: 82%;
-            opacity: 0.055;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            height: 300px;
+            object-fit: contain;
+            opacity: 0.085;
             pointer-events: none;
             z-index: 0;
             user-select: none;
@@ -9047,12 +9048,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
             {/* Recibo Oficial Imprimible y Compartible */}
             <div id="sebastian-g-digital-receipt" className="relative overflow-hidden bg-stone-950 text-white border border-amber-500/30 rounded-2xl p-5 sm:p-7 shadow-inner">
-              {/* Marca de Agua con Logo Oficial */}
+              {/* Marca de Agua con Logo Oficial del Sistema */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
                 <img 
                   src={LOGO_WATERMARK_WHITE} 
-                  alt="Marca de agua" 
-                  className="w-3/4 max-w-[420px] opacity-[0.06] -rotate-6 filter drop-shadow"
+                  alt="Logo del Sistema" 
+                  className="w-52 h-52 sm:w-64 sm:h-64 object-contain opacity-[0.10] filter drop-shadow-2xl"
                 />
               </div>
 
