@@ -371,7 +371,7 @@ export const REAL_DEFAULT_BOOKINGS = [
     dateTime: "29/11/2026 a las 4:00 p. m.",
     description: "Grado",
     createdAt: "2026-09-29T03:07:32.000Z",
-    status: "confirmed",
+    status: "pending",
     isReal: true
   }
 ];

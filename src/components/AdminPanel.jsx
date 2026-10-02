@@ -1895,6 +1895,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   const handleStatusChange = async (bookingId, newStatus) => {
     try {
+      if (newStatus === 'pending') {
+        const bPayments = (payments || []).filter(
+          p => String(p.sessionToken) === String(bookingId) && p.status !== 'rejected'
+        );
+        if (bPayments.length > 0) {
+          const totalPaidAccidental = bPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+          const b = bookings.find(item => item.id === bookingId);
+          if (window.confirm(
+            `Esta reserva tiene $${totalPaidAccidental.toLocaleString('es-CO')} COP en pagos registrados.\n\n¿Deseas anular también esos pagos para que quede en $0 pendiente de pago?`
+          )) {
+            if (b) {
+              await handleRevertBookingPayment(b);
+              return;
+            }
+          }
+        }
+      }
+
       await updateBookingStatus(bookingId, newStatus);
       const target = bookings.find(item => item.id === bookingId);
       if (target) {
