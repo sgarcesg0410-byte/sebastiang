@@ -119,6 +119,7 @@ import {
   forceSyncAllCatalogToCloud,
   checkCatalogSyncStatus,
   createPayment,
+  deleteAdminPayment,
   getVipClients,
   saveVipClient
 } from '../services/api';
@@ -1075,6 +1076,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       // Auto-detección y blindaje de reservas pagadas al 100% (50% abono + 50% saldo o pago completo)
       (bData || []).forEach(b => {
         if (!b || !b.id || b.id === 'book-demo-1') return;
+        // Blindaje esencial: si la reserva está pendiente o cancelada, NUNCA auto-completar automáticamente
+        if (b.status === 'pending' || b.status === 'cancelled') return;
+
         const bPayments = payData.filter(p => String(p.sessionToken) === String(b.id) && p.status !== 'rejected');
         const totalPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
         const totalPrice = Number(b.totalPrice) || 0;
@@ -1786,41 +1790,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   // Revertir completamente pagos erróneos de una reserva y devolverla a la agenda como pendiente
-  const handleRevertBookingPayment = async (booking) => {
+  const handleRevertBookingPayment = async (booking, skipConfirm = false) => {
     const bId = String(booking.id);
     const relatedPayments = (payments || []).filter(
-      p => String(p.sessionToken) === bId && p.status !== 'rejected'
+      p => (String(p.sessionToken) === bId || (p.clientName && booking.clientName && p.clientName.trim().toLowerCase() === booking.clientName.trim().toLowerCase())) && p.status !== 'rejected'
     );
     const totalPaid = relatedPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
-    const confirmMsg = relatedPayments.length > 0
-      ? `¿Deseas revertir los pagos por error de ${booking.clientName}?\n\n• Se anularán $${totalPaid.toLocaleString('es-CO')} COP en pagos erróneos.\n• La reserva regresará a la agenda como PENDIENTE de pago.\n• Desaparecerá de 'Pagadas 100%'.\n\n¿Confirmar corrección?`
-      : `¿Deseas reabrir la reserva de ${booking.clientName}?\n\nLa reserva regresará a la agenda activa como PENDIENTE.\n\n¿Confirmar?`;
+    if (!skipConfirm) {
+      const confirmMsg = relatedPayments.length > 0
+        ? `¿Deseas corregir y revertir los pagos de ${booking.clientName}?\n\n• Se anularán $${totalPaid.toLocaleString('es-CO')} COP registrados por error.\n• La reserva regresará a la agenda activa como PENDIENTE DE ABONO.\n• Saldo pendiente: $${Number(booking.totalPrice || 0).toLocaleString('es-CO')} COP.\n\n¿Confirmar corrección?`
+        : `¿Deseas devolver la reserva de ${booking.clientName} a su estado original?\n\nLa reserva regresará a la agenda activa como PENDIENTE DE ABONO.\n\n¿Confirmar?`;
 
-    if (!window.confirm(confirmMsg)) return;
+      if (!window.confirm(confirmMsg)) return;
+    }
 
     try {
-      // 1. Eliminar pagos asociados en Supabase y localmente
+      // 1. Eliminar pagos asociados en todas las capas (Supabase, local, memoria, backend)
       for (const p of relatedPayments) {
-        const supaId = String(p.id).startsWith('pay-') ? p.id : `pay-${p.id}`;
-        try {
-          await supabase.from('catalog').delete().eq('id', supaId);
-          await supabase.from('catalog').delete().eq('id', p.id);
-        } catch (e) {}
-
-        try {
-          await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
-        } catch (e) {}
+        await deleteAdminPayment(p.id);
       }
 
       // 2. Actualizar estado de pagos en memoria y localStorage
-      const updatedPayments = (payments || []).filter(p => String(p.sessionToken) !== bId);
+      const updatedPayments = (payments || []).filter(
+        p => String(p.sessionToken) !== bId && (!p.clientName || !booking.clientName || p.clientName.trim().toLowerCase() !== booking.clientName.trim().toLowerCase())
+      );
       setPayments(updatedPayments);
       try {
         localStorage.setItem('sebastian_g_payments_v1', JSON.stringify(updatedPayments));
       } catch (e) {}
 
-      // 3. Devolver la reserva a 'pending'
+      // 3. Devolver la reserva a 'pending' en todas las capas
       await updateBookingStatus(booking.id, 'pending');
       const target = bookings.find(item => item.id === booking.id);
       if (target) {
@@ -1833,21 +1833,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
       try {
         await supabase.from('catalog').delete().eq('id', `vip-${activePhone}`);
-        setVipClients(prev => prev.filter(v => v.id !== `vip-${activePhone}`));
+        await supabase.from('catalog').delete().eq('id', `vip-vip-${activePhone}`);
+        setVipClients(prev => prev.filter(v => v.id !== `vip-${activePhone}` && v.id !== `vip-vip-${activePhone}`));
       } catch (e) {}
 
       // 5. Broadcast realtime
       try {
         if (typeof window !== 'undefined' && window.BroadcastChannel) {
-          const bc = new BroadcastChannel('payments_realtime_sync');
-          bc.postMessage({ type: 'revert_payments', bookingId: booking.id });
+          const bc = new BroadcastChannel('bookings_realtime_sync');
+          bc.postMessage({ type: 'update_booking', booking: { ...booking, status: 'pending' } });
           setTimeout(() => bc.close(), 300);
         }
       } catch (e) {}
 
-      alert(`✓ ¡Corrección exitosa!\n\nSe anularon los pagos registrados por error.\nLa reserva de ${booking.clientName} ahora está nuevamente en la agenda como PENDIENTE.`);
+      alert(`✓ ¡Corrección exitosa!\n\nLa reserva de ${booking.clientName} volvió a su estado inicial:\n• Estado: PENDIENTE DE ABONO\n• Total pagado: $0 COP\n• Saldo pendiente: $${Number(booking.totalPrice || 0).toLocaleString('es-CO')} COP\n\nYa está visible en la agenda activa.`);
     } catch (err) {
-      alert('Error al revertir pago: ' + err.message);
+      alert('Error al revertir reserva: ' + err.message);
     }
   };
 
@@ -1858,15 +1859,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     if (!window.confirm(`¿Deseas anular este pago de $${amountNum.toLocaleString('es-CO')} COP (${conceptText}) registrado por error?`)) return;
 
     try {
-      const supaId = String(payment.id).startsWith('pay-') ? payment.id : `pay-${payment.id}`;
-      try {
-        await supabase.from('catalog').delete().eq('id', supaId);
-        await supabase.from('catalog').delete().eq('id', payment.id);
-      } catch (e) {}
-
-      try {
-        await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(payment.id)}`, { method: 'DELETE' });
-      } catch (e) {}
+      await deleteAdminPayment(payment.id);
 
       const updatedPayments = (payments || []).filter(p => p.id !== payment.id);
       setPayments(updatedPayments);
@@ -1887,7 +1880,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
       setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: newStatus } : b));
 
-      alert(`✓ Pago de $${amountNum.toLocaleString('es-CO')} COP anulado con éxito.\nLa reserva volvió a: ${newStatus === 'confirmed' ? 'CON ABONO (50%)' : 'PENDIENTE'}.`);
+      alert(`✓ Pago de $${amountNum.toLocaleString('es-CO')} COP anulado con éxito.\nLa reserva volvió a: ${newStatus === 'confirmed' ? 'CON ABONO (50%)' : 'PENDIENTE DE ABONO'}.`);
     } catch (err) {
       alert('Error al anular pago específico: ' + err.message);
     }
@@ -1896,17 +1889,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const handleStatusChange = async (bookingId, newStatus) => {
     try {
       if (newStatus === 'pending') {
+        const b = bookings.find(item => item.id === bookingId);
         const bPayments = (payments || []).filter(
-          p => String(p.sessionToken) === String(bookingId) && p.status !== 'rejected'
+          p => (String(p.sessionToken) === String(bookingId) || (b && p.clientName && b.clientName && p.clientName.trim().toLowerCase() === b.clientName.trim().toLowerCase())) && p.status !== 'rejected'
         );
         if (bPayments.length > 0) {
           const totalPaidAccidental = bPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-          const b = bookings.find(item => item.id === bookingId);
           if (window.confirm(
-            `Esta reserva tiene $${totalPaidAccidental.toLocaleString('es-CO')} COP en pagos registrados.\n\n¿Deseas anular también esos pagos para que quede en $0 pendiente de pago?`
+            `Esta reserva tiene $${totalPaidAccidental.toLocaleString('es-CO')} COP en pagos registrados.\n\n¿Deseas anular también esos pagos para que quede en $0 y vuelva a su estado original de RESERVA PENDIENTE DE ABONO?`
           )) {
             if (b) {
-              await handleRevertBookingPayment(b);
+              await handleRevertBookingPayment(b, true);
               return;
             }
           }
@@ -5237,17 +5230,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                               </div>
                             )}
 
-                            {/* BOTÓN DE CORRECCIÓN: SI SE REGISTRÓ PAGO O SE MARCÓ PAGADA POR ERROR */}
-                            {(isFullyPaid || hasDeposit || bookingPayments.length > 0 || booking.status === 'completed') && (
+                            {/* BOTÓN DE CORRECCIÓN: SI SE REGISTRÓ PAGO O SE MARCÓ PAGADA/CONFIRMADA POR ERROR */}
+                            {(isFullyPaid || hasDeposit || bookingPayments.length > 0 || booking.status === 'completed' || booking.status === 'confirmed') && (
                               <div className="pt-2 border-t border-stone-800/80">
                                 <button
                                   type="button"
                                   onClick={() => handleRevertBookingPayment(booking)}
-                                  className="w-full py-1.5 px-2 bg-rose-950/20 hover:bg-rose-950/60 border border-rose-500/20 hover:border-rose-500/50 text-rose-300/90 hover:text-rose-200 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
-                                  title="Si marcaste pagada o abonada esta sesión por error, pulsa aquí para devolverla a la agenda como pendiente y anular el pago"
+                                  className="w-full py-2 px-3 bg-rose-950/30 hover:bg-rose-900/60 border border-rose-500/30 hover:border-rose-500/70 text-rose-300 hover:text-rose-100 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95 cursor-pointer"
+                                  title="Si marcaste pagada o abonada esta sesión por error, pulsa aquí para devolverla a su estado original de reserva pendiente con $0 pagado"
                                 >
-                                  <RotateCcw className="w-3 h-3 text-rose-400 shrink-0" />
-                                  <span>¿Marcada por error? Revertir pago y volver a abrir</span>
+                                  <RotateCcw className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                  <span>¿Marcada por error? Devolver a Reserva Pendiente ($0)</span>
                                 </button>
                               </div>
                             )}

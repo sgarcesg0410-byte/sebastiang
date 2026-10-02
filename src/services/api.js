@@ -490,10 +490,49 @@ export async function saveWalletBaseBalances(balances) {
   }
 }
 
+export function getDeletedPaymentIds() {
+  try {
+    const raw = localStorage.getItem('sebastian_g_deleted_payments');
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function addDeletedPaymentId(paymentId) {
+  if (!paymentId) return;
+  try {
+    const raw = getDeletedPaymentIds();
+    const cleanId = String(paymentId);
+    const supaId = cleanId.startsWith('pay-') ? cleanId : `pay-${cleanId}`;
+    let changed = false;
+    if (!raw.includes(cleanId)) { raw.push(cleanId); changed = true; }
+    if (!raw.includes(supaId)) { raw.push(supaId); changed = true; }
+    if (changed) {
+      localStorage.setItem('sebastian_g_deleted_payments', JSON.stringify(raw));
+    }
+  } catch (e) {}
+}
+
 function getLocalPayments() {
   try {
     const raw = localStorage.getItem(LOCAL_PAYMENTS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    let list = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) list = [];
+    const deletedIds = new Set(getDeletedPaymentIds());
+    // Purgar pagos eliminados y pagos accidentales/falsos de Laura Vanesa
+    const filtered = list.filter(p => {
+      if (!p || !p.id) return false;
+      const pid = String(p.id);
+      if (deletedIds.has(pid) || deletedIds.has(`pay-${pid}`) || deletedIds.has(pid.replace(/^pay-/, ''))) return false;
+      if (p.sessionToken === 'book-laura-vanesa-maza-1790651249486') return false;
+      if (p.clientName && p.clientName.toLowerCase().includes('laura') && p.clientName.toLowerCase().includes('maza')) return false;
+      return true;
+    });
+    if (filtered.length !== list.length) {
+      try { localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(filtered)); } catch (e) {}
+    }
+    return filtered;
   } catch (e) {
     return [];
   }
@@ -536,6 +575,12 @@ function getLocalBookings() {
         map.set(b.id, existing ? { ...existing, ...b } : b);
       }
     });
+
+    // Blindaje explícito de Laura Vanesa: es reserva activa pendiente de abono
+    const laura = map.get('book-laura-vanesa-maza-1790651249486');
+    if (laura && (laura.status === 'completed' || !laura.status)) {
+      map.set('book-laura-vanesa-maza-1790651249486', { ...laura, status: 'pending' });
+    }
 
     const result = Array.from(map.values());
     try {
@@ -1641,6 +1686,12 @@ export async function getAdminBookings() {
     }
   });
 
+  // Blindaje explícito de Laura Vanesa: es reserva activa pendiente de abono
+  const lauraBooking = map.get('book-laura-vanesa-maza-1790651249486');
+  if (lauraBooking && (lauraBooking.status === 'completed' || !lauraBooking.status)) {
+    map.set('book-laura-vanesa-maza-1790651249486', { ...lauraBooking, status: 'pending', isReal: true });
+  }
+
   // 3. Garantizar siempre las 3 reservas reales del negocio
   REAL_DEFAULT_BOOKINGS.forEach(b => {
     if (b && b.id && !deletedIds.has(b.id) && !map.has(b.id)) {
@@ -1900,8 +1951,9 @@ export async function saveVipClient(clientData) {
   } catch (e) {}
 
   try {
+    const supaVipId = String(id).startsWith('vip-') ? id : `vip-${id}`;
     await supabase.from('catalog').upsert({
-      id: `vip-${id}`,
+      id: supaVipId,
       title: clientToSave.name,
       category: 'vip_client',
       location: clientToSave.phone,
@@ -1914,6 +1966,7 @@ export async function saveVipClient(clientData) {
 
 // --- PAGOS EN TIEMPO REAL (NEQUI, DAVIPLATA, DALE) ---
 export async function getAdminPayments() {
+  const deletedIds = new Set(getDeletedPaymentIds());
   let serverPayments = [];
   try {
     const res = await fetch(`${API_BASE}/admin/payments`);
@@ -1941,15 +1994,52 @@ export async function getAdminPayments() {
   const localPayments = getLocalPayments();
   const map = new Map();
   [...localPayments, ...serverPayments, ...cloudPayments].forEach(p => {
-    if (p && p.id) map.set(p.id, p);
+    if (p && p.id) {
+      const pid = String(p.id);
+      if (deletedIds.has(pid) || deletedIds.has(`pay-${pid}`) || deletedIds.has(pid.replace(/^pay-/, ''))) return;
+      if (p.sessionToken === 'book-laura-vanesa-maza-1790651249486') return;
+      if (p.clientName && p.clientName.toLowerCase().includes('laura') && p.clientName.toLowerCase().includes('maza')) return;
+      map.set(p.id, p);
+    }
   });
   const combined = Array.from(map.values());
-  if (cloudPayments.length > 0) {
-    try {
-      localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(combined));
-    } catch (e) {}
-  }
+  try {
+    localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(combined));
+  } catch (e) {}
   return combined;
+}
+
+export async function deleteAdminPayment(id) {
+  if (!id) return { success: false };
+  const cleanId = String(id);
+  const supaId = cleanId.startsWith('pay-') ? cleanId : `pay-${cleanId}`;
+  addDeletedPaymentId(cleanId);
+  addDeletedPaymentId(supaId);
+
+  try {
+    await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(cleanId)}`, { method: 'DELETE' });
+  } catch (e) {}
+
+  try {
+    await supabase.from('catalog').delete().eq('id', supaId);
+    await supabase.from('catalog').delete().eq('id', cleanId);
+  } catch (e) {}
+
+  try {
+    const payments = getLocalPayments().filter(p => p && p.id !== cleanId && p.id !== supaId);
+    localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(payments));
+    localStorage.setItem('sebastian_g_payments_last_sync', Date.now().toString());
+  } catch (e) {}
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('payments_realtime_sync');
+      bc.postMessage({ type: 'delete_payment', id: cleanId });
+      setTimeout(() => bc.close(), 300);
+    }
+  } catch (e) {}
+
+  return { success: true };
 }
 
 export async function createPayment(paymentData) {
