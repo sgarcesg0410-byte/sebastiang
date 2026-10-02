@@ -1065,6 +1065,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       );
       setSessions(prev => areArraysEqual(prev, cleanSessions) ? prev : cleanSessions);
 
+      // Cargar y sincronizar todos los pagos del sistema
+      const payData = payRes?.status === 'fulfilled' && Array.isArray(payRes.value) ? payRes.value : [];
+      setPayments(prev => areArraysEqual(prev, payData) ? prev : payData);
+
+      // Auto-detección y blindaje de reservas pagadas al 100% (50% abono + 50% saldo o pago completo)
+      (bData || []).forEach(b => {
+        if (!b || !b.id || b.id === 'book-demo-1') return;
+        const bPayments = payData.filter(p => String(p.sessionToken) === String(b.id) && p.status !== 'rejected');
+        const totalPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+        const totalPrice = Number(b.totalPrice) || 0;
+        if (totalPrice > 0 && totalPaid >= totalPrice && b.status !== 'completed') {
+          b.status = 'completed';
+          updateAdminBooking(b.id, { status: 'completed' }).catch(() => {});
+          const clientPhone = (b.clientWhatsApp || '').replace(/\D/g, '');
+          const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+          saveVipClient({
+            id: `vip-${activePhone}`,
+            name: b.clientName,
+            phone: b.clientWhatsApp,
+            email: b.clientEmail,
+            location: b.specificLocation || 'San Antero',
+            totalPrice: totalPrice,
+            amountPaid: totalPaid,
+            packageName: b.packageName,
+            dateTime: b.dateTime,
+            incrementSession: false,
+            notes: 'Auto-sincronizado a VIP por pago del 100% de la sesión.'
+          }).catch(() => {});
+        }
+      });
+
       if (!isSilent) {
         const setData = setRes?.status === 'fulfilled' && setRes.value ? setRes.value : null;
         if (setData) {
@@ -1659,11 +1690,40 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       if (resPay && resPay.payment) {
         setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
       }
-      if (booking.status !== 'confirmed') {
-        await updateBookingStatus(booking.id, 'confirmed');
-        setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'confirmed' } : b));
+
+      if (type === 'total') {
+        await updateAdminBooking(booking.id, { status: 'completed' });
+        setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'completed' } : b));
+
+        const clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+        const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+        const vipSaved = await saveVipClient({
+          id: `vip-${activePhone}`,
+          name: booking.clientName,
+          phone: booking.clientWhatsApp,
+          email: booking.clientEmail,
+          location: booking.specificLocation || 'San Antero',
+          totalPrice: total,
+          amountPaid: total,
+          packageName: booking.packageName,
+          dateTime: booking.dateTime,
+          incrementSession: true,
+          notes: `Sesión 100% pagada en 1 solo pago (${method.toUpperCase()}).`
+        });
+        if (vipSaved) {
+          setVipClients(prev => {
+            const exists = prev.find(v => v.id === vipSaved.id);
+            return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
+          });
+        }
+        alert(`✓ ¡Pago total de $${amount.toLocaleString('es-CO')} COP acreditado con éxito en ${method.toUpperCase()} para ${booking.clientName}!\n\n🏆 La reserva quedó PAGADA AL 100% y se archivó en 'Pagadas 100%'.\n⭐ Cliente preservado en el Directorio VIP con 15% de beneficio.`);
+      } else {
+        if (booking.status !== 'confirmed') {
+          await updateBookingStatus(booking.id, 'confirmed');
+          setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'confirmed' } : b));
+        }
+        alert(`✓ ¡Abono del 50% ($${amount.toLocaleString('es-CO')} COP) acreditado con éxito en ${method.toUpperCase()} para ${booking.clientName}!\n\nCupo reservado con éxito. Ahora aparece en la pestaña 'Con Abono'.`);
       }
-      alert(`✓ ¡Ingreso de $${amount.toLocaleString('es-CO')} COP acreditado con éxito en ${method.toUpperCase()} para ${booking.clientName}! Tu saldo de fotos se actualizó automáticamente.`);
     } catch (err) {
       alert('Error al registrar pago: ' + err.message);
     }
@@ -1685,7 +1745,38 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       if (resPay && resPay.payment) {
         setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
       }
-      alert(`✓ ¡Saldo final de $${remainingAmount.toLocaleString('es-CO')} COP acreditado a ${method.toUpperCase()}! La sesión de ${booking.clientName} quedó pagada al 100%.`);
+
+      // Marcar reserva como 100% completada y archivar de la agenda activa
+      await updateAdminBooking(booking.id, { status: 'completed' });
+      setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'completed' } : b));
+
+      // Guardar cliente en Directorio VIP
+      const clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+      const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+      const total = Number(booking.totalPrice || 0);
+
+      const vipSaved = await saveVipClient({
+        id: `vip-${activePhone}`,
+        name: booking.clientName,
+        phone: booking.clientWhatsApp,
+        email: booking.clientEmail,
+        location: booking.specificLocation || 'San Antero',
+        totalPrice: total,
+        amountPaid: total,
+        packageName: booking.packageName,
+        dateTime: booking.dateTime,
+        incrementSession: true,
+        notes: `Sesión 100% pagada (Saldo final recibido vía ${method.toUpperCase()}).`
+      });
+
+      if (vipSaved) {
+        setVipClients(prev => {
+          const exists = prev.find(v => v.id === vipSaved.id);
+          return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
+        });
+      }
+
+      alert(`✓ ¡Saldo final de $${remainingAmount.toLocaleString('es-CO')} COP acreditado a ${method.toUpperCase()}!\n\n🏆 La reserva de ${booking.clientName} quedó PAGADA AL 100% y se archivó automáticamente en 'Pagadas 100%'.\n⭐ Datos preservados en el Directorio VIP con su 15% de beneficio.`);
     } catch (err) {
       alert('Error al registrar saldo final: ' + err.message);
     }
@@ -1703,6 +1794,33 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const b = bookings.find(item => item.id === bookingId);
         if (b) {
           handleOpenConfirmBookingModal({ ...b, status: newStatus });
+        }
+      } else if (newStatus === 'completed') {
+        const b = bookings.find(item => item.id === bookingId);
+        if (b) {
+          const clientPhone = (b.clientWhatsApp || '').replace(/\D/g, '');
+          const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+          const total = Number(b.totalPrice || 0);
+          saveVipClient({
+            id: `vip-${activePhone}`,
+            name: b.clientName,
+            phone: b.clientWhatsApp,
+            email: b.clientEmail,
+            location: b.specificLocation || 'San Antero',
+            totalPrice: total,
+            amountPaid: total,
+            packageName: b.packageName,
+            dateTime: b.dateTime,
+            incrementSession: true,
+            notes: 'Sesión completada y pagada.'
+          }).then(vipSaved => {
+            if (vipSaved) {
+              setVipClients(prev => {
+                const exists = prev.find(v => v.id === vipSaved.id);
+                return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
+              });
+            }
+          }).catch(() => {});
         }
       }
     } catch (err) {
@@ -1912,11 +2030,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const handleOpenReceipt = (booking) => {
     setReceiptBooking(booking);
     const total = Number(booking.totalPrice || 0);
-    const defaultPaid = booking.status === 'completed' ? total : Math.round(total * 0.5);
-    setReceiptPaidAmount(defaultPaid);
-    setReceiptType(booking.status === 'completed' ? 'total' : 'deposit');
+    const bookingPayments = (payments || []).filter(
+      p => String(p.sessionToken) === String(booking.id) && p.status !== 'rejected'
+    );
+    const alreadyPaid = bookingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const remaining = Math.max(0, total - alreadyPaid);
+
+    if (booking.status === 'completed' || (total > 0 && alreadyPaid >= total)) {
+      setReceiptPaidAmount(total);
+      setReceiptType('total');
+      setReceiptNotes('Pago total del 100% de la sesión fotográfica.');
+    } else if (alreadyPaid > 0 && remaining > 0) {
+      setReceiptPaidAmount(remaining);
+      setReceiptType('remaining');
+      setReceiptNotes(`Saldo final para completar el 100% de la sesión fotográfica (Abono previo de $${alreadyPaid.toLocaleString('es-CO')} COP acreditado).`);
+    } else {
+      setReceiptPaidAmount(Math.round(total * 0.5));
+      setReceiptType('deposit');
+      setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
+    }
     setReceiptPaymentMethod('Nequi');
-    setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
   };
 
   const generateVectorReceiptPdf = (booking, paidAmount, paymentMethod, notes) => {
@@ -2171,10 +2304,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     if (!receiptBooking) return;
     const total = Number(receiptBooking.totalPrice || 0);
     const paid = Number(receiptPaidAmount || 0);
-    const balance = Math.max(0, total - paid);
+    const prevPayments = (payments || []).filter(
+      p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+    );
+    const prevPaid = prevPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const isTotal = receiptType === 'total';
+    const effectivePrev = isTotal ? 0 : prevPaid;
+    const balance = Math.max(0, total - (effectivePrev + paid));
     const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
     const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'Locación Especial' : 'San Antero');
-    const isFull = balance === 0;
+    const isFull = balance === 0 || isTotal || (effectivePrev + paid) >= total;
 
     const printHtml = `
       <!DOCTYPE html>
@@ -2399,8 +2538,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>TOTAL PACTADO:</span>
               <span>$${total.toLocaleString('es-CO')} COP</span>
             </div>
+            ${effectivePrev > 0 ? `
+              <div class="table-row" style="color: #7e22ce; background: #faf5ff; font-weight: 700;">
+                <span>ABONO PREVIO ACREDITADO:</span>
+                <span>$${effectivePrev.toLocaleString('es-CO')} COP</span>
+              </div>
+            ` : ''}
             <div class="table-row paid">
-              <span>VALOR RECIBIDO / ABONADO (${receiptPaymentMethod}):</span>
+              <span>${effectivePrev > 0 ? 'SALDO RECIBIDO HOY' : 'VALOR RECIBIDO / ABONADO'} (${receiptPaymentMethod}):</span>
               <span>$${paid.toLocaleString('es-CO')} COP</span>
             </div>
             <div class="table-row balance">
@@ -2460,13 +2605,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
     const total = Number(receiptBooking.totalPrice || 0);
     const paid = Number(receiptPaidAmount || 0);
-    const balance = Math.max(0, total - paid);
+    const prevPayments = (payments || []).filter(
+      p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+    );
+    const prevPaid = prevPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const isTotalType = receiptType === 'total';
+    const totalAccumulatedPaid = isTotalType ? total : Math.min(total, prevPaid + paid);
+    const balance = Math.max(0, total - (isTotalType ? paid : (prevPaid + paid)));
+    const isNowFull = balance === 0 || isTotalType || (prevPaid + paid) >= total;
+
     const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
     const rawName = (receiptBooking.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
     const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
 
-    const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.id}&paid=${paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
+    const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.id}&paid=${isNowFull ? total : paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
     const lineInfo = chosenLine === 'line2'
       ? '+57 302 369 6513 (Línea 2 - WhatsApp Business)'
@@ -2482,19 +2635,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `*Paquete:* ${receiptBooking.packageName}\n\n` +
       `────────────────────────\n` +
       `💰 *Total del Paquete:* $${total.toLocaleString('es-CO')} COP\n` +
-      `✅ *Valor Recibido / Abonado:* $${paid.toLocaleString('es-CO')} COP (${receiptPaymentMethod})\n` +
+      (prevPaid > 0 && !isTotalType ? `💳 *Abono Previo Acreditado:* $${prevPaid.toLocaleString('es-CO')} COP\n` : '') +
+      `✅ *Valor Recibido Hoy:* $${paid.toLocaleString('es-CO')} COP (${receiptPaymentMethod})\n` +
       `⏳ *Saldo Pendiente:* $${balance.toLocaleString('es-CO')} COP\n` +
       `────────────────────────\n` +
-      `📌 *Estado:* ${balance === 0 ? 'PAGADO TOTALMENTE (100%)' : 'ABONO CONFIRMADO (Cupo Reservado)'}\n` +
+      `📌 *Estado:* ${isNowFull ? '🏆 PAGADO TOTALMENTE (100%)' : '🟣 ABONO CONFIRMADO (Cupo Reservado)'}\n` +
       `📝 *Concepto:* ${receiptNotes}\n` +
       `⛅ *Garantía de Clima:* En caso de lluvia o clima adverso en ${loc}, tu sesión se reprograma sin ningún costo ni penalidad.\n\n` +
       `📞 *Contacto Oficial Fotógrafo:* Sebastian G • ${lineInfo}\n\n` +
       `📄 *DESCARGA O VISUALIZA TU RECIBO EN PDF AQUÍ:*\n${voucherOnlineUrl}\n\n` +
-      `¡Muchas gracias por tu confianza ${firstName}! Tu sesión está garantizada. Nos vemos muy pronto 📸`;
+      `¡Muchas gracias por tu confianza ${firstName}! ${isNowFull ? 'Tu sesión está 100% saldada y lista.' : 'Tu cupo está garantizado en agenda.'} Nos vemos muy pronto 📸`;
 
     // Generar el archivo PDF vectorial nítido
     try {
-      const pdf = generateVectorReceiptPdf(receiptBooking, paid, receiptPaymentMethod, receiptNotes);
+      const pdf = generateVectorReceiptPdf(receiptBooking, isNowFull ? total : paid, receiptPaymentMethod, receiptNotes);
       if (pdf) {
         const pdfBlob = pdf.output('blob');
         const pdfFile = new File([pdfBlob], `Comprobante-SebastianG-${voucherNum}.pdf`, { type: 'application/pdf' });
@@ -2533,7 +2687,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             amount: paid,
             method: methodKey,
             reference: voucherNum,
-            concept: paid >= total ? 'Pago Total 100% Sesión' : 'Abono 50% Sesión',
+            concept: isNowFull ? 'Pago Total 100% Sesión' : (prevPaid > 0 ? 'Saldo Final Sesión' : 'Abono 50% Sesión'),
             status: 'verified'
           });
           if (resPay && resPay.payment) {
@@ -2546,7 +2700,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
 
     // CUANDO SE PAGA EL 100%: Quitar de agenda activa y registrar permanentemente como CLIENTE VIP
-    if (balance === 0 || receiptType === 'total' || paid >= total) {
+    if (isNowFull) {
       try {
         await updateAdminBooking(receiptBooking.id, { status: 'completed' });
         setBookings(prev => prev.map(b => b.id === receiptBooking.id ? { ...b, status: 'completed' } : b));
@@ -2559,7 +2713,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           email: receiptBooking.clientEmail,
           location: receiptBooking.specificLocation || 'San Antero',
           totalPrice: total,
-          amountPaid: paid,
+          amountPaid: total,
           packageName: receiptBooking.packageName,
           dateTime: receiptBooking.dateTime,
           incrementSession: true,
@@ -4176,13 +4330,34 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </div>
 
           {(() => {
-            const activeBookings = bookings.filter(b => b.status !== 'completed');
-            const completedBookings = bookings.filter(b => b.status === 'completed');
-            const displayedBookings = bookingFilterStatus === 'completed'
-              ? completedBookings
-              : bookingFilterStatus === 'all'
-              ? bookings
-              : activeBookings;
+            const getFinancials = (b) => {
+              const bPayments = (payments || []).filter(
+                p => String(p.sessionToken) === String(b.id) && p.status !== 'rejected'
+              );
+              const totalPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+              const totalPrice = Number(b.totalPrice) || 0;
+              const isFullyPaid = b.status === 'completed' || (totalPrice > 0 && totalPaid >= totalPrice);
+              const hasDeposit = !isFullyPaid && (totalPaid > 0 || b.status === 'confirmed');
+              const isPendingAbono = !isFullyPaid && !hasDeposit;
+              const remaining = Math.max(0, totalPrice - totalPaid);
+              return { bPayments, totalPaid, totalPrice, isFullyPaid, hasDeposit, isPendingAbono, remaining };
+            };
+
+            const completedBookings = bookings.filter(b => getFinancials(b).isFullyPaid);
+            const withDepositBookings = bookings.filter(b => getFinancials(b).hasDeposit);
+            const pendingAbonoBookings = bookings.filter(b => getFinancials(b).isPendingAbono);
+            const activeBookings = bookings.filter(b => !getFinancials(b).isFullyPaid);
+
+            const displayedBookings =
+              bookingFilterStatus === 'completed'
+                ? completedBookings
+                : bookingFilterStatus === 'with_deposit'
+                ? withDepositBookings
+                : bookingFilterStatus === 'pending_deposit'
+                ? pendingAbonoBookings
+                : bookingFilterStatus === 'all'
+                ? bookings
+                : activeBookings;
 
             return (
               <div className="space-y-5">
@@ -4192,13 +4367,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <button
                       type="button"
                       onClick={() => setBookingFilterStatus('active')}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
                         bookingFilterStatus === 'active'
                           ? 'bg-amber-400 text-stone-950 shadow-md font-black'
                           : 'text-stone-400 hover:text-white bg-stone-900/60'
                       }`}
+                      title="Todas las sesiones que están activas en agenda"
                     >
-                      <span>📅 En Agenda / Activas</span>
+                      <span>📅 En Agenda</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                         bookingFilterStatus === 'active' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'
                       }`}>
@@ -4208,14 +4384,51 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                     <button
                       type="button"
+                      onClick={() => setBookingFilterStatus('pending_deposit')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        bookingFilterStatus === 'pending_deposit'
+                          ? 'bg-amber-500 text-stone-950 shadow-md font-black'
+                          : 'text-stone-400 hover:text-white bg-stone-900/60'
+                      }`}
+                      title="Reservas que aún no han hecho su primer abono"
+                    >
+                      <span>⏳ Pendiente Abono</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        bookingFilterStatus === 'pending_deposit' ? 'bg-stone-950 text-amber-300' : 'bg-stone-800 text-stone-300'
+                      }`}>
+                        {pendingAbonoBookings.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingFilterStatus('with_deposit')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        bookingFilterStatus === 'with_deposit'
+                          ? 'bg-purple-500 text-white shadow-md font-black'
+                          : 'text-stone-400 hover:text-white bg-stone-900/60'
+                      }`}
+                      title="Reservas con 50% abonado y cupo asegurado (pendientes de saldo final)"
+                    >
+                      <span>🟣 Con Abono (50%)</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        bookingFilterStatus === 'with_deposit' ? 'bg-stone-950 text-purple-300' : 'bg-stone-800 text-stone-300'
+                      }`}>
+                        {withDepositBookings.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => setBookingFilterStatus('completed')}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
                         bookingFilterStatus === 'completed'
                           ? 'bg-emerald-500 text-stone-950 shadow-md font-black'
                           : 'text-stone-400 hover:text-white bg-stone-900/60'
                       }`}
+                      title="Reservas pagadas al 100% (abono + saldo final cancelado)"
                     >
-                      <span>🏆 Pagadas 100% / Completadas</span>
+                      <span>🏆 Pagadas 100%</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                         bookingFilterStatus === 'completed' ? 'bg-stone-950 text-emerald-300' : 'bg-stone-800 text-stone-300'
                       }`}>
@@ -4226,7 +4439,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <button
                       type="button"
                       onClick={() => setBookingFilterStatus('all')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
                         bookingFilterStatus === 'all'
                           ? 'bg-stone-800 text-white font-bold'
                           : 'text-stone-400 hover:text-white bg-stone-900/60'
@@ -4239,8 +4452,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     </button>
                   </div>
 
-                  <span className="text-[11px] text-stone-400 italic hidden md:inline">
-                    {bookingFilterStatus === 'active' ? 'Mostrando solo sesiones activas pendientes' : bookingFilterStatus === 'completed' ? 'Sesiones terminadas y pagadas al 100%' : 'Todas las reservas'}
+                  <span className="text-[11px] text-stone-400 italic hidden lg:inline">
+                    {bookingFilterStatus === 'active'
+                      ? 'Mostrando todas las sesiones en agenda activa'
+                      : bookingFilterStatus === 'pending_deposit'
+                      ? 'Sesiones que aún no han realizado su primer abono'
+                      : bookingFilterStatus === 'with_deposit'
+                      ? 'Sesiones con cupo asegurado (50% abonado, falta saldo)'
+                      : bookingFilterStatus === 'completed'
+                      ? 'Sesiones pagadas al 100% y clientes en Directorio VIP'
+                      : 'Todas las reservas'}
                   </span>
                 </div>
 
@@ -4611,12 +4832,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <p className="text-white font-bold text-sm">
                   {bookingFilterStatus === 'active'
                     ? '🎉 No hay reservas pendientes en la agenda activa.'
+                    : bookingFilterStatus === 'pending_deposit'
+                    ? '👍 No hay reservas pendientes de abono. Todas están abonadas o pagadas.'
+                    : bookingFilterStatus === 'with_deposit'
+                    ? 'No hay reservas con abono parcial pendiente de saldo final.'
                     : bookingFilterStatus === 'completed'
                     ? 'Aún no hay reservas completadas o pagadas al 100%.'
                     : 'No hay reservas registradas todavía.'}
                 </p>
                 <p className="text-xs text-stone-400">
                   {bookingFilterStatus === 'active' && 'Las reservas pagadas al 100% se archivan automáticamente y sus clientes se preservan en Clientes VIP.'}
+                  {bookingFilterStatus === 'with_deposit' && 'Al registrar el 50% de saldo final recibido, la reserva pasa automáticamente a "Pagadas 100%".'}
+                  {bookingFilterStatus === 'completed' && 'Aquí se guardan las sesiones que cancelaron el 100% del valor total pactado.'}
                 </p>
               </div>
             ) : (
@@ -8720,26 +8947,42 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-stone-950 rounded-2xl border border-stone-800 text-xs no-print">
               <div>
                 <label className="block text-stone-400 font-semibold mb-1">Tipo de Comprobante:</label>
-                <select
-                  value={receiptType}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setReceiptType(val);
-                    const total = Number(receiptBooking.totalPrice || 0);
-                    if (val === 'deposit') {
-                      setReceiptPaidAmount(Math.round(total * 0.5));
-                      setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
-                    } else if (val === 'total') {
-                      setReceiptPaidAmount(total);
-                      setReceiptNotes('Pago total del 100% de la sesión fotográfica.');
-                    }
-                  }}
-                  className="w-full bg-stone-900 border border-stone-700 rounded-lg px-2.5 py-1.5 text-white"
-                >
-                  <option value="deposit">Abono (50%)</option>
-                  <option value="total">Pago Total (100%)</option>
-                  <option value="custom">Monto Personalizado</option>
-                </select>
+                {(() => {
+                  const bPayments = (payments || []).filter(
+                    p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+                  );
+                  const alreadyPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                  const total = Number(receiptBooking.totalPrice || 0);
+                  const remaining = Math.max(0, total - alreadyPaid);
+
+                  return (
+                    <select
+                      value={receiptType}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setReceiptType(val);
+                        if (val === 'remaining') {
+                          setReceiptPaidAmount(remaining > 0 ? remaining : total);
+                          setReceiptNotes(`Saldo final para completar el 100% de la sesión fotográfica (Abono previo de $${alreadyPaid.toLocaleString('es-CO')} COP acreditado).`);
+                        } else if (val === 'deposit') {
+                          setReceiptPaidAmount(Math.round(total * 0.5));
+                          setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
+                        } else if (val === 'total') {
+                          setReceiptPaidAmount(total);
+                          setReceiptNotes('Pago total del 100% de la sesión fotográfica.');
+                        }
+                      }}
+                      className="w-full bg-stone-900 border border-stone-700 rounded-lg px-2.5 py-1.5 text-white font-medium"
+                    >
+                      {alreadyPaid > 0 && remaining > 0 && (
+                        <option value="remaining">Saldo Restante Final (${remaining.toLocaleString('es-CO')} COP)</option>
+                      )}
+                      <option value="deposit">Abono Inicial (50%)</option>
+                      <option value="total">Pago Total (100%)</option>
+                      <option value="custom">Monto Personalizado</option>
+                    </select>
+                  );
+                })()}
               </div>
 
               <div>
@@ -8827,20 +9070,41 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       <span>Incluido</span>
                     </div>
                   )}
-                  <div className="border-t border-stone-800 pt-2 flex justify-between text-stone-200">
-                    <span className="font-bold">Total Pactado:</span>
-                    <span className="font-mono font-bold">${Number(receiptBooking.totalPrice || 0).toLocaleString('es-CO')} COP</span>
-                  </div>
-                  <div className="flex justify-between text-emerald-400 font-bold bg-emerald-950/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
-                    <span>Monto Recibido ({receiptPaymentMethod}):</span>
-                    <span className="font-mono">${Number(receiptPaidAmount || 0).toLocaleString('es-CO')} COP</span>
-                  </div>
-                  <div className="flex justify-between text-amber-400 font-bold px-2.5 py-1">
-                    <span>Saldo Pendiente de Pago en la Sesión:</span>
-                    <span className="font-mono">
-                      ${Math.max(0, Number(receiptBooking.totalPrice || 0) - Number(receiptPaidAmount || 0)).toLocaleString('es-CO')} COP
-                    </span>
-                  </div>
+                  {(() => {
+                    const total = Number(receiptBooking.totalPrice || 0);
+                    const paidNow = Number(receiptPaidAmount || 0);
+                    const bPayments = (payments || []).filter(
+                      p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+                    );
+                    const alreadyPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                    const isTotal = receiptType === 'total';
+                    const effectivePrev = isTotal ? 0 : alreadyPaid;
+                    const balance = Math.max(0, total - (effectivePrev + paidNow));
+                    const isFull = balance === 0 || isTotal || (effectivePrev + paidNow) >= total;
+
+                    return (
+                      <>
+                        <div className="border-t border-stone-800 pt-2 flex justify-between text-stone-200">
+                          <span className="font-bold">Total Pactado:</span>
+                          <span className="font-mono font-bold">${total.toLocaleString('es-CO')} COP</span>
+                        </div>
+                        {effectivePrev > 0 && (
+                          <div className="flex justify-between text-purple-300 font-semibold bg-purple-950/20 px-2.5 py-1.5 rounded-lg border border-purple-500/20">
+                            <span>Abono Previo Acreditado:</span>
+                            <span className="font-mono">${effectivePrev.toLocaleString('es-CO')} COP</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-emerald-400 font-bold bg-emerald-950/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
+                          <span>{effectivePrev > 0 ? 'Saldo Recibido Hoy' : 'Monto Recibido'} ({receiptPaymentMethod}):</span>
+                          <span className="font-mono">${paidNow.toLocaleString('es-CO')} COP</span>
+                        </div>
+                        <div className="flex justify-between text-amber-400 font-bold px-2.5 py-1">
+                          <span>{isFull ? 'Saldo Pendiente:' : 'Saldo Pendiente de Pago:'}</span>
+                          <span className="font-mono">${balance.toLocaleString('es-CO')} COP</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -8865,15 +9129,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   <p className="text-stone-400 text-[10px]">Fotógrafo Profesional Titular</p>
                 </div>
                 <div className="text-right">
-                  <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                    Math.max(0, Number(receiptBooking.totalPrice || 0) - Number(receiptPaidAmount || 0)) === 0
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                  }`}>
-                    {Math.max(0, Number(receiptBooking.totalPrice || 0) - Number(receiptPaidAmount || 0)) === 0
-                      ? '✓ PAGADO TOTAL (100%)'
-                      : '✓ ABONO CONFIRMADO (50%)'}
-                  </span>
+                  {(() => {
+                    const total = Number(receiptBooking.totalPrice || 0);
+                    const paidNow = Number(receiptPaidAmount || 0);
+                    const bPayments = (payments || []).filter(
+                      p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+                    );
+                    const alreadyPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+                    const isTotal = receiptType === 'total';
+                    const effectivePrev = isTotal ? 0 : alreadyPaid;
+                    const isFull = Math.max(0, total - (effectivePrev + paidNow)) === 0 || isTotal || (effectivePrev + paidNow) >= total;
+
+                    return (
+                      <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        isFull
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                          : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                      }`}>
+                        {isFull ? '✓ PAGADO TOTAL (100%)' : '✓ ABONO CONFIRMADO (50%)'}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
