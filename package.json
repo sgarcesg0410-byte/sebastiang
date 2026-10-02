@@ -1,14 +1,17 @@
 {
   "name": "foto-reservas",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:all": "node start-all.js",
     "build": "vite build",
     "preview": "vite preview",
-    "server": "node server/index.js"
+    "server": "node server/index.js",
+    "electron": "electron .",
+    "electron:build": "vite build && electron-builder --win nsis"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
@@ -27,7 +30,41 @@
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@electron/packager": "^18.4.4",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^41.7.1",
+    "electron-builder": "^26.15.3",
     "vite": "^6.2.0"
+  },
+  "build": {
+    "appId": "com.sebastiang.studio",
+    "productName": "Sebastian G - Estudio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/app-icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sebastian G • Estudio POS",
+      "uninstallDisplayName": "Sebastian G • Estudio Fotográfico"
+    }
   }
 }
