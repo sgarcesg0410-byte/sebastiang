@@ -128,7 +128,7 @@ export const DEFAULT_PACKAGES = [
       "+ 2 Fotos GRATIS incluidas (Total: 12 fotos)",
       "Edición y colorización profesional cinematográfica",
       "Prioridad de entrega",
-      "Opción de añadir impresiones 10x15 a $7.000 c/u"
+      "Opción de añadir impresiones 10x15 a $7.000 o 15x20 a $8.000 c/u"
     ],
     popular: false
   }
@@ -214,7 +214,8 @@ export const DEFAULT_SETTINGS = {
   watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
   watermarkLogoUrl: "/app-icon.png",
   adminPinHash: DEFAULT_PIN_HASH,
-  printedPhotoPrice: 7000
+  printedPhotoPrice: 7000,
+  printedPhoto15x20Price: 8000
 };
 
 // Helpers de almacenamiento local de respaldo
@@ -1065,11 +1066,25 @@ export async function createBooking(data) {
   if (!directWhatsAppUrl) {
     const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
     const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+    const count10x15 = Number(newBooking.printedPhotos10x15Count || (newBooking.printedPhotosCount && !newBooking.printedPhotos15x20Count ? newBooking.printedPhotosCount : 0));
+    const count15x20 = Number(newBooking.printedPhotos15x20Count || 0);
+    let printedDetails = '';
+    if (count10x15 > 0 && count15x20 > 0) {
+      printedDetails = `🖼️ *Fotos Impresas:* ${count10x15} en 10x15 y ${count15x20} en 15x20\n`;
+    } else if (count10x15 > 0) {
+      printedDetails = `🖼️ *Fotos Impresas (10x15):* ${count10x15} unidades\n`;
+    } else if (count15x20 > 0) {
+      printedDetails = `🖼️ *Fotos Impresas (15x20):* ${count15x20} unidades\n`;
+    } else if (Number(newBooking.printedPhotosCount) > 0) {
+      printedDetails = `🖼️ *Fotos Impresas:* ${newBooking.printedPhotosCount} unidades\n`;
+    }
+
     const msg = encodeURIComponent(
       `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
       `👤 *Nombre:* ${newBooking.clientName}\n` +
       `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
       `📦 *Paquete:* ${newBooking.packageName || 'Sesión Fotográfica'} ($${Number(newBooking.totalPrice || 0).toLocaleString('es-CO')} COP)\n` +
+      printedDetails +
       `📍 *Lugar:* ${newBooking.specificLocation || 'San Antero'}\n` +
       `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
       `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
@@ -2097,6 +2112,8 @@ export async function createPayment(paymentData) {
     voucherUrl: paymentData.voucherUrl || null,
     extraPhotosCount: Number(paymentData.extraPhotosCount) || 0,
     printedPhotosCount: Number(paymentData.printedPhotosCount) || 0,
+    printedPhotos10x15Count: Number(paymentData.printedPhotos10x15Count) || 0,
+    printedPhotos15x20Count: Number(paymentData.printedPhotos15x20Count) || 0,
     concept: paymentData.concept || 'Sesión Fotográfica',
     status: paymentData.status || 'verified',
     createdAt: new Date().toISOString()
@@ -2146,6 +2163,16 @@ export async function createPayment(paymentData) {
   };
   const methodName = methodNames[newPayment.method] || newPayment.method;
 
+  const printedDetailText = (newPayment.printedPhotos10x15Count > 0 && newPayment.printedPhotos15x20Count > 0)
+    ? ` + ${newPayment.printedPhotos10x15Count} impr. 10x15 y ${newPayment.printedPhotos15x20Count} impr. 15x20`
+    : newPayment.printedPhotos15x20Count > 0
+      ? ` + ${newPayment.printedPhotos15x20Count} fotos impresas 15x20`
+      : newPayment.printedPhotos10x15Count > 0
+        ? ` + ${newPayment.printedPhotos10x15Count} fotos impresas 10x15`
+        : newPayment.printedPhotosCount > 0
+          ? ` + ${newPayment.printedPhotosCount} fotos impresas`
+          : '';
+
   const msgText = encodeURIComponent(
     `💰 *¡Hola Sebastian G! Acabo de registrar mi pago de fotos:*\n\n` +
     `👤 *Cliente:* ${newPayment.clientName}\n` +
@@ -2154,7 +2181,7 @@ export async function createPayment(paymentData) {
     `💳 *Pasarela / Billetera:* ${methodName}\n` +
     `🔢 *Referencia:* ${newPayment.reference || 'Comprobante adjunto'}\n` +
     `📸 *Detalle:* ${newPayment.extraPhotosCount} fotos extra elegidas` +
-    (newPayment.printedPhotosCount > 0 ? ` + ${newPayment.printedPhotosCount} impresiones` : '') + `\n\n` +
+    printedDetailText + `\n\n` +
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
 

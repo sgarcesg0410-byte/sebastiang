@@ -9,6 +9,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   const scrollRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
   const printedPhotoPrice = settings.printedPhotoPrice || 7000;
+  const printedPhoto15x20Price = settings.printedPhoto15x20Price || 8000;
 
   // Form State
   const [formData, setFormData] = useState({
@@ -21,7 +22,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     date: '',
     time: '16:00',
     description: '',
-    printedPhotosCount: 0
+    printedPhotosCount: 0,
+    printedPhotos15x20Count: 0
   });
 
   const [bookingStep, setBookingStep] = useState(1); // 1: Datos, 2: Paquete y Lugar, 3: Fecha y Hora
@@ -107,7 +109,10 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
   // Descuento de fidelización del 15% para clientes recurrentes
   const loyaltyDiscount = loyalInfo.isLoyal ? Math.round(baseOrSurchargedPrice * 0.15) : 0;
-  const printedPhotosTotal = Number(formData.printedPhotosCount || 0) * printedPhotoPrice;
+  const printed10x15Total = Number(formData.printedPhotosCount || 0) * printedPhotoPrice;
+  const printed15x20Total = Number(formData.printedPhotos15x20Count || 0) * printedPhoto15x20Price;
+  const printedPhotosTotal = printed10x15Total + printed15x20Total;
+  const totalPrintedCount = Number(formData.printedPhotosCount || 0) + Number(formData.printedPhotos15x20Count || 0);
   const calculatedPrice = (baseOrSurchargedPrice - loyaltyDiscount) + printedPhotosTotal;
 
   const formatPrice = (val) => Number(val).toLocaleString('es-CO');
@@ -171,7 +176,9 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'San Antero (Playa / Sector)' : 'Locación Especial / Fuera'),
         dateTime: formattedDateTime,
         description: formData.description.trim(),
-        printedPhotosCount: Number(formData.printedPhotosCount || 0)
+        printedPhotosCount: totalPrintedCount,
+        printedPhotos10x15Count: Number(formData.printedPhotosCount || 0),
+        printedPhotos15x20Count: Number(formData.printedPhotos15x20Count || 0)
       };
 
       const result = await createBooking(bookingPayload);
@@ -679,36 +686,76 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     </div>
                   </div>
 
-                  {/* FOTOS IMPRESAS OPCIONALES */}
-                  <div className="p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Printer className="w-4 h-4 text-amber-400" />
+                  {/* FOTOS IMPRESAS OPCIONALES (10x15 Y 15x20) */}
+                  <div className="space-y-2">
+                    <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block flex items-center gap-1.5">
+                      <Printer className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Fotos Impresas en Papel Fotográfico (Opcional)</span>
+                    </span>
+
+                    {/* Opción 10x15 */}
+                    <div className="p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between hover:border-stone-700 transition-colors">
                       <div>
                         <span className="text-xs text-stone-200 font-semibold block">
-                          Fotos Impresas 10x15 ($7.000 c/u)
+                          Tamaño 10x15 (${formatPrice(printedPhotoPrice)} c/u)
                         </span>
-                        <span className="text-[10px] text-stone-400">Opcional en físico</span>
+                        <span className="text-[10px] text-stone-400">Papel fotográfico profesional</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFormData(p => ({ ...p, printedPhotosCount: Math.max(0, p.printedPhotosCount - 1) }))}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                        >
+                          -
+                        </button>
+                        <span className="w-5 text-center text-xs font-bold text-amber-400 font-mono">
+                          {formData.printedPhotosCount}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setFormData(p => ({ ...p, printedPhotosCount: p.printedPhotosCount + 1 }))}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                        >
+                          +
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setFormData(p => ({ ...p, printedPhotosCount: Math.max(0, p.printedPhotosCount - 1) }))}
-                        className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700"
-                      >
-                        -
-                      </button>
-                      <span className="w-5 text-center text-xs font-bold text-amber-400">
-                        {formData.printedPhotosCount}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setFormData(p => ({ ...p, printedPhotosCount: p.printedPhotosCount + 1 }))}
-                        className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700"
-                      >
-                        +
-                      </button>
+                    {/* Opción 15x20 */}
+                    <div className="p-2.5 rounded-xl bg-stone-950 border border-amber-500/30 flex items-center justify-between hover:border-amber-400/50 transition-colors">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-stone-200 font-semibold block">
+                            Tamaño 15x20 (${formatPrice(printedPhoto15x20Price)} c/u)
+                          </span>
+                          <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                            Grande
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-stone-400">Formato ampliado para portarretratos</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFormData(p => ({ ...p, printedPhotos15x20Count: Math.max(0, (p.printedPhotos15x20Count || 0) - 1) }))}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                        >
+                          -
+                        </button>
+                        <span className="w-5 text-center text-xs font-bold text-amber-300 font-mono">
+                          {formData.printedPhotos15x20Count || 0}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setFormData(p => ({ ...p, printedPhotos15x20Count: (p.printedPhotos15x20Count || 0) + 1 }))}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
                   </div>
 
