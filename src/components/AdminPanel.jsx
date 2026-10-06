@@ -53,7 +53,10 @@ import {
   ChevronLeft,
   List,
   Fingerprint,
-  Search
+  Search,
+  Bot,
+  Smartphone,
+  Download
 } from 'lucide-react';
 import {
   isBiometricsSupported,
@@ -621,6 +624,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   });
   const [pinChangeMsg, setPinChangeMsg] = useState('');
   const [pinChangeError, setPinChangeError] = useState('');
+
+  // Estados para Bot de Automatización de WhatsApp (Sin QR)
+  const [botSimMessage, setBotSimMessage] = useState('1');
+  const [botSimReply, setBotSimReply] = useState('');
+  const [isBotSimTesting, setIsBotSimTesting] = useState(false);
+  const [copiedRuleId, setCopiedRuleId] = useState(null);
 
   // Modal ver selecciones de cliente
   const [viewingSession, setViewingSession] = useState(null);
@@ -8056,6 +8065,187 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               >
                 Guardar Ajustes de WhatsApp y Marca
               </button>
+            </div>
+          </div>
+
+          {/* SECCIÓN NUEVA: BOT DE AUTOMATIZACIÓN DE WHATSAPP (SIN CÓDIGO QR • 100% GRATIS) */}
+          <div className="bg-stone-900 border border-emerald-500/30 rounded-3xl p-6 sm:p-8 space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    100% Gratis • Sin Código QR
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    Atiende los 2 Números
+                  </span>
+                </div>
+                <h3 className="text-2xl font-serif font-bold text-white flex items-center gap-2">
+                  <Bot className="w-6 h-6 text-emerald-400" />
+                  <span>Bot de Automatización de WhatsApp</span>
+                </h3>
+                <p className="text-xs text-stone-400 mt-1 max-w-xl">
+                  Atiende a tus clientes automáticamente en tus dos líneas simultáneas (WhatsApp Personal y WhatsApp Business). Envía tus paquetes reales, fechas de agenda y cuentas de Nequi.
+                </p>
+              </div>
+
+              <a
+                href="/bot-reglas-whatsapp.json"
+                download="bot-reglas-whatsapp.json"
+                className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-950/50 active:scale-95 transition-all"
+                title="Descargar archivo de reglas listo para importar en AutoResponder para WA"
+              >
+                <Download className="w-4 h-4 text-emerald-200" />
+                <span>Descargar Reglas (.json)</span>
+              </a>
+            </div>
+
+            {/* GUÍA DE 3 PASOS PARA ACTIVARLO */}
+            <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-2">
+              <div className="p-4 rounded-2xl bg-stone-950/80 border border-stone-800 space-y-2">
+                <div className="w-7 h-7 rounded-xl bg-emerald-500/20 text-emerald-400 font-extrabold text-sm flex items-center justify-center">
+                  1
+                </div>
+                <h4 className="text-xs font-bold text-white">Instala la App Gratuita</h4>
+                <p className="text-[11px] text-stone-400 leading-relaxed">
+                  En tu celular abre <strong>Google Play Store</strong> e instala <strong>AutoResponder para WA</strong>. Solo concédele el permiso de notificaciones (cero QR).
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-stone-950/80 border border-stone-800 space-y-2">
+                <div className="w-7 h-7 rounded-xl bg-purple-500/20 text-purple-300 font-extrabold text-sm flex items-center justify-center">
+                  2
+                </div>
+                <h4 className="text-xs font-bold text-white">Activa los 2 Números</h4>
+                <p className="text-[11px] text-stone-400 leading-relaxed">
+                  En la app ve a <strong>Ajustes &gt; Versión de WhatsApp</strong> y marca tanto <strong>WhatsApp</strong> como <strong>WhatsApp Business</strong>.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-stone-950/80 border border-stone-800 space-y-2">
+                <div className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-300 font-extrabold text-sm flex items-center justify-center">
+                  3
+                </div>
+                <h4 className="text-xs font-bold text-white">Importa las Reglas</h4>
+                <p className="text-[11px] text-stone-400 leading-relaxed">
+                  Descarga el archivo <code>.json</code> con el botón verde de arriba. En la app ve a <strong>Copia de seguridad &gt; Importar reglas</strong> y selecciónalo. ¡Listo!
+                </p>
+              </div>
+            </div>
+
+            {/* SIMULADOR DE CHAT EN VIVO */}
+            <div className="relative z-10 p-5 rounded-2xl bg-stone-950 border border-stone-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    Simulador del Bot (Pruébalo en vivo aquí):
+                  </span>
+                </div>
+                <span className="text-[11px] text-stone-500 font-mono">
+                  Webhook: https://sebastiang.app/api/bot-webhook
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: '👋 Menú / Hola', val: 'hola' },
+                  { label: '1️⃣ Paquetes y Precios', val: '1' },
+                  { label: '2️⃣ Reservar Cita', val: '2' },
+                  { label: '3️⃣ Portafolio', val: '3' },
+                  { label: '4️⃣ Cuentas de Pago', val: '4' },
+                  { label: '5️⃣ Hablar con Sebastian', val: '5' }
+                ].map((item) => (
+                  <button
+                    key={item.val}
+                    type="button"
+                    onClick={async () => {
+                      setBotSimMessage(item.val);
+                      setIsBotSimTesting(true);
+                      try {
+                        const res = await fetch('/api/bot-webhook', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ query: { message: item.val, sender: 'Cliente Simulador' } })
+                        });
+                        const data = await res.json();
+                        setBotSimReply(data?.reply || data?.replies?.[0]?.message || 'Sin respuesta');
+                      } catch (e) {
+                        setBotSimReply('Error conectando con el bot.');
+                      } finally {
+                        setIsBotSimTesting(false);
+                      }
+                    }}
+                    className="px-2.5 py-1.5 bg-stone-900 hover:bg-stone-800 border border-stone-700 hover:border-emerald-500/50 text-stone-300 hover:text-white rounded-lg text-xs font-medium transition-all active:scale-95"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <input
+                  type="text"
+                  value={botSimMessage}
+                  onChange={(e) => setBotSimMessage(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      setIsBotSimTesting(true);
+                      try {
+                        const res = await fetch('/api/bot-webhook', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ query: { message: botSimMessage, sender: 'Cliente' } })
+                        });
+                        const data = await res.json();
+                        setBotSimReply(data?.reply || data?.replies?.[0]?.message || 'Sin respuesta');
+                      } catch (err) {
+                        setBotSimReply('Error conectando con el bot.');
+                      } finally {
+                        setIsBotSimTesting(false);
+                      }
+                    }
+                  }}
+                  placeholder="Escribe como si fueras un cliente (ej: ¿cuánto vale?, reservar, hola...)"
+                  className="flex-1 bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="button"
+                  disabled={isBotSimTesting}
+                  onClick={async () => {
+                    setIsBotSimTesting(true);
+                    try {
+                      const res = await fetch('/api/bot-webhook', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query: { message: botSimMessage, sender: 'Cliente' } })
+                      });
+                      const data = await res.json();
+                      setBotSimReply(data?.reply || data?.replies?.[0]?.message || 'Sin respuesta');
+                    } catch (err) {
+                      setBotSimReply('Error conectando con el bot.');
+                    } finally {
+                      setIsBotSimTesting(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-colors active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  {isBotSimTesting ? 'Probando...' : 'Enviar'}
+                </button>
+              </div>
+
+              {botSimReply && (
+                <div className="p-3.5 rounded-xl bg-[#0b2016] border border-emerald-500/40 text-xs text-emerald-100 whitespace-pre-line leading-relaxed font-sans shadow-md">
+                  <div className="text-[10px] font-bold text-emerald-400 mb-1 flex items-center gap-1">
+                    <span>🟢 Respuesta automática de WhatsApp:</span>
+                  </div>
+                  {botSimReply}
+                </div>
+              )}
             </div>
           </div>
 
