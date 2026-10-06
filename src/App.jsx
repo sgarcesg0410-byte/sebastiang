@@ -95,6 +95,16 @@ export default function App() {
   });
 
   // Datos globales con inicio instantáneo sin pantalla en blanco
+  const isRealCatalogItem = (item) => {
+    if (!item || !item.id) return false;
+    if (item.category === 'vip_client' || item.id.startsWith('vip-') || item.category?.endsWith('_data')) return false;
+    if (item.id.startsWith('system_') || item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('sess-') || item.id.startsWith('rev-')) return false;
+    if (typeof item.url !== 'string' || !item.url.trim()) return false;
+    if (item.url.trim().startsWith('{') || item.url.trim().startsWith('[')) return false;
+    if (item.url.includes('fbcdn.net')) return false;
+    return true;
+  };
+
   const [settings, setSettings] = useState({});
   const [catalog, setCatalog] = useState(() => {
     try {
@@ -102,7 +112,10 @@ export default function App() {
         const cached = localStorage.getItem('sebastian_g_catalog_v1');
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed)) {
+            const clean = parsed.filter(isRealCatalogItem);
+            if (clean.length > 0) return clean;
+          }
         }
       }
     } catch (e) {}
@@ -120,12 +133,12 @@ export default function App() {
       // Mapa para unir todas las fotos sin perder jamás fotos subidas por el fotógrafo
       const map = new Map();
       (prev || []).forEach(p => {
-        if (p && p.id && !deletedSet.has(p.id)) {
+        if (isRealCatalogItem(p) && !deletedSet.has(p.id)) {
           map.set(p.id, p);
         }
       });
       (data || []).forEach(p => {
-        if (p && p.id && !deletedSet.has(p.id)) {
+        if (isRealCatalogItem(p) && !deletedSet.has(p.id)) {
           const existing = map.get(p.id);
           if (existing && existing.url && (!p.url || p.isHeavyLocal)) {
             map.set(p.id, { ...p, url: existing.url });
