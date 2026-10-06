@@ -56,7 +56,16 @@ import {
   Search,
   Bot,
   Smartphone,
-  Download
+  Download,
+  Activity,
+  ShieldAlert,
+  ShieldCheck,
+  Zap,
+  Server,
+  Database,
+  AlertTriangle,
+  Cpu,
+  Gauge
 } from 'lucide-react';
 import {
   isBiometricsSupported,
@@ -140,6 +149,14 @@ import {
   playPushNotificationChime,
   flashDocumentTitle
 } from '../services/notifications';
+
+import {
+  getSoftwareErrors,
+  clearSoftwareErrors,
+  auditServicesHealth,
+  auditPaymentConflicts,
+  generateImprovementInsights
+} from '../services/systemAuditor';
 
 // Función para procesar y optimizar fotos de manera ultraligera y segura (ideal para celulares, APK y web)
 async function compressImageFile(file, maxWidth = 1200, quality = 0.78) {
@@ -700,6 +717,76 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setShowInstallModal(true);
     }
   };
+
+  // ── AUDITOR INTELIGENTE DEL SOFTWARE 24/7 ─────────────────────────
+  const [auditServices, setAuditServices] = useState(null);
+  const [auditConflicts, setAuditConflicts] = useState(null);
+  const [auditInsights, setAuditInsights] = useState(null);
+  const [auditErrors, setAuditErrors] = useState([]);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [lastAuditTime, setLastAuditTime] = useState(null);
+  const [auditSubTab, setAuditSubTab] = useState('overview'); // 'overview' | 'services' | 'errors' | 'payments' | 'insights'
+
+  const runFullAudit = async () => {
+    setIsAuditing(true);
+    try {
+      const servicesHealth = await auditServicesHealth();
+      setAuditServices(servicesHealth);
+
+      const errs = getSoftwareErrors();
+      setAuditErrors(errs);
+
+      const conflicts = auditPaymentConflicts(bookings, payments);
+      setAuditConflicts(conflicts);
+
+      const insights = generateImprovementInsights(bookings, payments, catalog, servicesHealth, conflicts);
+      setAuditInsights(insights);
+
+      setLastAuditTime(new Date());
+    } catch (err) {
+      console.error('Error al ejecutar auditoría del sistema:', err);
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const handleClearAuditErrors = () => {
+    clearSoftwareErrors();
+    setAuditErrors([]);
+    if (auditServices && auditConflicts) {
+      const updatedInsights = generateImprovementInsights(bookings, payments, catalog, auditServices, auditConflicts);
+      setAuditInsights(updatedInsights);
+    }
+  };
+
+  const handleAuditWhatsAppFollowUp = (conflict) => {
+    if (!conflict) return;
+    let phone = (conflict.clientPhone || '').replace(/\D/g, '');
+    if (phone.length === 10 && !phone.startsWith('57')) {
+      phone = '57' + phone;
+    }
+    let text = '';
+    if (conflict.type === 'stale_pending_booking') {
+      text = `¡Hola! Te saluda Sebastian G • Fotografía. Veo en el sistema que tienes una fecha reservada pero aún no se registra el abono del 50%. ¿Deseas confirmar tu cupo para asegurar la fecha en la agenda o requieres alguna modificación? Quedo muy atento.`;
+    } else if (conflict.type === 'underpaid_completed_booking') {
+      text = `¡Hola! Te escribe Sebastian G • Fotografía. En la auditoría de caja de tu sesión fotográfica figura un saldo pendiente de $${(conflict.missingAmount || 0).toLocaleString('es-CO')} COP. Por favor envíame el comprobante o soporte para actualizarlo en el sistema. ¡Muchas gracias!`;
+    } else {
+      text = `¡Hola! Te escribe Sebastian G • Fotografía en relación con tu reserva fotográfica.`;
+    }
+    setQuickWhatsAppTarget({
+      type: 'chat',
+      title: `Auditoría • Contactar a ${conflict.clientName || 'Cliente'}`,
+      clientName: conflict.clientName || 'Cliente',
+      clientPhone: phone,
+      text
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'auditor') {
+      runFullAudit();
+    }
+  }, [activeTab]);
 
   const detectDeliveryService = (url) => {
     if (!url) return 'wetransfer';
@@ -4297,7 +4384,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
         {/* Pestañas de navegación 100% responsive: Grid adaptable */}
         <div className="w-full bg-stone-900/95 p-1.5 sm:p-2 rounded-2xl border border-stone-800/90 shadow-xl no-scrollbar">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10 gap-1.5 sm:gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-11 gap-1.5 sm:gap-2">
             <button
               onClick={() => setActiveTab('bookings')}
               className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
@@ -4448,6 +4535,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             >
               <Settings className="w-3.5 h-3.5 shrink-0" />
               <span>Ajustes</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('auditor')}
+              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation relative ${
+                activeTab === 'auditor'
+                  ? 'bg-gradient-to-r from-cyan-500 via-teal-400 to-blue-500 text-stone-950 shadow-lg shadow-cyan-500/25 scale-[1.02] font-black'
+                  : 'text-cyan-300 hover:text-white bg-cyan-950/20 hover:bg-cyan-900/40 border border-cyan-500/30'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+              <span>Auditor</span>
+              {((auditConflicts?.conflictsCount || 0) > 0 || auditErrors.length > 0) ? (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-black bg-rose-500 text-white animate-pulse shadow-sm shadow-rose-500/50">
+                  {(auditConflicts?.conflictsCount || 0) + auditErrors.length}
+                </span>
+              ) : (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              )}
             </button>
           </div>
         </div>
@@ -8558,6 +8664,673 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>Cerrar Sesión Definitivamente</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* PESTAÑA: AUDITOR INTELIGENTE DEL SOFTWARE 24/7 */}
+      {activeTab === 'auditor' && (
+        <div className="space-y-6">
+          {/* ENCABEZADO Y SCORE GENERAL DE SALUD */}
+          <div className="bg-gradient-to-br from-stone-900 via-stone-900 to-cyan-950/30 border border-cyan-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+            
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                    <span>Auditoría de Software en Tiempo Real</span>
+                  </span>
+                  <span className="text-[11px] text-stone-400 font-medium">
+                    {lastAuditTime ? `Último análisis: ${lastAuditTime.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}` : 'Listo para auditar'}
+                  </span>
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-serif font-black text-white">
+                  Auditor & Diagnóstico Central del Software
+                </h2>
+                <p className="text-stone-300 text-xs sm:text-sm max-w-2xl leading-relaxed">
+                  Supervisión técnica de caídas de red, errores de JavaScript capturados, conciliación contable de pagos y recomendaciones automáticas de mejora para Sebastian G.
+                </p>
+              </div>
+
+              {/* Score Circular / Widget */}
+              <div className="flex items-center gap-4 bg-stone-950/80 p-4 rounded-2xl border border-stone-800 shrink-0 shadow-lg">
+                <div className="text-center">
+                  <span className="text-[10px] uppercase font-bold text-stone-400 tracking-wider block">
+                    Salud Global
+                  </span>
+                  <span className={`text-4xl font-black font-mono ${
+                    (auditInsights?.score ?? 100) >= 85 
+                      ? 'text-emerald-400' 
+                      : (auditInsights?.score ?? 100) >= 60 
+                        ? 'text-amber-400' 
+                        : 'text-rose-400'
+                  }`}>
+                    {auditInsights?.score ?? 100}%
+                  </span>
+                  <span className="text-[10px] text-stone-400 block font-semibold">
+                    {auditInsights?.ratingLabel || 'Excelente • Sistema Estable'}
+                  </span>
+                </div>
+
+                <div className="h-12 w-px bg-stone-800" />
+
+                <button
+                  type="button"
+                  onClick={runFullAudit}
+                  disabled={isAuditing}
+                  className="px-4 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-stone-950 font-black text-xs rounded-xl shadow-lg shadow-cyan-500/25 flex items-center gap-2 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isAuditing ? 'animate-spin' : ''}`} />
+                  <span>{isAuditing ? 'Auditando...' : 'Ejecutar Auditoría en Vivo'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Barra de progreso de Salud */}
+            <div className="mt-6 space-y-1.5 relative z-10">
+              <div className="flex justify-between text-[11px] font-bold">
+                <span className="text-stone-400">Rendimiento e Integridad Técnica</span>
+                <span className={
+                  (auditInsights?.score ?? 100) >= 85 ? 'text-emerald-400' : (auditInsights?.score ?? 100) >= 60 ? 'text-amber-400' : 'text-rose-400'
+                }>
+                  {auditInsights?.score ?? 100} / 100 Puntos
+                </span>
+              </div>
+              <div className="w-full h-2.5 bg-stone-950 rounded-full overflow-hidden border border-stone-800 p-0.5">
+                <div 
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    (auditInsights?.score ?? 100) >= 85
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                      : (auditInsights?.score ?? 100) >= 60
+                        ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                        : 'bg-gradient-to-r from-rose-600 to-rose-400'
+                  }`}
+                  style={{ width: `${auditInsights?.score ?? 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* SUB-PESTAÑAS DE AUDITORÍA */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setAuditSubTab('overview')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+                auditSubTab === 'overview'
+                  ? 'bg-cyan-500 text-stone-950 font-black shadow-md shadow-cyan-500/25'
+                  : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Resumen Ejecutivo</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAuditSubTab('services')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+                auditSubTab === 'services'
+                  ? 'bg-cyan-500 text-stone-950 font-black shadow-md shadow-cyan-500/25'
+                  : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+              }`}
+            >
+              <Server className="w-3.5 h-3.5" />
+              <span>Conectividad & Caídas</span>
+              {auditServices?.supabase?.status === 'down' && (
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAuditSubTab('errors')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+                auditSubTab === 'errors'
+                  ? 'bg-cyan-500 text-stone-950 font-black shadow-md shadow-cyan-500/25'
+                  : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Monitor de Errores JS</span>
+              {auditErrors.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${auditSubTab === 'errors' ? 'bg-stone-950 text-cyan-400' : 'bg-rose-500 text-white'}`}>
+                  {auditErrors.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAuditSubTab('payments')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+                auditSubTab === 'payments'
+                  ? 'bg-cyan-500 text-stone-950 font-black shadow-md shadow-cyan-500/25'
+                  : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+              }`}
+            >
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>Conflictos de Pagos</span>
+              {(auditConflicts?.conflictsCount || 0) > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${auditSubTab === 'payments' ? 'bg-stone-950 text-cyan-400' : 'bg-amber-500 text-stone-950'}`}>
+                  {auditConflicts.conflictsCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAuditSubTab('insights')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 ${
+                auditSubTab === 'insights'
+                  ? 'bg-cyan-500 text-stone-950 font-black shadow-md shadow-cyan-500/25'
+                  : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>¿Qué Toca Mejorar?</span>
+              {(auditInsights?.insights?.length || 0) > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${auditSubTab === 'insights' ? 'bg-stone-950 text-cyan-400' : 'bg-cyan-950 text-cyan-300 border border-cyan-500/40'}`}>
+                  {auditInsights.insights.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* VISTA 1: RESUMEN EJECUTIVO (OVERVIEW) */}
+          {auditSubTab === 'overview' && (
+            <div className="space-y-6">
+              {/* 4 KPIs Clave */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* KPI 1: Base de Datos */}
+                <div className="bg-stone-900/90 border border-stone-800 p-4 rounded-2xl shadow-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-stone-400">Base de Datos Cloud</span>
+                    <Database className="w-4 h-4 text-cyan-400" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${auditServices?.supabase?.status === 'ok' ? 'bg-emerald-400 animate-pulse' : auditServices?.supabase?.status === 'degraded' ? 'bg-amber-400' : 'bg-rose-500 animate-ping'}`} />
+                    <span className="text-lg font-bold text-white">
+                      {auditServices?.supabase?.status === 'ok' ? 'Conectado' : auditServices?.supabase?.status === 'degraded' ? 'Degradado' : 'Sin conexión'}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-stone-400 mt-1 block">
+                    Ping: {auditServices?.supabase?.latencyMs ? `${auditServices.supabase.latencyMs} ms` : 'Verificando...'}
+                  </span>
+                </div>
+
+                {/* KPI 2: Servidor API */}
+                <div className="bg-stone-900/90 border border-stone-800 p-4 rounded-2xl shadow-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-stone-400">Servidor API / Nube</span>
+                    <Server className="w-4 h-4 text-purple-400" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${auditServices?.apiServer?.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span className="text-lg font-bold text-white">
+                      {auditServices?.apiServer?.status === 'ok' ? 'Operativo' : 'Modo Offline'}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-stone-400 mt-1 block">
+                    Respuesta: {auditServices?.apiServer?.latencyMs ? `${auditServices.apiServer.latencyMs} ms` : '1 ms local'}
+                  </span>
+                </div>
+
+                {/* KPI 3: Errores Capturados */}
+                <div className="bg-stone-900/90 border border-stone-800 p-4 rounded-2xl shadow-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-stone-400">Errores en Vivo</span>
+                    <AlertTriangle className={`w-4 h-4 ${auditErrors.length > 0 ? 'text-rose-400' : 'text-emerald-400'}`} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-black font-mono text-white">
+                      {auditErrors.length}
+                    </span>
+                    <span className="text-xs text-stone-400">registrados</span>
+                  </div>
+                  <span className={`text-[11px] mt-1 block font-bold ${auditErrors.length > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {auditErrors.length === 0 ? '✨ Sin fallos activos' : '⚠️ Requiere revisión'}
+                  </span>
+                </div>
+
+                {/* KPI 4: Conflictos Financieros */}
+                <div className="bg-stone-900/90 border border-stone-800 p-4 rounded-2xl shadow-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-stone-400">Conflictos de Pagos</span>
+                    <CreditCard className={`w-4 h-4 ${(auditConflicts?.conflictsCount || 0) > 0 ? 'text-amber-400' : 'text-emerald-400'}`} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl font-black font-mono text-white">
+                      {auditConflicts?.conflictsCount || 0}
+                    </span>
+                    <span className="text-xs text-stone-400">alertas</span>
+                  </div>
+                  <span className={`text-[11px] mt-1 block font-bold ${(auditConflicts?.conflictsCount || 0) > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {(auditConflicts?.conflictsCount || 0) === 0 ? '✅ Cuadre de caja al 100%' : 'Ver detalles de conciliación'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Mensaje de Resumen Inteligente */}
+              <div className="p-4 sm:p-5 bg-stone-900 border border-stone-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0 border border-cyan-500/40">
+                    <Bot className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Diagnóstico Rápido del Auditor Autónomo</h4>
+                    <p className="text-xs text-stone-300 mt-0.5 leading-relaxed">
+                      {auditErrors.length === 0 && (auditConflicts?.conflictsCount || 0) === 0
+                        ? 'Tu aplicación está en un estado óptimo. Todas las fotos cargan rápido, la base de datos Supabase responde de forma estable y no hay referencias de dinero cruzadas.'
+                        : `El sistema ha identificado ${(auditConflicts?.conflictsCount || 0)} conflicto(s) de pagos y ${auditErrors.length} alerta(s) técnica(s). Haz clic en las pestañas superiores para resolverlos con 1 clic.`}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setAuditSubTab('insights')}
+                    className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-cyan-300 text-xs font-bold border border-cyan-500/30 flex items-center gap-1.5 transition-all"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Ver Mejoras Recomendadas</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VISTA 2: CONECTIVIDAD & CAÍDAS DE RED */}
+          {auditSubTab === 'services' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-white">Salud de Servicios y Caídas en Tiempo Real</h3>
+                  <p className="text-xs text-stone-400">Verifica la disponibilidad y latencia con cada componente de la infraestructura.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={runFullAudit}
+                  disabled={isAuditing}
+                  className="px-3.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isAuditing ? 'animate-spin' : ''}`} />
+                  <span>Probar Conectividad</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 1. Supabase Cloud */}
+                <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        <Database className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Supabase Cloud (Base de Datos)</h4>
+                        <span className="text-[11px] text-stone-400">PostgreSQL Cloud Sincronizado</span>
+                      </div>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      auditServices?.supabase?.status === 'ok' 
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                        : auditServices?.supabase?.status === 'degraded'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                    }`}>
+                      {auditServices?.supabase?.status === 'ok' ? 'Operativo' : auditServices?.supabase?.status === 'degraded' ? 'Lento' : 'Caído'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    {auditServices?.supabase?.message || 'Verificando comunicación con la base de datos...'}
+                  </p>
+
+                  <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-xs">
+                    <span className="text-stone-400">Latencia de Respuesta:</span>
+                    <span className="font-mono font-bold text-cyan-300">
+                      {auditServices?.supabase?.latencyMs ? `${auditServices.supabase.latencyMs} ms` : '--'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. Servidor API / Vercel */}
+                <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                        <Server className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Servidor API / Nube</h4>
+                        <span className="text-[11px] text-stone-400">Endpoints y Respaldo Vercel</span>
+                      </div>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      auditServices?.apiServer?.status === 'ok' 
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    }`}>
+                      {auditServices?.apiServer?.status === 'ok' ? 'Operativo' : 'Modo Offline'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    {auditServices?.apiServer?.message || 'Verificando disponibilidad de rutas API...'}
+                  </p>
+
+                  <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-xs">
+                    <span className="text-stone-400">Latencia de Respuesta:</span>
+                    <span className="font-mono font-bold text-purple-300">
+                      {auditServices?.apiServer?.latencyMs ? `${auditServices.apiServer.latencyMs} ms` : '1 ms'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3. Memoria Local & IndexedDB */}
+                <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        <Gauge className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Memoria Local & Caché</h4>
+                        <span className="text-[11px] text-stone-400">LocalStorage & IndexedDB</span>
+                      </div>
+                    </div>
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      (auditServices?.storage?.percent || 0) < 80 
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    }`}>
+                      {auditServices?.storage?.percent || 0}% Ocupado
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    {auditServices?.storage?.message || 'Calculando cuota de almacenamiento del dispositivo...'}
+                  </p>
+
+                  <div className="w-full h-2 bg-stone-950 rounded-full overflow-hidden border border-stone-800">
+                    <div 
+                      className={`h-full rounded-full ${(auditServices?.storage?.percent || 0) < 80 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                      style={{ width: `${auditServices?.storage?.percent || 0}%` }}
+                    />
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-xs">
+                    <span className="text-stone-400">Uso Actual:</span>
+                    <span className="font-mono font-bold text-amber-300">
+                      {auditServices?.storage?.usedKb || 0} KB / 5.120 KB
+                    </span>
+                  </div>
+                </div>
+
+                {/* 4. Notificaciones Push */}
+                <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                        <Bell className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white">Notificaciones Push 24/7</h4>
+                        <span className="text-[11px] text-stone-400">OneSignal & APK Android</span>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      {typeof window !== 'undefined' && window.AndroidNotificationBridge ? 'Nativo APK' : 'Activo'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-stone-300 leading-relaxed">
+                    {auditServices?.push?.message || 'Canal de alertas push listo para emitir avisos sonoros instantáneos.'}
+                  </p>
+
+                  <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-xs">
+                    <span className="text-stone-400">Canal de Notificación:</span>
+                    <span className="font-mono font-bold text-blue-300">
+                      {typeof window !== 'undefined' && window.AndroidNotificationBridge ? 'Puente Android Directo' : 'OneSignal Web Push'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VISTA 3: MONITOR DE ERRORES JS CAPTURADOS */}
+          {auditSubTab === 'errors' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-white">Registro de Errores y Excepciones de Runtime</h3>
+                  <p className="text-xs text-stone-400">Captura autónoma de fallos de JavaScript, promesas asíncronas caídas y cuellos de botella.</p>
+                </div>
+                {auditErrors.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAuditErrors}
+                    className="px-3.5 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white border border-stone-700 text-xs font-bold flex items-center gap-1.5 transition-all self-start sm:self-auto cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-stone-400" />
+                    <span>Limpiar Registro de Errores</span>
+                  </button>
+                )}
+              </div>
+
+              {auditErrors.length === 0 ? (
+                <div className="p-8 bg-stone-900/60 border border-stone-800 rounded-3xl text-center space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-7 h-7" />
+                  </div>
+                  <h4 className="text-lg font-bold text-white">¡Cero Errores de Software Detectados!</h4>
+                  <p className="text-stone-400 text-xs max-w-md mx-auto leading-relaxed">
+                    La aplicación no tiene registro de errores de ejecución ni promesas bloqueadas. Tu código y componentes están operando sin ninguna anomalía.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {auditErrors.map((err) => (
+                    <div 
+                      key={err.id}
+                      className="p-4 bg-stone-900 border border-rose-500/30 rounded-2xl space-y-2 text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-black uppercase">
+                            {err.severity || 'Error'}
+                          </span>
+                          <span className="text-xs font-mono font-bold text-stone-300">
+                            {err.filename || 'Origen desconocido'} {err.lineno ? `(Línea ${err.lineno})` : ''}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-stone-500 font-mono">
+                          {new Date(err.timestamp).toLocaleTimeString('es-CO')}
+                        </span>
+                      </div>
+
+                      <div className="p-2.5 bg-stone-950 rounded-xl border border-stone-800/80 font-mono text-xs text-rose-300 break-words">
+                        {err.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* VISTA 4: CONFLICTOS DE PAGOS Y CONCILIACIÓN */}
+          {auditSubTab === 'payments' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-white">Auditoría Financiera y Conflictos en Pagos</h3>
+                <p className="text-xs text-stone-400">
+                  Inspecciona posibles referencias bancarias duplicadas, reservas completadas con saldos adeudados y reservas abandonadas.
+                </p>
+              </div>
+
+              {(auditConflicts?.conflictsCount || 0) === 0 ? (
+                <div className="p-8 bg-stone-900/60 border border-stone-800 rounded-3xl text-center space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-7 h-7" />
+                  </div>
+                  <h4 className="text-lg font-bold text-white">Cuadre de Pagos y Caja 100% Limpio</h4>
+                  <p className="text-stone-400 text-xs max-w-md mx-auto leading-relaxed">
+                    No se detectaron referencias de Nequi, DaviPlata o Dale! repetidas, ni reservas marcadas como completadas con saldos faltantes.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {auditConflicts.conflicts.map((conf) => (
+                    <div 
+                      key={conf.id}
+                      className={`p-4 sm:p-5 bg-stone-900 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left ${
+                        conf.severity === 'high' 
+                          ? 'border-rose-500/50 shadow-lg shadow-rose-950/20' 
+                          : conf.severity === 'medium'
+                            ? 'border-amber-500/50 shadow-lg shadow-amber-950/20'
+                            : 'border-cyan-500/40 shadow-lg shadow-cyan-950/20'
+                      }`}
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase ${
+                            conf.severity === 'high' 
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' 
+                              : conf.severity === 'medium'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                          }`}>
+                            {conf.type === 'duplicate_reference' ? 'Comprobante Duplicado' : conf.type === 'underpaid_completed_booking' ? 'Saldo Faltante' : conf.type === 'stale_pending_booking' ? 'Reserva Estancada' : 'Pago Huérfano'}
+                          </span>
+                          <h4 className="text-sm font-bold text-white">{conf.title}</h4>
+                        </div>
+                        <p className="text-xs text-stone-300 leading-relaxed max-w-2xl">
+                          {conf.description}
+                        </p>
+                      </div>
+
+                      <div className="shrink-0 flex items-center gap-2">
+                        {(conf.type === 'stale_pending_booking' || conf.type === 'underpaid_completed_booking') && conf.clientPhone && (
+                          <button
+                            type="button"
+                            onClick={() => handleAuditWhatsAppFollowUp(conf)}
+                            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-bold text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-all cursor-pointer"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>Contactar Cliente</span>
+                          </button>
+                        )}
+
+                        {conf.type === 'duplicate_reference' && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('payments')}
+                            className="px-3.5 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 border border-amber-500/30 transition-all cursor-pointer"
+                          >
+                            <CreditCard className="w-3.5 h-3.5" />
+                            <span>Revisar Pagos</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* VISTA 5: ¿QUÉ TOCA MEJORAR? (INSIGHTS & DIAGNÓSTICO PROACTIVO) */}
+          {auditSubTab === 'insights' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-white">¿Qué Toca Mejorar en el Software?</h3>
+                <p className="text-xs text-stone-400">
+                  Oportunidades de optimización automática para acelerar la carga en celulares, incrementar cobros y mantener la base de datos impecable.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(auditInsights?.insights || []).map((ins) => (
+                  <div 
+                    key={ins.id}
+                    className="p-5 bg-stone-900 border border-stone-800 rounded-2xl space-y-3 flex flex-col justify-between text-left"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                          ins.level === 'good'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : ins.level === 'opportunity'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : ins.level === 'warning'
+                                ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                        }`}>
+                          {ins.category === 'performance' ? 'Rendimiento' : ins.category === 'revenue' ? 'Ingresos / Cobro' : ins.category === 'storage' ? 'Memoria Local' : 'Infraestructura'}
+                        </span>
+                        <span className="text-[11px] text-stone-400 font-semibold">
+                          {ins.level === 'good' ? '✅ Óptimo' : ins.level === 'opportunity' ? '⭐ Oportunidad' : '⚠️ Atención'}
+                        </span>
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white">{ins.title}</h4>
+                      <p className="text-xs text-stone-300 leading-relaxed">
+                        {ins.description}
+                      </p>
+                    </div>
+
+                    {/* Acciones de 1 clic para cada mejora */}
+                    <div className="pt-2 border-t border-stone-800 flex items-center justify-end">
+                      {ins.actionType === 'optimize_catalog' && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('catalog-manager')}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <FolderPlus className="w-3.5 h-3.5" />
+                          <span>Ir al Gestor de Catálogo</span>
+                        </button>
+                      )}
+
+                      {ins.actionType === 'followup_whatsapp' && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('bookings')}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
+                          <span>Ver Agenda de Reservas</span>
+                        </button>
+                      )}
+
+                      {ins.actionType === 'clear_logs' && (
+                        <button
+                          type="button"
+                          onClick={handleClearAuditErrors}
+                          className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Liberar Memoria</span>
+                        </button>
+                      )}
+
+                      {ins.actionType === 'none' && (
+                        <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Sin acción requerida</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

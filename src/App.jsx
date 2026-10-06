@@ -29,6 +29,7 @@ import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CA
 import { supabase } from './services/supabase';
 import { trackPageVisit } from './services/analytics';
 import { initOneSignal } from './services/onesignal';
+import { initErrorCapture } from './services/systemAuditor';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
@@ -157,6 +158,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Inicializar capturador de errores y caídas del software
+    initErrorCapture();
+
     // Inicializar OneSignal para Push en segundo plano (Android APK / PWA)
     initOneSignal();
 
