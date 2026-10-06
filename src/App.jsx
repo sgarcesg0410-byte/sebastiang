@@ -377,6 +377,7 @@ export default function App() {
             <div className="pt-8">
               <PackagesSection
                 packages={packages}
+                settings={settings}
                 onSelectPackage={(pkg) => handleOpenBooking(pkg)}
               />
             </div>

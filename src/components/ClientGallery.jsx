@@ -44,6 +44,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const [copiedKeyFeedback, setCopiedKeyFeedback] = useState(null);
   const [paymentReference, setPaymentReference] = useState('');
   const [printedPhotosCount, setPrintedPhotosCount] = useState(0);
+  const [printedPhotos15x20Count, setPrintedPhotos15x20Count] = useState(0);
 
   // Estados de Calificación y Reseña de Satisfacción del Cliente
   const [reviewRating, setReviewRating] = useState(5);
@@ -243,8 +244,12 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const extraPhotos = Math.max(0, selectedCount - maxAllowed);
   const extraPhotoPrice = 7000;
   const printedPrice = galleryData?.watermarkSettings?.printedPhotoPrice || 7000;
+  const printed15x20Price = galleryData?.watermarkSettings?.printedPhoto15x20Price || 8000;
   const extraPhotosTotal = extraPhotos * extraPhotoPrice;
-  const printedPhotosTotal = printedPhotosCount * printedPrice;
+  const printed10x15Total = printedPhotosCount * printedPrice;
+  const printed15x20Total = printedPhotos15x20Count * printed15x20Price;
+  const printedPhotosTotal = printed10x15Total + printed15x20Total;
+  const totalPrintedCount = printedPhotosCount + printedPhotos15x20Count;
   const totalAmount = sessionBasePrice + extraPhotosTotal + printedPhotosTotal;
   const formatPrice = (val) => Number(val || 0).toLocaleString('es-CO');
   const watermarkText = galleryData?.watermarkSettings?.watermarkText || 'SEBASTIAN G';
@@ -274,7 +279,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           method: selectedWallet,
           reference: paymentReference,
           extraPhotosCount: extraPhotos,
-          printedPhotosCount: printedPhotosCount
+          printedPhotosCount: totalPrintedCount,
+          printedPhotos10x15Count: printedPhotosCount,
+          printedPhotos15x20Count: printedPhotos15x20Count
         });
       } catch (payErr) {
         console.warn('Error al registrar pago en tiempo real:', payErr);
@@ -304,7 +311,8 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           `\n💰 *Total Sesión:* $${formatPrice(totalAmount)} COP` +
           `\n📦 *Valor Base Paquete:* $${formatPrice(sessionBasePrice)} COP` +
           (extraPhotos > 0 ? `\n📸 *Fotos Extra:* +${extraPhotos} ($${formatPrice(extraPhotosTotal)} COP)` : '') +
-          (printedPhotosCount > 0 ? `\n🖼️ *Fotos Impresas:* +${printedPhotosCount} ($${formatPrice(printedPhotosTotal)} COP)` : '') +
+          (printedPhotosCount > 0 ? `\n🖼️ *Fotos Impresas 10x15:* +${printedPhotosCount} ($${formatPrice(printed10x15Total)} COP)` : '') +
+          (printedPhotos15x20Count > 0 ? `\n🖼️ *Fotos Impresas 15x20:* +${printedPhotos15x20Count} ($${formatPrice(printed15x20Total)} COP)` : '') +
           `\n🏦 *Método de Pago Elegido:* ${walletLabels[selectedWallet] || selectedWallet}` +
           (paymentReference ? `\n🔢 *Referencia:* ${paymentReference}` : '') +
           `\n\n_Por favor verifica y confirma el recibido de mi sesión._`;
@@ -968,34 +976,67 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     </div>
                   )}
 
-                  {/* Selector opcional de fotos impresas */}
-                  <div className="pt-2 border-t border-stone-800 flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold text-stone-200 block">Fotos Impresas 10x15</span>
-                      <span className="text-[10px] text-stone-400">Papel fotográfico profesional ($7.000 c/u)</span>
+                  {/* Selector opcional de fotos impresas (10x15 y 15x20) */}
+                  <div className="pt-2 border-t border-stone-800 space-y-2">
+                    {/* Opción 10x15 */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 10x15</span>
+                        <span className="text-[10px] text-stone-400">Papel profesional (${formatPrice(printedPrice)} c/u)</span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-stone-900 border border-stone-700 rounded-xl px-2 py-1">
+                        <button
+                          type="button"
+                          onClick={() => setPrintedPhotosCount(Math.max(0, printedPhotosCount - 1))}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                        >
+                          -
+                        </button>
+                        <span className="w-5 text-center font-bold text-white font-mono">{printedPhotosCount}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPrintedPhotosCount(printedPhotosCount + 1)}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 bg-stone-900 border border-stone-700 rounded-xl px-2 py-1">
-                      <button
-                        type="button"
-                        onClick={() => setPrintedPhotosCount(Math.max(0, printedPhotosCount - 1))}
-                        className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
-                      >
-                        -
-                      </button>
-                      <span className="w-5 text-center font-bold text-white font-mono">{printedPhotosCount}</span>
-                      <button
-                        type="button"
-                        onClick={() => setPrintedPhotosCount(printedPhotosCount + 1)}
-                        className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
-                      >
-                        +
-                      </button>
+
+                    {/* Opción 15x20 */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 15x20</span>
+                          <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                            Grande
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-stone-400">Tamaño ampliado (${formatPrice(printed15x20Price)} c/u)</span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-stone-900 border border-amber-500/30 rounded-xl px-2 py-1">
+                        <button
+                          type="button"
+                          onClick={() => setPrintedPhotos15x20Count(Math.max(0, printedPhotos15x20Count - 1))}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                        >
+                          -
+                        </button>
+                        <span className="w-5 text-center font-bold text-amber-300 font-mono">{printedPhotos15x20Count}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPrintedPhotos15x20Count(printedPhotos15x20Count + 1)}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  {printedPhotosCount > 0 && (
-                    <div className="flex justify-between text-stone-300">
-                      <span className="text-stone-400">Total impresiones ({printedPhotosCount}):</span>
+                  {totalPrintedCount > 0 && (
+                    <div className="flex justify-between text-stone-300 text-xs">
+                      <span className="text-stone-400">Total impresiones ({totalPrintedCount}):</span>
                       <span className="font-bold font-mono text-amber-400">+${formatPrice(printedPhotosTotal)} COP</span>
                     </div>
                   )}

@@ -368,12 +368,26 @@ export default function PublicReceiptView({ bookingId, onBack }) {
                 <span>Sesión Fotográfica ({booking.packageName})</span>
                 <span className="font-mono font-semibold">${total.toLocaleString('es-CO')} COP</span>
               </div>
-              {Number(booking.printedPhotosCount) > 0 && (
-                <div className="flex justify-between text-stone-400 text-[11px]">
-                  <span>+ {booking.printedPhotosCount} Fotos impresas en papel fotográfico</span>
-                  <span>Incluido</span>
-                </div>
-              )}
+              {(() => {
+                const c10 = Number(booking.printedPhotos10x15Count || (booking.printedPhotosCount && !booking.printedPhotos15x20Count ? booking.printedPhotosCount : 0));
+                const c15 = Number(booking.printedPhotos15x20Count || 0);
+                const txt = (c10 > 0 && c15 > 0)
+                  ? `+ ${c10} Fotos impresas 10x15 y + ${c15} Fotos impresas 15x20`
+                  : c15 > 0
+                    ? `+ ${c15} Fotos impresas 15x20`
+                    : c10 > 0
+                      ? `+ ${c10} Fotos impresas 10x15`
+                      : Number(booking.printedPhotosCount) > 0
+                        ? `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico`
+                        : '';
+                if (!txt) return null;
+                return (
+                  <div className="flex justify-between text-stone-400 text-[11px]">
+                    <span>{txt}</span>
+                    <span>Incluido</span>
+                  </div>
+                );
+              })()}
               <div className="border-t border-stone-800 pt-2 flex justify-between text-stone-200">
                 <span className="font-bold">Total Pactado:</span>
                 <span className="font-mono font-bold">${total.toLocaleString('es-CO')} COP</span>

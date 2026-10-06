@@ -1,10 +1,13 @@
 import React from 'react';
 import { Check, Image, Star, ArrowRight, Sparkles, Printer, Heart, ShieldCheck, UserCheck, Zap } from 'lucide-react';
 
-export default function PackagesSection({ packages = [], onSelectPackage }) {
+export default function PackagesSection({ packages = [], onSelectPackage, settings = {} }) {
   const formatPrice = (price) => {
     return Number(price).toLocaleString('es-CO');
   };
+
+  const price10x15 = settings?.printedPhotoPrice || 7000;
+  const price15x20 = settings?.printedPhoto15x20Price || 8000;
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -147,33 +150,51 @@ export default function PackagesSection({ packages = [], onSelectPackage }) {
         })}
       </div>
 
-      {/* SERVICIO ADICIONAL: FOTO IMPRESA 10x15 INTERACTIVO */}
+      {/* SERVICIO ADICIONAL: FOTOS IMPRESAS (10x15 Y 15x20) */}
       <div 
         onClick={() => onSelectPackage(packages[0] || null)}
-        className="mt-10 group bg-gradient-to-r from-stone-900 via-amber-950/30 to-stone-900 border border-amber-500/40 hover:border-amber-400 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl hover:shadow-2xl hover:shadow-amber-500/20 hover:-translate-y-1 transition-all duration-300 cursor-pointer"
+        className="mt-10 group bg-gradient-to-r from-stone-900 via-amber-950/30 to-stone-900 border border-amber-500/40 hover:border-amber-400 rounded-3xl p-6 sm:p-8 shadow-xl hover:shadow-2xl hover:shadow-amber-500/20 hover:-translate-y-1 transition-all duration-300 cursor-pointer"
       >
-        <div className="flex items-center gap-4 text-left">
-          <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-110 group-hover:rotate-6 group-hover:bg-amber-500 group-hover:text-stone-950 transition-all duration-300">
-            <Printer className="w-7 h-7" />
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="flex items-start sm:items-center gap-4 text-left">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-110 group-hover:rotate-6 group-hover:bg-amber-500 group-hover:text-stone-950 transition-all duration-300">
+              <Printer className="w-7 h-7" />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400 block group-hover:text-amber-300 transition-colors">
+                Servicio Adicional Opcional
+              </span>
+              <h3 className="text-xl sm:text-2xl font-serif font-bold text-white group-hover:text-amber-200 transition-colors">
+                Fotos Impresas en Papel Fotográfico
+              </h3>
+              <p className="text-xs text-stone-300 mt-1 max-w-xl">
+                Papel fotográfico profesional de laboratorio con acabado brillante o mate. Puedes agregarlas al reservar cualquier paquete o al seleccionar tus fotos en tu galería privada.
+              </p>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400 block group-hover:text-amber-300 transition-colors">
-              Servicio Adicional Opcional
-            </span>
-            <h3 className="text-xl sm:text-2xl font-serif font-bold text-white group-hover:text-amber-200 transition-colors">
-              Foto Impresa Tamaño 10x15
-            </h3>
-            <p className="text-xs text-stone-300 mt-1">
-              Papel fotográfico profesional de laboratorio con acabado brillante o mate. Puedes agregarlas al reservar cualquier paquete.
-            </p>
-          </div>
-        </div>
 
-        <div className="bg-stone-950 px-6 py-3.5 rounded-2xl border border-stone-800 group-hover:border-amber-500/50 text-center shrink-0 transition-colors">
-          <span className="text-2xl sm:text-3xl font-extrabold text-amber-400 font-mono group-hover:scale-105 inline-block transition-transform">
-            $7.000
-          </span>
-          <span className="text-xs text-stone-400 block font-medium">por unidad (COP)</span>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0">
+            {/* Opción 1: 10x15 */}
+            <div className="flex-1 sm:flex-initial bg-stone-950/90 px-5 py-3 rounded-2xl border border-stone-800 group-hover:border-amber-500/50 text-center transition-colors">
+              <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block">Tamaño 10x15</span>
+              <span className="text-xl sm:text-2xl font-extrabold text-amber-400 font-mono inline-block">
+                ${formatPrice(price10x15)}
+              </span>
+              <span className="text-[10px] text-stone-400 block font-medium">por unidad (COP)</span>
+            </div>
+
+            {/* Opción 2: 15x20 */}
+            <div className="flex-1 sm:flex-initial bg-stone-950/90 px-5 py-3 rounded-2xl border border-amber-500/40 group-hover:border-amber-400 text-center transition-colors relative overflow-hidden">
+              <div className="absolute top-0 right-0 bg-amber-500 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded-bl uppercase">
+                Grande
+              </div>
+              <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider block">Tamaño 15x20</span>
+              <span className="text-xl sm:text-2xl font-extrabold text-amber-300 font-mono inline-block">
+                ${formatPrice(price15x20)}
+              </span>
+              <span className="text-[10px] text-stone-400 block font-medium">por unidad (COP)</span>
+            </div>
+          </div>
         </div>
       </div>
 

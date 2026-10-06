@@ -11,7 +11,8 @@
     "watermarkSubtext": "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
     "watermarkLogoUrl": "/app-icon.png",
     "adminPin": "0493",
-    "printedPhotoPrice": 7000
+    "printedPhotoPrice": 7000,
+    "printedPhoto15x20Price": 8000
   },
   "packages": [
     {
@@ -86,7 +87,7 @@
         "+ 2 Fotos GRATIS incluidas (Total: 12 fotos)",
         "Edición y colorización profesional cinematográfica",
         "Prioridad de entrega",
-        "Opción de añadir impresiones 10x15 a $7.000 c/u"
+        "Opción de añadir impresiones 10x15 a $7.000 o 15x20 a $8.000 c/u"
       ],
       "popular": false
     }

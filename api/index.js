@@ -161,7 +161,8 @@ function getDB() {
       watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
       watermarkLogoUrl: "/app-icon.png",
       adminPin: "0493",
-      printedPhotoPrice: 7000
+      printedPhotoPrice: 7000,
+      printedPhoto15x20Price: 8000
     },
     packages: [
       {
@@ -236,7 +237,7 @@ function getDB() {
           "+ 2 Fotos GRATIS incluidas (Total: 12 fotos)",
           "Edición y colorización profesional cinematográfica",
           "Prioridad de entrega",
-          "Opción de añadir impresiones 10x15 a $7.000 c/u"
+          "Opción de añadir impresiones 10x15 a $7.000 o 15x20 a $8.000 c/u"
         ],
         popular: false
       }
@@ -911,7 +912,7 @@ app.get('/api/admin/payments', (req, res) => {
 });
 
 app.post('/api/payments', (req, res) => {
-  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount, status, concept } = req.body;
+  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount, printedPhotos10x15Count, printedPhotos15x20Count, status, concept } = req.body;
   const newPayment = {
     id: `pay-${Date.now()}`,
     clientName: (clientName || 'Cliente').trim(),
@@ -924,6 +925,8 @@ app.post('/api/payments', (req, res) => {
     voucherUrl: voucherUrl || null,
     extraPhotosCount: Number(extraPhotosCount) || 0,
     printedPhotosCount: Number(printedPhotosCount) || 0,
+    printedPhotos10x15Count: Number(printedPhotos10x15Count) || 0,
+    printedPhotos15x20Count: Number(printedPhotos15x20Count) || 0,
     concept: concept || 'Sesión Fotográfica',
     status: status || 'verified',
     createdAt: new Date().toISOString()
@@ -950,6 +953,16 @@ app.post('/api/payments', (req, res) => {
   };
   const methodName = methodNames[newPayment.method] || newPayment.method;
 
+  const printedDetailText = (newPayment.printedPhotos10x15Count > 0 && newPayment.printedPhotos15x20Count > 0)
+    ? ` + ${newPayment.printedPhotos10x15Count} impr. 10x15 y ${newPayment.printedPhotos15x20Count} impr. 15x20`
+    : newPayment.printedPhotos15x20Count > 0
+      ? ` + ${newPayment.printedPhotos15x20Count} fotos impresas 15x20`
+      : newPayment.printedPhotos10x15Count > 0
+        ? ` + ${newPayment.printedPhotos10x15Count} fotos impresas 10x15`
+        : newPayment.printedPhotosCount > 0
+          ? ` + ${newPayment.printedPhotosCount} fotos impresas`
+          : '';
+
   const msgText = encodeURIComponent(
     `💰 *¡Hola Sebastian G! Acabo de registrar mi pago de fotos:*\n\n` +
     `👤 *Cliente:* ${newPayment.clientName}\n` +
@@ -958,7 +971,7 @@ app.post('/api/payments', (req, res) => {
     `💳 *Pasarela / Billetera:* ${methodName}\n` +
     `🔢 *Referencia:* ${newPayment.reference || 'Comprobante adjunto'}\n` +
     `📸 *Detalle:* ${newPayment.extraPhotosCount} fotos extra elegidas` +
-    (newPayment.printedPhotosCount > 0 ? ` + ${newPayment.printedPhotosCount} fotos impresas` : '') + `\n\n` +
+    printedDetailText + `\n\n` +
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
 

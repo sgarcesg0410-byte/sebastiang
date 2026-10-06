@@ -340,6 +340,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [editablePackages, setEditablePackages] = useState(DEFAULT_PACKAGES);
   const [editableSurcharge, setEditableSurcharge] = useState(10000);
   const [editablePrintedPhotoPrice, setEditablePrintedPhotoPrice] = useState(7000);
+  const [editablePrintedPhoto15x20Price, setEditablePrintedPhoto15x20Price] = useState(8000);
   const [isSavingPrices, setIsSavingPrices] = useState(false);
   const [priceSaveSuccess, setPriceSaveSuccess] = useState('');
 
@@ -1130,6 +1131,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         if (setData) {
           setSettings(setData);
           setEditablePrintedPhotoPrice(setData.printedPhotoPrice || 7000);
+          setEditablePrintedPhoto15x20Price(setData.printedPhoto15x20Price || 8000);
           setEditableSurcharge(setData.outOfSanAnteroSurcharge || 10000);
         }
 
@@ -1553,6 +1555,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const updatedSettings = await updateAdminSettings({
         ...settings,
         printedPhotoPrice: Number(editablePrintedPhotoPrice),
+        printedPhoto15x20Price: Number(editablePrintedPhoto15x20Price),
         outOfSanAnteroSurcharge: Number(editableSurcharge)
       });
       setSettings(updatedSettings);
@@ -2333,12 +2336,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     pdf.line(margin, y, pageWidth - margin, y);
 
     // Fila 2: Fotos impresas si aplica
-    if (Number(booking.printedPhotosCount) > 0) {
+    const c10Pdf = Number(booking.printedPhotos10x15Count || (booking.printedPhotosCount && !booking.printedPhotos15x20Count ? booking.printedPhotosCount : 0));
+    const c15Pdf = Number(booking.printedPhotos15x20Count || 0);
+    const printedTextPdf = (c10Pdf > 0 && c15Pdf > 0)
+      ? `+ ${c10Pdf} Fotos impresas 10x15 y + ${c15Pdf} Fotos impresas 15x20`
+      : c15Pdf > 0
+        ? `+ ${c15Pdf} Fotos impresas tamaño 15x20`
+        : c10Pdf > 0
+          ? `+ ${c10Pdf} Fotos impresas tamaño 10x15`
+          : Number(booking.printedPhotosCount) > 0
+            ? `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico`
+            : '';
+
+    if (printedTextPdf) {
       y += 2;
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(9);
       pdf.setTextColor(100, 116, 139);
-      pdf.text(`+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico`, margin + 4, y + 5);
+      pdf.text(printedTextPdf, margin + 4, y + 5);
       pdf.text('Incluido', pageWidth - margin - 4, y + 5, { align: 'right' });
       y += 8;
       pdf.line(margin, y, pageWidth - margin, y);
@@ -2704,12 +2719,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>Sesión Fotográfica (${receiptBooking.packageName})</span>
               <span>$${total.toLocaleString('es-CO')} COP</span>
             </div>
-            ${Number(receiptBooking.printedPhotosCount) > 0 ? `
-              <div class="table-row" style="color: #64748b; font-size: 11px;">
-                <span>+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico</span>
-                <span>Incluido</span>
-              </div>
-            ` : ''}
+            ${(() => {
+              const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
+              const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
+              const txt = (c10 > 0 && c15 > 0)
+                ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
+                : c15 > 0
+                  ? `+ ${c15} Fotos impresas (15x20)`
+                  : c10 > 0
+                    ? `+ ${c10} Fotos impresas (10x15)`
+                    : Number(receiptBooking.printedPhotosCount) > 0
+                      ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
+                      : '';
+              return txt ? `
+                <div class="table-row" style="color: #64748b; font-size: 11px;">
+                  <span>${txt}</span>
+                  <span>Incluido</span>
+                </div>
+              ` : '';
+            })()}
             <div class="table-row total">
               <span>TOTAL PACTADO:</span>
               <span>$${total.toLocaleString('es-CO')} COP</span>
@@ -7915,13 +7943,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <span>Tarifas Adicionales de la Sesión</span>
               </h4>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
                     Precio por Foto Impresa 10x15 ($ COP)
                   </label>
                   <p className="text-[11px] text-stone-400 mb-2">
-                    Cobrado cuando el cliente solicita fotos impresas adicionales en el formulario.
+                    Tamaño estándar de laboratorio fotográfico.
                   </p>
                   <div className="relative">
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
@@ -7932,6 +7960,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       step={500}
                       value={editablePrintedPhotoPrice}
                       onChange={(e) => setEditablePrintedPhotoPrice(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
+                    Precio por Foto Impresa 15x20 ($ COP)
+                  </label>
+                  <p className="text-[11px] text-stone-400 mb-2">
+                    Tamaño grande ideal para portarretratos.
+                  </p>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={500}
+                      value={editablePrintedPhoto15x20Price}
+                      onChange={(e) => setEditablePrintedPhoto15x20Price(e.target.value)}
                       className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
                     />
                   </div>
@@ -9457,12 +9506,26 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <span>Sesión Fotográfica ({receiptBooking.packageName})</span>
                     <span className="font-mono font-semibold">${Number(receiptBooking.totalPrice || 0).toLocaleString('es-CO')} COP</span>
                   </div>
-                  {Number(receiptBooking.printedPhotosCount) > 0 && (
-                    <div className="flex justify-between text-stone-400 text-[11px]">
-                      <span>+ {receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico</span>
-                      <span>Incluido</span>
-                    </div>
-                  )}
+                  {(() => {
+                    const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
+                    const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
+                    const txt = (c10 > 0 && c15 > 0)
+                      ? `+ ${c10} Fotos impresas 10x15 y + ${c15} Fotos impresas 15x20`
+                      : c15 > 0
+                        ? `+ ${c15} Fotos impresas 15x20`
+                        : c10 > 0
+                          ? `+ ${c10} Fotos impresas 10x15`
+                          : Number(receiptBooking.printedPhotosCount) > 0
+                            ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
+                            : '';
+                    if (!txt) return null;
+                    return (
+                      <div className="flex justify-between text-stone-400 text-[11px]">
+                        <span>{txt}</span>
+                        <span>Incluido</span>
+                      </div>
+                    );
+                  })()}
                   {(() => {
                     const total = Number(receiptBooking.totalPrice || 0);
                     const paidNow = Number(receiptPaidAmount || 0);
