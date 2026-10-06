@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "package": "tkstudio.autoresponderforwa",
+  "app": "AutoResponder for WA",
+  "author": "Sebastian G Estudio",
+  "createdAt": "2026-10-05T19:25:00.000Z",
+  "rules": [
+    {
+      "id": 1,
+      "title": "1. Saludo Inicial y Menú Principal",
+      "received": "hola|buenas|informacion|info|buenos dias|buenas tardes|buenas noches|precios|paquetes|menu|inicio",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.5,
+      "reply": "¡Hola! 👋 Bienvenido a *Sebastian G • Fotografía & Retoque Profesional* 📸✨\n\nGracias por comunicarte con nosotros. ¿En qué te podemos colaborar hoy?\n\n1️⃣ Ver paquetes de fotos y precios\n2️⃣ Reservar una fecha en la agenda\n3️⃣ Ver fotos de muestra (Portafolio)\n4️⃣ Cuentas de pago y abonos (Nequi / DaviPlata)\n5️⃣ Hablar directamente con Sebastian\n\n👉 *Escribe el número de la opción que deseas (1, 2, 3, 4 o 5)*",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "title": "2. Paquetes y Precios",
+      "received": "1|paquetes|precios|paquete|cuanto vale|costo|costos|tarifas|valor",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.6,
+      "reply": "📸 *NUESTROS PAQUETES OFICIALES DE FOTOGRAFÍA:*\n\n🔹 *4 Fotos Digitales:* $45.000 COP (+ 2 Gratis • Total: 6 fotos)\n🔹 *6 Fotos Digitales:* $65.000 COP (+ 2 Gratis • Total: 8 fotos)\n🔹 *8 Fotos Digitales:* $75.000 COP ⭐ (Nuestra más pedida)\n🔹 *10 Fotos Digitales:* $85.000 COP (+ 2 Gratis)\n🔹 *12 Fotos Digitales:* $100.000 COP\n🔹 *15 Fotos Digitales:* $130.000 COP\n🔹 *20 Fotos Digitales:* $170.000 COP\n\n✨ *Todas las opciones incluyen:* Retoque profesional de piel y color en alta definición, asesoría de poses y enlace privado para elegir tus fotos.\n\n📅 *¿Deseas apartar tu cupo?*\n👉 Puedes reservar en 1 minuto aquí: https://sebastiang.app/#reservar\nO responde *2* para reservarla por aquí.",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "title": "3. Reservar Fecha en la Agenda",
+      "received": "2|reservar|apartar|agendar|fecha|separar|cupo|cita",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.6,
+      "reply": "🗓️ *¡EXCELENTE DECISIÓN! VAMOS A APARTAR TU FECHA:*\n\nPuedes apartarla de dos formas:\n\n🌐 *Opción 1 (Inmediata en la web):*\nElige fecha y hora exacta en nuestra agenda en vivo:\n👉 https://sebastiang.app/#reservar\n\n💬 *Opción 2 (Por este chat):*\nEnvíame en un solo mensaje:\n1. Tu *Nombre completo*\n2. *Fecha y hora* deseada\n3. *Paquete* que te gustó\n4. *Locación* (San Antero, Coveñas, etc.)\n\n📌 *Nota:* Para asegurar tu cupo en la agenda se abona el 50% por Nequi o DaviPlata. El otro 50% se cancela el día de la sesión.",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "title": "4. Portafolio y Fotos de Muestra",
+      "received": "3|fotos|portafolio|muestra|muestras|ejemplo|ejemplos|trabajo|fotos de muestra|ver fotos",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.6,
+      "reply": "🎨 *CONOCE NUESTRO TRABAJO Y SESIONES RECIENTES:*\n\nVisita nuestra galería oficial en línea donde podrás ver sesiones de playa, grados, retratos, atardeceres y eventos:\n👉 https://sebastiang.app\n\nInstagram oficial: @sebastiang_fotos\n\n¡Cada foto es tratada con cuidado artístico y retoque premium!",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    },
+    {
+      "id": 5,
+      "title": "5. Cuentas de Pago y Abonos",
+      "received": "4|nequi|daviplata|dale|cuenta|cuentas|pago|pagar|abono|abonar|transferir|consignar",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.6,
+      "reply": "💳 *CUENTAS OFICIALES PARA ABONOS Y PAGOS:* (Sebastian G)\n\n🟣 *Nequi:* 324 472 5167\n🔴 *DaviPlata:* Llave @PLATA3244725167 (o al número 324 472 5167)\n🟡 *Dale!:* Llave @SGG04\n\n⚠️ *Importante:* Una vez realizada la transferencia de tu abono (50%), por favor envía la captura del comprobante por este chat para registrar tu reserva y emitir tu recibo digital oficial.",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    },
+    {
+      "id": 6,
+      "title": "6. Hablar con Sebastian (Atención Humana)",
+      "received": "5|humano|asesor|sebas|sebastian|persona|hablar|llamar|duda|consulta",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.6,
+      "reply": "👨‍💼 *¡Entendido! Ya le avisé a Sebastian.*\n\nEn este momento está notificado de tu mensaje. En unos minutos estará contigo personalmente para resolver cualquier duda especial o coordinar los detalles de tu sesión fotográfica. ✨\n\n¡Gracias por tu paciencia!",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    },
+    {
+      "id": 7,
+      "title": "7. Comprobante de Pago Enviado",
+      "received": "*comprobante*|*transfiri*|*transferi*|*abone*|*ya pague*|*listo el pago*|*captura*",
+      "pattern_type": "pattern_similarity",
+      "similarity": 0.5,
+      "reply": "✅ *¡Muchas gracias por tu comprobante!*\n\nSebastian revisará la acreditación en la cuenta bancaria de inmediato para confirmar tu cupo al 100% y emitirte el comprobante digital oficial de tu reserva. 📸📄",
+      "exact_match": false,
+      "case_sensitive": false,
+      "delay": 1,
+      "enabled": true
+    }
+  ]
+}

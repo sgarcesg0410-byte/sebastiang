@@ -569,6 +569,80 @@ app.post('/api/admin/pin/recover', (req, res) => {
   res.json({ success: true, verified: true, currentPin: db.settings.adminPin });
 });
 
+// --- WEBHOOK INTELIGENTE PARA WHATSAPP BOT (AutoResponder for WA / WhatsAuto) ---
+app.all('/api/bot-webhook', async (req, res) => {
+  try {
+    const rawMsg = (req.body?.query?.message || req.body?.message || req.query?.message || '').trim();
+    const sender = (req.body?.query?.sender || req.body?.sender || req.query?.sender || 'Cliente').trim();
+    const cleanMsg = rawMsg.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const db = readDB();
+    const packages = Array.isArray(db.packages) && db.packages.length > 0 ? db.packages : [
+      { name: '4 Fotos Digitales', price: 45000, features: ['+ 2 Fotos GRATIS (Total: 6)'] },
+      { name: '6 Fotos Digitales', price: 65000, features: ['+ 2 Fotos GRATIS (Total: 8)'] },
+      { name: '8 Fotos Digitales', price: 75000, features: ['Nuestra más pedida (Total: 10)'] },
+      { name: '10 Fotos Digitales', price: 85000, features: ['+ 2 Fotos GRATIS'] },
+      { name: '12 Fotos Digitales', price: 100000, features: [] },
+      { name: '15 Fotos Digitales', price: 130000, features: [] },
+      { name: '20 Fotos Digitales', price: 170000, features: [] }
+    ];
+
+    let replyText = '';
+
+    // 1. Paquetes y Precios
+    if (cleanMsg === '1' || cleanMsg.includes('paquete') || cleanMsg.includes('precio') || cleanMsg.includes('cuanto vale') || cleanMsg.includes('costo') || cleanMsg.includes('tarifa')) {
+      let pkgList = packages.map(p => `🔹 *${p.name}:* $${Number(p.price).toLocaleString('es-CO')} COP`).join('\n');
+      replyText = `📸 *NUESTROS PAQUETES OFICIALES DE FOTOGRAFÍA:*\n\n${pkgList}\n\n✨ *Todas las opciones incluyen:* Retoque profesional de piel y color en alta definición, asesoría de poses y enlace privado para elegir tus fotos.\n\n📅 *¿Deseas apartar tu cupo?*\n👉 Puedes reservar en 1 minuto aquí: https://sebastiang.app/#reservar\nO responde *2* para reservarla por aquí.`;
+    }
+    // 2. Reservar Fecha
+    else if (cleanMsg === '2' || cleanMsg.includes('reserva') || cleanMsg.includes('apartar') || cleanMsg.includes('agendar') || cleanMsg.includes('fecha') || cleanMsg.includes('separar') || cleanMsg.includes('cupo')) {
+      replyText = `🗓️ *¡EXCELENTE DECISIÓN! VAMOS A APARTAR TU FECHA:*\n\nPuedes apartarla de dos formas:\n\n🌐 *Opción 1 (Inmediata en la web):*\nElige fecha y hora exacta en nuestra agenda en vivo:\n👉 https://sebastiang.app/#reservar\n\n💬 *Opción 2 (Por este chat):*\nEnvíame en un solo mensaje:\n1. Tu *Nombre completo*\n2. *Fecha y hora* deseada\n3. *Paquete* que te gustó\n4. *Locación* (San Antero, Coveñas, etc.)\n\n📌 *Nota:* Para asegurar tu cupo en la agenda se abona el 50% por Nequi o DaviPlata. El saldo se cancela el día de la sesión.`;
+    }
+    // 3. Portafolio / Fotos de muestra
+    else if (cleanMsg === '3' || cleanMsg.includes('foto') || cleanMsg.includes('portafolio') || cleanMsg.includes('muestra') || cleanMsg.includes('ejemplo') || cleanMsg.includes('trabajo')) {
+      replyText = `🎨 *CONOCE NUESTRO TRABAJO Y SESIONES RECIENTES:*\n\nVisita nuestra galería oficial en línea donde podrás ver sesiones de playa, grados, retratos, atardeceres y eventos:\n👉 https://sebastiang.app\n\nInstagram oficial: @sebastiang_fotos\n\n¡Cada foto es tratada con cuidado artístico y retoque premium!`;
+    }
+    // 4. Cuentas de Pago
+    else if (cleanMsg === '4' || cleanMsg.includes('nequi') || cleanMsg.includes('daviplata') || cleanMsg.includes('dale') || cleanMsg.includes('cuenta') || cleanMsg.includes('abono') || cleanMsg.includes('transferir') || cleanMsg.includes('consignar')) {
+      replyText = `💳 *CUENTAS OFICIALES PARA ABONOS Y PAGOS:* (Sebastian G)\n\n🟣 *Nequi:* 324 472 5167\n🔴 *DaviPlata:* Llave @PLATA3244725167 (o al 324 472 5167)\n🟡 *Dale!:* Llave @SGG04\n\n⚠️ *Importante:* Una vez realizada la transferencia de tu abono (50%), por favor envía la captura del comprobante por este chat para registrar tu reserva y emitir tu recibo digital oficial.`;
+    }
+    // 5. Hablar con Sebastian / Asesor Humano
+    else if (cleanMsg === '5' || cleanMsg.includes('humano') || cleanMsg.includes('asesor') || cleanMsg.includes('sebas') || cleanMsg.includes('sebastian') || cleanMsg.includes('persona') || cleanMsg.includes('hablar') || cleanMsg.includes('llamar')) {
+      sendOneSignalPush({
+        title: '💬 Cliente solicita hablar contigo',
+        message: `${sender} quiere hablar con Sebastian G en WhatsApp`,
+        url: 'https://sebastiang.app/?mode=admin'
+      });
+      replyText = `👨‍💼 *¡Entendido! Ya le avisé a Sebastian.*\n\nEn este momento está notificado de tu mensaje. En unos minutos estará contigo personalmente para resolver cualquier duda especial o coordinar los detalles de tu sesión fotográfica. ✨\n\n¡Gracias por tu paciencia!`;
+    }
+    // 6. Comprobante de pago enviado
+    else if (cleanMsg.includes('comprobante') || cleanMsg.includes('transfiri') || cleanMsg.includes('transferi') || cleanMsg.includes('abone') || cleanMsg.includes('ya pague') || cleanMsg.includes('listo el pago') || cleanMsg.includes('captura')) {
+      sendOneSignalPush({
+        title: '💰 Comprobante enviado por WhatsApp',
+        message: `${sender} indica que envió un comprobante de abono o pago`,
+        url: 'https://sebastiang.app/?mode=admin'
+      });
+      replyText = `✅ *¡Muchas gracias por tu comprobante!*\n\nSebastian revisará la acreditación en la cuenta bancaria de inmediato para confirmar tu cupo al 100% y emitirte el comprobante digital oficial de tu reserva. 📸📄`;
+    }
+    // 7. Saludo por defecto / Menú Principal
+    else {
+      replyText = `¡Hola! 👋 Bienvenido a *Sebastian G • Fotografía & Retoque Profesional* 📸✨\n\nGracias por comunicarte con nosotros. ¿En qué te podemos colaborar hoy?\n\n1️⃣ Ver paquetes de fotos y precios\n2️⃣ Reservar una fecha en la agenda\n3️⃣ Ver fotos de muestra (Portafolio)\n4️⃣ Cuentas de pago y abonos (Nequi / DaviPlata)\n5️⃣ Hablar directamente con Sebastian\n\n👉 *Escribe el número de la opción que deseas (1, 2, 3, 4 o 5)*`;
+    }
+
+    // Responder con estructura compatible para AutoResponder for WA y WhatsAuto
+    return res.json({
+      replies: [
+        { message: replyText }
+      ],
+      reply: replyText,
+      success: true
+    });
+  } catch (err) {
+    console.error('Error en webhook de bot WhatsApp:', err);
+    return res.status(500).json({ error: 'Error procesando respuesta del bot' });
+  }
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`Servidor de Foto Reservas corriendo en http://localhost:${PORT}`);
