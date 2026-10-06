@@ -85,9 +85,25 @@ export async function idbGetCatalog() {
       return new Promise((resolve) => {
         const tx = db.transaction(CATALOG_STORE, 'readonly');
         const store = tx.objectStore(CATALOG_STORE);
-        const req = store.getAll();
-        req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
-        req.onerror = () => resolve([]);
+        req.onsuccess = () => {
+          const list = Array.isArray(req.result) ? req.result : [];
+          resolve(list.filter(item => 
+            item && 
+            item.id && 
+            item.category !== 'vip_client' && 
+            !item.id?.startsWith('vip-') && 
+            !item.category?.endsWith('_data') && 
+            !item.id?.startsWith('system_') && 
+            !item.id?.startsWith('book-') && 
+            !item.id?.startsWith('pay-') && 
+            !item.id?.startsWith('rev-') && 
+            !item.id?.startsWith('sess-') && 
+            typeof item.url === 'string' && 
+            !item.url.trim().startsWith('{') && 
+            !item.url.trim().startsWith('[') && 
+            !item.url.includes('fbcdn.net')
+          ));
+        };
       });
     });
   } catch (e) {

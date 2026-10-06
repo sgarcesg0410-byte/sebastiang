@@ -172,7 +172,8 @@ export const DEFAULT_REAL_CATALOG = [
   { id: 'cat-1790139247128', title: 'Entre la brisa del mar y la magia del atardecer, su cabello crespo bailaba con el viento como una obra de arte natural', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139247128.jpg' },
   { id: 'cat-1790139302008', title: 'El amor de mamá.', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790139302008.jpg' },
   { id: 'cat-1790139359055', title: 'Hay amistades que se convierten en familia y corazones que viven cada etapa como si fuera propia 💕✨', category: 'Retratos', location: 'Malecon,Coveñas', url: '/catalog/cat-1790139359055.jpg' },
-  { id: 'cat-1790139435319', title: 'Los 6 llegaron llenos de diversión, juegos y mucho pastel!', category: 'Retratos', location: 'Nuevo Agrado, San Antero', url: '/catalog/cat-1790139435319.jpg' }
+  { id: 'cat-1790139435319', title: 'Los 6 llegaron llenos de diversión, juegos y mucho pastel!', category: 'Retratos', location: 'Nuevo Agrado, San Antero', url: '/catalog/cat-1790139435319.jpg' },
+  { id: 'cat-1790909237730', title: '🇨🇴 Un momento para recordar toda la vida', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790909237730.jpg' }
 ];
 
 export function isSampleItem(item) {
@@ -222,10 +223,15 @@ function getLocalCatalog() {
     const raw = localStorage.getItem(LOCAL_CATALOG_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) return [];
-    // Filtrar entradas corruptas o truncadas previamente (< 200 caracteres de base64)
+    // Filtrar clientes VIP, datos del sistema, URLs corruptas o enlaces externos caducados de Facebook
     return parsed.filter(item => {
       if (!item || !item.id) return false;
-      if (typeof item.url === 'string' && item.url.startsWith('data:image/') && item.url.length < 200) {
+      if (item.category === 'vip_client' || item.id.startsWith('vip-') || item.category?.endsWith('_data')) return false;
+      if (item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('sess-') || item.id.startsWith('rev-') || item.id.startsWith('system_')) return false;
+      if (typeof item.url !== 'string' || !item.url.trim()) return false;
+      if (item.url.trim().startsWith('{') || item.url.trim().startsWith('[')) return false;
+      if (item.url.includes('fbcdn.net')) return false;
+      if (item.url.startsWith('data:image/') && item.url.length < 200) {
         return false;
       }
       return true;
@@ -781,13 +787,15 @@ const KNOWN_STATIC_PHOTOS = {
   'cat-1790139247128': '/catalog/cat-1790139247128.jpg',
   'cat-1790139302008': '/catalog/cat-1790139302008.jpg',
   'cat-1790139359055': '/catalog/cat-1790139359055.jpg',
-  'cat-1790139435319': '/catalog/cat-1790139435319.jpg'
+  'cat-1790139435319': '/catalog/cat-1790139435319.jpg',
+  'cat-1790909237730': '/catalog/cat-1790909237730.jpg',
+  'cat-1790909237730-7xy9': '/catalog/cat-1790909237730.jpg'
 };
 
 export async function getCatalog() {
   let supabaseCatalog = [];
   try {
-    // Filtrar a nivel de servidor en Supabase para no descargar jamás sesiones pesadas de fotos de clientes
+    // Filtrar a nivel de servidor en Supabase para no descargar jamás sesiones, clientes VIP ni datos del sistema
     const supabasePromise = supabase
       .from('catalog')
       .select('id, title, category, location, url')
@@ -795,7 +803,9 @@ export async function getCatalog() {
       .not('id', 'like', 'book-%')
       .not('id', 'like', 'pay-%')
       .not('id', 'like', 'rev-%')
+      .not('id', 'like', 'vip-%')
       .not('id', 'like', 'system_%')
+      .not('category', 'eq', 'vip_client')
       .not('category', 'like', '%_data')
       .order('created_at', { ascending: false });
     const timeoutPromise = new Promise((_, reject) =>
@@ -806,12 +816,18 @@ export async function getCatalog() {
       supabaseCatalog = data.filter(item => 
         item && 
         item.category !== 'session_data' && 
+        item.category !== 'vip_client' && 
         !item.category?.endsWith('_data') && 
         !item.id?.startsWith('system_') && 
         !item.id?.startsWith('book-') && 
         !item.id?.startsWith('pay-') && 
         !item.id?.startsWith('rev-') && 
-        !item.id?.startsWith('sess-')
+        !item.id?.startsWith('sess-') &&
+        !item.id?.startsWith('vip-') &&
+        typeof item.url === 'string' &&
+        !item.url.trim().startsWith('{') &&
+        !item.url.trim().startsWith('[') &&
+        !item.url.includes('fbcdn.net')
       );
     }
   } catch (err) {
@@ -855,6 +871,14 @@ export async function getCatalog() {
 
   for (let item of allCandidates) {
     if (!item || !item.id) continue;
+    // Si el item es cliente VIP, reserva, pago, sesión o metadatos del sistema, descartar
+    if (item.category === 'vip_client' || item.id.startsWith('vip-') || item.category?.endsWith('_data')) continue;
+    if (item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('sess-') || item.id.startsWith('rev-') || item.id.startsWith('system_')) continue;
+    // Si no tiene URL de imagen válida o contiene JSON o CDN vencido de Facebook, descartar
+    if (typeof item.url !== 'string' || !item.url.trim()) continue;
+    if (item.url.trim().startsWith('{') || item.url.trim().startsWith('[')) continue;
+    if (item.url.includes('fbcdn.net')) continue;
+
     // Si el item es la captura defectuosa de muestra, descartarla
     if (item.id === 'cat-atardecer-covenas') continue;
     // Si el item fue eliminado por el usuario, descartarlo
@@ -2864,10 +2888,12 @@ export async function syncLocalCatalogToCloud() {
     const seen = new Set();
     for (const item of [...idbItems, ...localItems]) {
       if (!item || !item.id || seen.has(item.id) || deletedIds.has(item.id)) continue;
-      if (item.category === 'session_data' || item.category?.endsWith('_data')) continue;
+      if (item.category === 'vip_client' || item.id.startsWith('vip-') || item.category === 'session_data' || item.category?.endsWith('_data')) continue;
       if (item.id.startsWith('system_') || item.id.startsWith('book-') || item.id.startsWith('pay-') || item.id.startsWith('rev-') || item.id.startsWith('sess-')) continue;
       if (item.id === 'cat-atardecer-covenas') continue;
       if (typeof item.url !== 'string' || !item.url.trim()) continue;
+      if (item.url.trim().startsWith('{') || item.url.trim().startsWith('[')) continue;
+      if (item.url.includes('fbcdn.net')) continue;
       seen.add(item.id);
       combinedLocal.push(item);
     }

@@ -34,7 +34,25 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
 
   const categories = ['Todas', 'Retratos', 'Playas & Atardeceres', 'Campo & Naturaleza', 'Parejas & Bodas', 'Quinceañeras & Eventos'];
 
-  const safeCatalog = Array.isArray(catalog) ? catalog.filter(Boolean) : [];
+  const safeCatalog = Array.isArray(catalog)
+    ? catalog.filter(photo =>
+        photo &&
+        photo.id &&
+        photo.category !== 'vip_client' &&
+        !photo.id?.startsWith('vip-') &&
+        !photo.category?.endsWith('_data') &&
+        !photo.id?.startsWith('system_') &&
+        !photo.id?.startsWith('book-') &&
+        !photo.id?.startsWith('pay-') &&
+        !photo.id?.startsWith('sess-') &&
+        !photo.id?.startsWith('rev-') &&
+        typeof photo.url === 'string' &&
+        photo.url.trim() &&
+        !photo.url.trim().startsWith('{') &&
+        !photo.url.trim().startsWith('[') &&
+        !photo.url.includes('fbcdn.net')
+      )
+    : [];
 
   const filteredPhotos = selectedCategory === 'Todas'
     ? safeCatalog
