@@ -1,13 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sparkles, MapPin, Heart, ArrowRight, Eye, Calendar, Camera, Shield, Lock, X, Share2, Check } from 'lucide-react';
 import { trackLinkShare } from '../services/analytics';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
+
+const HERO_WORDS = ['retratos', 'parejas', 'bodas', 'quinceañeras', 'eventos', 'campo y playa'];
 
 export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin, packages = [] }) {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
   const [likes, setLikes] = useState({});
   const [previewPhoto, setPreviewPhoto] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+
+  // --- Animaciones e interacción del hero ---
+  const heroRef = useRef(null);
+  const [heroWordIdx, setHeroWordIdx] = useState(0);
+  const [photoCount, setPhotoCount] = useState(0);
+
+  const handleHeroMouseMove = (e) => {
+    const el = heroRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    el.style.setProperty('--mx', `${e.clientX - rect.left}px`);
+    el.style.setProperty('--my', `${e.clientY - rect.top}px`);
+  };
+
+  // Palabra rotativa cada 2.6 segundos
+  useEffect(() => {
+    const t = setInterval(() => setHeroWordIdx(i => (i + 1) % HERO_WORDS.length), 2600);
+    return () => clearInterval(t);
+  }, []);
+
+  // Contador animado de fotos del portafolio
+  const realPhotosTotal = Array.isArray(catalog)
+    ? catalog.filter(p => p && p.id && typeof p.url === 'string' && p.url.trim() && !p.id.startsWith('book-') && !p.id.startsWith('pay-') && !p.id.startsWith('sess-') && !p.id.startsWith('rev-') && !p.id.startsWith('vip-') && !p.id.startsWith('system_') && p.category !== 'vip_client' && !p.category?.endsWith('_data') && !p.url.trim().startsWith('{') && !p.url.trim().startsWith('[')).length
+    : 0;
+  useEffect(() => {
+    let raf;
+    const start = performance.now();
+    const duration = 1400;
+    const tick = (now) => {
+      const p = Math.min(1, (now - start) / duration);
+      setPhotoCount(Math.round(realPhotosTotal * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [realPhotosTotal]);
+
+  const [isFlashing, setIsFlashing] = useState(false);
+
+  const triggerShutterFlash = () => {
+    setIsFlashing(true);
+    setTimeout(() => setIsFlashing(false), 250);
+  };
 
   // Cerrar vista previa exclusivamente cuando la pestaña se minimiza u oculta
   useEffect(() => {
@@ -106,29 +151,151 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
   return (
     <div className="pb-24">
       {/* HERO SECTION */}
-      <section className="relative overflow-hidden pt-12 pb-20 px-4 sm:px-6 lg:px-8 border-b border-stone-800/60 bg-gradient-to-b from-stone-950 via-stone-900 to-stone-950">
+      <section
+        ref={heroRef}
+        onMouseMove={handleHeroMouseMove}
+        className="group relative overflow-hidden pt-12 pb-20 px-4 sm:px-6 lg:px-8 border-b border-stone-800/60 bg-gradient-to-b from-stone-950 via-stone-900 to-stone-950"
+        style={{ '--mx': '50%', '--my': '35%' }}
+      >
         <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#f59e0b_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none" />
-        
+
+        {/* Aurora animada de fondo */}
+        <div className="sg-aurora absolute -top-24 -left-20 w-80 h-80 rounded-full bg-amber-500/20 blur-3xl pointer-events-none" />
+        <div className="sg-aurora absolute -bottom-28 -right-16 w-96 h-96 rounded-full bg-pink-500/15 blur-3xl pointer-events-none" style={{ animationDelay: '-6s' }} />
+        <div className="sg-aurora absolute top-1/3 left-1/2 w-72 h-72 rounded-full bg-purple-500/10 blur-3xl pointer-events-none" style={{ animationDelay: '-10s' }} />
+
+        {/* Foco de luz que sigue el cursor */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+          style={{ background: 'radial-gradient(480px circle at var(--mx) var(--my), rgba(245,158,11,0.18), transparent 60%)' }}
+        />
+
+        {/* Íconos flotantes decorativos */}
+        <Camera className="sg-float hidden sm:block absolute top-12 left-[8%] w-10 h-10 text-amber-400/30 pointer-events-none" />
+        <Sparkles className="sg-float hidden sm:block absolute top-24 right-[10%] w-9 h-9 text-amber-300/30 pointer-events-none" style={{ animationDelay: '-2s' }} />
+        <Heart className="sg-float hidden sm:block absolute bottom-20 left-[14%] w-8 h-8 text-pink-400/30 pointer-events-none" style={{ animationDelay: '-4s' }} />
+        <Eye className="sg-float hidden sm:block absolute bottom-24 right-[16%] w-8 h-8 text-purple-300/30 pointer-events-none" style={{ animationDelay: '-5s' }} />
+
+        {/* Destello de flash interactivo de cámara */}
+        {isFlashing && (
+          <div className="fixed inset-0 z-[100] bg-white/95 pointer-events-none transition-opacity duration-200" />
+        )}
+
         <div className="max-w-4xl mx-auto text-center relative z-10">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wider mb-6">
-            <Camera className="w-3.5 h-3.5" />
-            <span>Fotografía Profesional</span>
+          {/* Badge de Agenda en Vivo */}
+          <div className="sg-fade-up flex justify-center mb-3">
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('booking-calendar-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }}
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/80 text-xs font-bold cursor-pointer shadow-md hover:scale-105 active:scale-95 transition-all"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Agenda en Vivo Disponible • Ver Fechas & Horas</span>
+            </button>
           </div>
 
-          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-white font-serif mb-6 leading-tight">
-            Capturamos tus <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-amber-200 to-amber-500">mejores momentos</span>
+          {/* Badge Interactivo de Cámara con Flash */}
+          <button
+            type="button"
+            onClick={triggerShutterFlash}
+            className="sg-fade-up inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:text-white hover:bg-amber-500/30 text-xs font-bold uppercase tracking-wider mb-6 cursor-pointer shadow-lg hover:scale-105 active:scale-95 transition-all select-none"
+            title="¡Haz clic para disparar el obturador y flash de prueba!"
+          >
+            <Camera className="w-4 h-4 text-amber-400 animate-bounce" />
+            <span>Fotografía Profesional</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400 text-stone-950 font-black">Disparar Flash ⚡</span>
+          </button>
+
+          <h1
+            className="sg-fade-up text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-white font-serif mb-6 leading-tight"
+            style={{ animationDelay: '0.15s' }}
+          >
+            Capturamos tus{' '}
+            <span className="sg-gradient-text text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-pink-300 to-amber-500">
+              mejores momentos
+            </span>
           </h1>
 
-          <p className="text-lg sm:text-xl text-stone-300 max-w-2xl mx-auto mb-10 leading-relaxed font-light">
-            Sesiones de retratos, campo, eventos, bodas y parejas en cualquier locación o destino que elijas.
+          <p
+            className="sg-fade-up text-lg sm:text-xl text-stone-300 max-w-2xl mx-auto mb-3 leading-relaxed font-light"
+            style={{ animationDelay: '0.3s' }}
+          >
+            Sesiones de{' '}
+            <span key={heroWordIdx} className="sg-word-swap inline-block font-semibold text-amber-300 min-w-[8ch]">
+              {HERO_WORDS[heroWordIdx]}
+            </span>{' '}
+            en cualquier locación o destino que elijas.
           </p>
 
-          {/* BOTÓN DE ACCIÓN: COMPARTIR PORTAFOLIO */}
-          <div className="flex items-center justify-center">
+          {/* Indicadores de la palabra rotativa (clic para cambiar) */}
+          <div className="sg-fade-up flex items-center justify-center gap-1.5 mb-6" style={{ animationDelay: '0.4s' }}>
+            {HERO_WORDS.map((w, i) => (
+              <button
+                key={w}
+                type="button"
+                aria-label={`Ver ${w}`}
+                onClick={() => setHeroWordIdx(i)}
+                className={`h-1.5 rounded-full transition-all duration-300 ${i === heroWordIdx ? 'w-6 bg-amber-400' : 'w-1.5 bg-stone-600 hover:bg-stone-400'}`}
+              />
+            ))}
+          </div>
+
+          {/* Selector rápido interactivo de estilos fotográficos */}
+          <div className="sg-fade-up flex flex-wrap items-center justify-center gap-1.5 mb-8" style={{ animationDelay: '0.45s' }}>
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => {
+                  setSelectedCategory(cat);
+                  const el = document.getElementById('catalog-gallery-section');
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer ${
+                  selectedCategory === cat
+                    ? 'bg-amber-400 text-stone-950 shadow-md shadow-amber-400/20 scale-105'
+                    : 'bg-stone-900/90 text-stone-300 hover:text-white hover:bg-stone-800 border border-stone-800'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          {/* BOTONES DE ACCIÓN */}
+          <div
+            className="sg-fade-up flex flex-col sm:flex-row items-center justify-center gap-3"
+            style={{ animationDelay: '0.5s' }}
+          >
+            <button
+              type="button"
+              onClick={() => onOpenBooking && onOpenBooking(null)}
+              className="sg-pulse-ring inline-flex items-center justify-center gap-2.5 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-stone-950 font-black text-sm sm:text-base px-7 py-3.5 rounded-2xl shadow-lg shadow-amber-500/30 hover:scale-105 hover:-translate-y-0.5 active:scale-95 transition-all cursor-pointer"
+            >
+              <Calendar className="w-5 h-5" />
+              <span>Reservar mi sesión</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('booking-calendar-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }}
+              className="inline-flex items-center justify-center gap-2.5 bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 hover:border-amber-500/60 text-stone-200 hover:text-white font-bold text-sm sm:text-base px-6 py-3.5 rounded-2xl transition-all shadow-lg hover:scale-105 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
+            >
+              <Eye className="w-5 h-5 text-amber-400" />
+              <span>Ver agenda libre</span>
+            </button>
+
             <button
               type="button"
               onClick={handleShareApp}
-              className="inline-flex items-center justify-center gap-2.5 bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 hover:border-amber-500/50 text-stone-200 hover:text-white font-bold text-sm sm:text-base px-7 py-3.5 rounded-2xl transition-all shadow-lg active:scale-[0.98]"
+              className="inline-flex items-center justify-center gap-2.5 bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 hover:border-amber-500/50 text-stone-200 hover:text-white font-bold text-sm sm:text-base px-6 py-3.5 rounded-2xl transition-all shadow-lg hover:scale-105 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
               title="Compartir enlace del portafolio por WhatsApp o redes"
             >
               {shareCopied ? (
@@ -144,11 +311,29 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               )}
             </button>
           </div>
-          <p className="text-xs text-stone-400 mt-4">
+
+          {/* Datos rápidos */}
+          <div
+            className="sg-fade-up flex flex-wrap items-center justify-center gap-2.5 mt-8"
+            style={{ animationDelay: '0.65s' }}
+          >
+            <span className="px-3 py-1.5 rounded-full bg-stone-900/80 border border-stone-800 text-xs text-stone-300 font-semibold hover:border-amber-500/40 transition-colors">
+              📸 <span className="text-amber-300 font-black font-mono">{photoCount}</span> fotos en el portafolio
+            </span>
+            <span className="px-3 py-1.5 rounded-full bg-stone-900/80 border border-stone-800 text-xs text-stone-300 font-semibold hover:border-amber-500/40 transition-colors">
+              ✨ Entrega Full HD sin compresión
+            </span>
+            <span className="px-3 py-1.5 rounded-full bg-stone-900/80 border border-stone-800 text-xs text-stone-300 font-semibold hover:border-amber-500/40 transition-colors">
+              💬 Reserva directa por WhatsApp
+            </span>
+          </div>
+
+          <p className="sg-fade-up text-xs text-stone-400 mt-5" style={{ animationDelay: '0.8s' }}>
             ✨ Toca cualquier fotografía del portafolio para verla en alta definición.
           </p>
         </div>
       </section>
+
 
       {/* CATÁLOGO Y PORTAFOLIO */}
       <section id="catalog-gallery-section" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-12">
