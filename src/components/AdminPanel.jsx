@@ -158,6 +158,8 @@ import {
   generateImprovementInsights
 } from '../services/systemAuditor';
 
+import { findNextBookingSameDay, parseDateTimeString, minutesToLabel } from '../services/bookingAvailability';
+
 // Función para procesar y optimizar fotos de manera ultraligera y segura (ideal para celulares, APK y web)
 async function compressImageFile(file, maxWidth = 1200, quality = 0.78) {
   // Detectar soporte para WebP (reduce 95% el peso manteniendo colores y nitidez profesionales)
@@ -480,6 +482,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       type: 'chat',
       title: `Escribir por WhatsApp a ${booking.clientName}`,
       clientName: booking.clientName,
+      clientPhone,
+      text
+    });
+  };
+
+  // Terminar sesión y avisar por WhatsApp al siguiente cliente agendado el mismo día
+  const handleNotifyNextClient = (finishedBooking) => {
+    if (!finishedBooking) return;
+    const next = findNextBookingSameDay(bookings, finishedBooking);
+    if (!next) {
+      alert(`✅ Sesión de ${finishedBooking.clientName} finalizada.\n\nNo hay más clientes agendados después de esta sesión el mismo día.`);
+      return;
+    }
+    let clientPhone = (next.clientWhatsApp || '').replace(/\D/g, '');
+    if (clientPhone.length === 10 && !clientPhone.startsWith('57')) {
+      clientPhone = '57' + clientPhone;
+    }
+    const parsed = parseDateTimeString(next.dateTime);
+    const hourLabel = parsed ? minutesToLabel(parsed.startMin) : '';
+    const place = next.specificLocation ? ` en ${next.specificLocation}` : '';
+    const text = `¡Hola ${next.clientName}! Te saluda Sebastian G • Fotografía. 📸 Ya terminé la sesión anterior y estoy 100% disponible para tu sesión${hourLabel ? ` de las ${hourLabel}` : ''}${place}. ¡Cuando estés lista/o podemos empezar! ✨`;
+    setQuickWhatsAppTarget({
+      type: 'chat',
+      title: `Avisar a ${next.clientName}: ya estoy disponible`,
+      clientName: next.clientName,
       clientPhone,
       text
     });
@@ -5115,6 +5142,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                                     <span>WhatsApp</span>
                                   </button>
 
+                                  <button
+                                    type="button"
+                                    onClick={() => handleNotifyNextClient(booking)}
+                                    className="flex-1 py-1.5 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors"
+                                    title="Terminé esta sesión: avisar al siguiente cliente"
+                                  >
+                                    <Bell className="w-3 h-3 shrink-0" />
+                                    <span>Terminé</span>
+                                  </button>
+
                                   {booking.status !== 'confirmed' && (
                                     <button
                                       type="button"
@@ -5458,6 +5495,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           >
                             <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
                             <span>Chat</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleNotifyNextClient(booking)}
+                            className="flex items-center gap-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-bold px-2.5 py-1.5 rounded-lg border border-amber-500/40 transition-colors"
+                            title="Terminé esta sesión: avisar al siguiente cliente del día que ya estoy disponible"
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                            <span>Terminé • Avisar siguiente</span>
                           </button>
                         </div>
                       </div>
