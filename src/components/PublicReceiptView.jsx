@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Download, MessageCircle, ArrowLeft, CheckCircle2, ShieldCheck, Printer } from 'lucide-react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { getAdminBookings, formatDateTime12Hour } from '../services/api';
 import { LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
+import { generateLuxuryReceiptPdf } from '../services/receiptPdfGenerator';
 
 export default function PublicReceiptView({ bookingId, onBack }) {
   const [booking, setBooking] = useState(null);
@@ -53,200 +52,59 @@ export default function PublicReceiptView({ bookingId, onBack }) {
     if (!booking) return;
     setIsGeneratingPdf(true);
     try {
-      const actualTotal = Number(booking.totalPrice || 0);
-      const actualP = paidAmount !== null ? paidAmount : (booking.status === 'completed' ? actualTotal : Math.round(actualTotal * 0.5));
-      const bal = Math.max(0, actualTotal - actualP);
-      const vNum = `REC-${String(booking.id || '001').replace(/\D/g, '').slice(-5).padStart(5, '0')}`;
-      const rName = (booking.clientName || 'Cliente').trim();
-      const l = booking.specificLocation || (booking.locationType === 'outside' ? 'Locación Especial' : 'San Antero');
-      const isF = bal === 0;
+      const receiptRes = await generateLuxuryReceiptPdf({
+        booking,
+        paidAmount,
+        paymentMethod,
+        notes: `Comprobante oficial de reserva y pago para ${booking.packageName || 'Sesión Fotográfica'}.`
+      });
 
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const pageWidth = 210;
-      const margin = 16;
-      let y = 18;
-
-      // Marca de agua oficial del sistema en grande de fondo (sutil 8.5% opacidad)
-      try {
-        const wmW = 105;
-        const wmH = 105; // Logo cuadrado 1:1
-        const wmX = (pageWidth - wmW) / 2;
-        const wmY = 85;
-        pdf.addImage(LOGO_WATERMARK_FAINT, 'PNG', wmX, wmY, wmW, wmH, undefined, 'FAST');
-      } catch (e) {
-        console.warn('Error agregando marca de agua al PDF público:', e);
+      if (receiptRes) {
+        const safeName = `Comprobante-SebastianG-${receiptRes.voucherNum}.pdf`;
+        // Soporte nativo para APK Android (guarda en Descargas y abre el visor del sistema)
+        if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.downloadPdfFile) {
+          window.AndroidNotificationBridge.downloadPdfFile(receiptRes.getBase64(), safeName);
+        } else {
+          receiptRes.save(safeName);
+        }
       }
-
-      pdf.setFillColor(245, 158, 11);
-      pdf.rect(0, 0, pageWidth, 5, 'F');
-
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(22);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text('SEBASTIAN G', margin, y);
-
-      pdf.setFillColor(254, 243, 199);
-      pdf.setDrawColor(245, 158, 11);
-      pdf.roundedRect(pageWidth - margin - 46, y - 6, 46, 10, 2, 2, 'FD');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(11);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text(vNum, pageWidth - margin - 23, y, { align: 'center' });
-
-      y += 5;
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text('FOTOGRAFÍA & RETOQUE PROFESIONAL', margin, y);
-
-      const emissionDate = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(100, 116, 139);
-      pdf.text(`Fecha de emisión: ${emissionDate}`, pageWidth - margin, y, { align: 'right' });
-
-      y += 4;
-      pdf.text('San Antero, Córdoba, Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app', margin, y);
-
-      y += 5;
-      pdf.setDrawColor(226, 232, 240);
-      pdf.setLineWidth(0.5);
-      pdf.line(margin, y, pageWidth - margin, y);
-
-      y += 7;
-      const colWidth = (pageWidth - margin * 2 - 8) / 2;
-
-      pdf.setFillColor(248, 250, 252);
-      pdf.setDrawColor(226, 232, 240);
-      pdf.roundedRect(margin, y, colWidth, 32, 3, 3, 'FD');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(8);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text('CLIENTE TITULAR', margin + 4, y + 6);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(11);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text(rName, margin + 4, y + 13);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(71, 85, 105);
-      pdf.text(`WhatsApp: ${booking.clientWhatsApp || 'No registrado'}`, margin + 4, y + 20);
-      if (booking.clientEmail) {
-        pdf.text(`Correo: ${booking.clientEmail}`, margin + 4, y + 26);
-      }
-
-      pdf.roundedRect(margin + colWidth + 8, y, colWidth, 32, 3, 3, 'FD');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(8);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text('DETALLES DE LA CITA', margin + colWidth + 12, y + 6);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text(formatDateTime12Hour(booking.dateTime), margin + colWidth + 12, y + 13);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(9);
-      pdf.setTextColor(71, 85, 105);
-      pdf.text(`Locación: ${l}`, margin + colWidth + 12, y + 20);
-      pdf.text(`Paquete: ${booking.packageName}`, margin + colWidth + 12, y + 26);
-
-      y += 38;
-      const tableWidth = pageWidth - margin * 2;
-      pdf.setFillColor(241, 245, 249);
-      pdf.rect(margin, y, tableWidth, 8, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(51, 65, 85);
-      pdf.text('CONCEPTO / SERVICIO', margin + 4, y + 5.5);
-      pdf.text('VALOR', pageWidth - margin - 4, y + 5.5, { align: 'right' });
-
-      y += 8;
-      pdf.setDrawColor(226, 232, 240);
-      pdf.line(margin, y, pageWidth - margin, y);
-
-      y += 2;
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(10);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text(`Sesión Fotográfica (${booking.packageName})`, margin + 4, y + 6);
-      pdf.setFont('helvetica', 'bold');
-      pdf.text(`$${actualTotal.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
-      y += 10;
-      pdf.line(margin, y, pageWidth - margin, y);
-
-      pdf.setFillColor(248, 250, 252);
-      pdf.rect(margin, y, tableWidth, 9, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(15, 23, 42);
-      pdf.text('TOTAL PACTADO:', margin + 4, y + 6);
-      pdf.text(`$${actualTotal.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
-      y += 9;
-      pdf.line(margin, y, pageWidth - margin, y);
-
-      pdf.setFillColor(236, 253, 245);
-      pdf.rect(margin, y, tableWidth, 9, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(4, 120, 87);
-      pdf.text(`VALOR RECIBIDO / ABONADO (${paymentMethod}):`, margin + 4, y + 6);
-      pdf.text(`$${actualP.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
-      y += 9;
-      pdf.line(margin, y, pageWidth - margin, y);
-
-      pdf.setFillColor(255, 251, 235);
-      pdf.rect(margin, y, tableWidth, 9, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text('SALDO PENDIENTE:', margin + 4, y + 6);
-      pdf.text(`$${bal.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, y + 6, { align: 'right' });
-      y += 9;
-      pdf.line(margin, y, pageWidth - margin, y);
-
-      y += 6;
-      pdf.setFillColor(248, 250, 252);
-      pdf.setDrawColor(203, 213, 225);
-      pdf.roundedRect(margin, y, tableWidth, 18, 3, 3, 'FD');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text(`Garantía de Clima en ${l}:`, margin + 4, y + 6);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(71, 85, 105);
-      pdf.text(`En caso de lluvia o clima adverso en ${l}, tu sesión se reprograma para una nueva fecha`, margin + 4, y + 11);
-      pdf.text('sin ningún costo ni penalidad. Documento electrónico oficial emitido en sebastiang.app', margin + 4, y + 15);
-
-      y += 24;
-      pdf.line(margin, y, pageWidth - margin, y);
-      y += 6;
-
-      pdf.setFont('times', 'bolditalic');
-      pdf.setFontSize(16);
-      pdf.setTextColor(180, 83, 9);
-      pdf.text('Sebastian G', margin, y + 6);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(100, 116, 139);
-      pdf.text('Fotógrafo Profesional Titular', margin, y + 11);
-
-      const sText = isF ? 'PAGADO TOTAL (100%)' : 'ABONO CONFIRMADO (50%)';
-      pdf.setFillColor(isF ? 209 : 254, isF ? 250 : 243, isF ? 229 : 199);
-      pdf.setDrawColor(isF ? 16 : 245, isF ? 185 : 158, isF ? 129 : 11);
-      pdf.roundedRect(pageWidth - margin - 60, y, 60, 12, 6, 6, 'FD');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(isF ? 6 : 146, isF ? 95 : 64, isF ? 70 : 14);
-      pdf.text(sText, pageWidth - margin - 30, y + 8, { align: 'center' });
-
-      pdf.save(`Comprobante-SebastianG-${vNum}.pdf`);
     } catch (err) {
-      console.error('Error generando PDF:', err);
-      window.print();
+      console.error('Error generando PDF de comprobante:', err);
+      handlePrintPdf();
     } finally {
       setIsGeneratingPdf(false);
     }
+  };
+
+  const handlePrintPdf = async () => {
+    if (!booking) return;
+
+    // 1. Soporte nativo en APK Android para impresión de documentos (abre PrintManager)
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.printPdfDocument) {
+      setIsGeneratingPdf(true);
+      try {
+        const receiptRes = await generateLuxuryReceiptPdf({
+          booking,
+          paidAmount,
+          paymentMethod,
+          notes: `Comprobante oficial de reserva y pago para ${booking.packageName || 'Sesión Fotográfica'}.`
+        });
+        if (receiptRes) {
+          window.AndroidNotificationBridge.printPdfDocument(
+            receiptRes.getBase64(),
+            `Comprobante-SebastianG-${receiptRes.voucherNum}`
+          );
+          return;
+        }
+      } catch (e) {
+        console.warn('Error imprimiendo vía puente nativo APK:', e);
+      } finally {
+        setIsGeneratingPdf(false);
+      }
+    }
+
+    // 2. Fallback estándar para navegadores de PC y móviles
+    window.print();
   };
 
   if (loading) {
@@ -447,6 +305,17 @@ export default function PublicReceiptView({ bookingId, onBack }) {
           >
             <Download className="w-4 h-4" />
             <span>{isGeneratingPdf ? 'Generando PDF...' : '📥 Descargar Comprobante en PDF'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePrintPdf}
+            disabled={isGeneratingPdf}
+            className="w-full sm:w-auto py-3.5 px-5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700 text-stone-200 font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
+            title="Imprimir Comprobante"
+          >
+            <Printer className="w-4 h-4 text-amber-400" />
+            <span>Imprimir</span>
           </button>
 
           <a
