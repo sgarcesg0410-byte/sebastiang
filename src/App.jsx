@@ -4,6 +4,7 @@ import Catalog from './components/Catalog';
 import PackagesSection from './components/PackagesSection';
 import TestimonialsSection from './components/TestimonialsSection';
 import BookingModal from './components/BookingModal';
+import BookingCalendar from './components/BookingCalendar';
 const ClientGallery = React.lazy(() => import('./components/ClientGallery'));
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 const PublicReceiptView = React.lazy(() => import('./components/PublicReceiptView'));
@@ -82,6 +83,7 @@ export default function App() {
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
   const [selectedPhotoForBooking, setSelectedPhotoForBooking] = useState(null);
+  const [selectedDateForBooking, setSelectedDateForBooking] = useState('');
 
   // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin)
   const [showIntro, setShowIntro] = useState(() => {
@@ -306,6 +308,7 @@ export default function App() {
   };
 
   const handleOpenBooking = (pkgOrPhoto = null) => {
+    setSelectedDateForBooking('');
     if (pkgOrPhoto && (pkgOrPhoto.url || pkgOrPhoto.category)) {
       setSelectedPhotoForBooking(pkgOrPhoto);
       setSelectedPackageForBooking(null);
@@ -313,6 +316,13 @@ export default function App() {
       setSelectedPackageForBooking(pkgOrPhoto);
       setSelectedPhotoForBooking(null);
     }
+    setIsBookingOpen(true);
+  };
+
+  const handleReserveDate = (dateKey) => {
+    setSelectedPackageForBooking(null);
+    setSelectedPhotoForBooking(null);
+    setSelectedDateForBooking(dateKey);
     setIsBookingOpen(true);
   };
 
@@ -371,6 +381,7 @@ export default function App() {
                 }}
                 onOpenBooking={(photo) => handleOpenBooking(photo)}
               />
+              <BookingCalendar onReserveDate={handleReserveDate} />
               <div id="testimonials-section">
                 <TestimonialsSection />
               </div>
@@ -454,6 +465,7 @@ export default function App() {
         packages={packages}
         preselectedPackage={selectedPackageForBooking}
         preselectedPhoto={selectedPhotoForBooking}
+        preselectedDate={selectedDateForBooking}
         settings={settings}
       />
 

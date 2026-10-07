@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, ArrowRight, ChevronLeft } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { createBooking, checkClientLoyalty, formatTo12Hour } from '../services/api';
+import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
 
-export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, settings = {} }) {
+export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', settings = {} }) {
   if (!isOpen) return null;
 
   const scrollRef = useRef(null);
@@ -31,6 +32,24 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [submittedBooking, setSubmittedBooking] = useState(null);
+  const [schedule, setSchedule] = useState([]);
+
+  // Cargar cupos ocupados (solo fecha y hora) al abrir el modal
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    getPublicSchedule().then(s => { if (active) setSchedule(s); }).catch(() => {});
+    return () => { active = false; };
+  }, [isOpen]);
+
+  const slotCheck = checkSlotAvailability(schedule, formData.date, formData.time);
+  const daySlotsList = formData.date ? getSlotsForDate(schedule, formData.date) : [];
+
+  useEffect(() => {
+    if (preselectedDate) {
+      setFormData(prev => ({ ...prev, date: preselectedDate }));
+    }
+  }, [preselectedDate]);
 
   const handleNextStep1 = () => {
     if (!formData.clientName.trim()) {
@@ -146,6 +165,13 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
     if (!formData.date) {
       setErrorMessage('Por favor selecciona la fecha deseada para tu sesión.');
+      return;
+    }
+
+    if (!slotCheck.available) {
+      setErrorMessage(
+        `Ese horario ya está reservado. Disponible después de esa sesión (a partir de las ${slotCheck.suggestedLabel}). Usa el botón para elegir ese horario.`
+      );
       return;
     }
 
@@ -685,6 +711,50 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                       />
                     </div>
                   </div>
+
+                  {/* CUPOS DEL DÍA + ALERTA DE DISPONIBILIDAD */}
+                  {formData.date && daySlotsList.length > 0 && (
+                    <div className="p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-1.5">
+                      <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block">
+                        📅 Cupos ya separados este día
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {daySlotsList.map(s => (
+                          <span key={s.id} className="px-2 py-1 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-[11px] font-bold font-mono">
+                            {minutesToLabel(s.startMin)} – {minutesToLabel(s.endMin)} • Ocupado
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {formData.date && !slotCheck.available && (
+                    <div className="p-3.5 rounded-xl bg-amber-500/15 border-2 border-amber-400/70 space-y-2 shadow-lg">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="text-sm font-black text-amber-300 block uppercase">
+                            ⚠️ Disponible después de esa sesión
+                          </span>
+                          <p className="text-xs text-amber-100/90 leading-snug mt-0.5">
+                            A esa hora ya hay una sesión reservada ({slotCheck.conflictLabel}).
+                            {slotCheck.noMoreToday
+                              ? ' Ya no hay más cupos ese día, por favor elige otra fecha.'
+                              : <> Estaré disponible a partir de las <strong>{slotCheck.suggestedLabel}</strong>.</>}
+                          </p>
+                        </div>
+                      </div>
+                      {!slotCheck.noMoreToday && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData(prev => ({ ...prev, time: slotCheck.suggestedInput }))}
+                          className="w-full bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-xs py-2.5 rounded-xl active:scale-98 transition-all cursor-pointer"
+                        >
+                          ⚡ Elegir horario disponible ({slotCheck.suggestedLabel})
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {/* FOTOS IMPRESAS OPCIONALES (10x15 Y 15x20) */}
                   <div className="space-y-2">
