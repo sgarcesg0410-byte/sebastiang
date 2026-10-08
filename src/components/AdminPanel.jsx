@@ -4982,7 +4982,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                                     title="Terminé esta sesión: avisar al siguiente cliente"
                                   >
                                     <Bell className="w-3 h-3 shrink-0" />
-                                    <span>Terminé</span>
+                                    <span>Avisar siguiente</span>
                                   </button>
 
                                   {booking.status !== 'confirmed' && (

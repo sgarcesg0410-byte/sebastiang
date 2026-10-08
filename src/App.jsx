@@ -4,7 +4,6 @@ import Catalog from './components/Catalog';
 import PackagesSection from './components/PackagesSection';
 import TestimonialsSection from './components/TestimonialsSection';
 import BookingModal from './components/BookingModal';
-import BookingCalendar from './components/BookingCalendar';
 const ClientGallery = React.lazy(() => import('./components/ClientGallery'));
 const AdminPanel = React.lazy(() => import('./components/AdminPanel'));
 const PublicReceiptView = React.lazy(() => import('./components/PublicReceiptView'));
@@ -381,7 +380,6 @@ export default function App() {
                 }}
                 onOpenBooking={(photo) => handleOpenBooking(photo)}
               />
-              <BookingCalendar onReserveDate={handleReserveDate} />
               <div id="testimonials-section">
                 <TestimonialsSection />
               </div>

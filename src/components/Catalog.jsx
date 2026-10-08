@@ -227,17 +227,6 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               <ArrowRight className="w-4 h-4" />
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                const el = document.getElementById('booking-calendar-section');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }}
-              className="inline-flex items-center justify-center gap-2.5 bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 hover:border-emerald-500/60 text-stone-200 hover:text-white font-semibold text-sm sm:text-base px-6 py-3.5 rounded-2xl transition-all shadow-lg hover:scale-105 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
-            >
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Ver agenda libre</span>
-            </button>
 
             <button
               type="button"
