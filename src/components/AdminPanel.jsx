@@ -1730,6 +1730,29 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
+  const handleRestoreAgreedRetabloPricing = () => {
+    setEditableRetabloCost20x30(15000);
+    setEditablePrintedPhoto20x30Price(30000);
+
+    setEditableRetabloCost30x45(30000);
+    setEditablePrintedPhoto30x45Price(60000);
+
+    setEditableRetabloCost40x50(55000);
+    setEditablePrintedPhoto40x50Price(85000);
+
+    setEditableRetabloCost50x70(80000);
+    setEditablePrintedPhoto50x70Price(110000);
+
+    setEditableRetabloCost70x50(80000);
+    setEditablePrintedPhoto70x50Price(120000);
+
+    setEditableRetabloCost70x100(150000);
+    setEditablePrintedPhoto70x100Price(200000);
+
+    setPriceSaveSuccess('¡Tarifas oficiales cargadas! Pulsa "Guardar Nuevos Precios" abajo para confirmar.');
+    setTimeout(() => setPriceSaveSuccess(''), 5000);
+  };
+
   const handleLogout = () => {
     if (confirm('¿Deseas cerrar la sesión del panel?')) {
       forgetTrustedDevice();
@@ -8314,25 +8337,92 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
             {/* Catálogo de Cuadros en Retablos (Madera) */}
             <div className="bg-stone-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-6">
-              <div>
-                <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-                  🪵 Cuadros en Retablos de Madera
-                </span>
-                <h3 className="text-xl font-serif font-bold text-white mt-1">
-                  Tarifas de Cuadros en Retablos (Listos para Colgar)
-                </h3>
-                <p className="text-xs text-stone-400 mt-1">
-                  Configura los precios de las 6 medidas de cuadros en retablos de madera con película protectora UV que los clientes pueden solicitar de manera independiente a las fotos impresas en papel.
-                </p>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-stone-800">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
+                      🪵 Cuadros en Retablos de Madera
+                    </span>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      Lo que Pago vs. Cobro al Cliente
+                    </span>
+                  </div>
+                  <h3 className="text-xl font-serif font-bold text-white mt-1">
+                    Tarifas de Cuadros en Retablos (Listos para Colgar)
+                  </h3>
+                  <p className="text-xs text-stone-300 mt-1">
+                    Aquí ves y configuras claramente <strong>lo que tú pagas</strong> (costo al taller/proveedor) y <strong>a precio tuyo</strong> (lo que le cobras al cliente), para que conozcas tu ganancia exacta sin enredarte.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleRestoreAgreedRetabloPricing}
+                  className="self-start md:self-auto px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95 shrink-0"
+                  title="Cargar las 6 tarifas oficiales acordadas: 20x30 ($15k/$30k), 30x45 ($30k/$60k), 40x50 ($55k/$85k), 50x70 ($80k/$110k), 70x50 ($80k/$120k), 70x100 ($150k/$200k)"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Cargar mis 6 tarifas acordadas</span>
+                </button>
+              </div>
+
+              {/* GUÍA RÁPIDA DE CONTROL: TABLA VISUAL DE REFERENCIA */}
+              <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-stone-300 flex items-center gap-2 font-mono">
+                    <span className="text-amber-400">📊</span>
+                    <span>Resumen Rápido: Lo que Pagas ➔ Cobras ➔ Te Queda:</span>
+                  </span>
+                  <span className="text-[11px] text-stone-400">
+                    6 medidas oficiales de retablo
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                  {[
+                    { dim: '20x30 cm', label: 'Retablo HD', cost: editableRetabloCost20x30, price: editablePrintedPhoto20x30Price },
+                    { dim: '30x45 cm', label: 'Retablo Mediano', cost: editableRetabloCost30x45, price: editablePrintedPhoto30x45Price },
+                    { dim: '40x50 cm', label: 'Retablo Galería', cost: editableRetabloCost40x50, price: editablePrintedPhoto40x50Price },
+                    { dim: '50x70 cm', label: 'Gran Formato', cost: editableRetabloCost50x70, price: editablePrintedPhoto50x70Price },
+                    { dim: '70x50 cm', label: 'Panorámico', cost: editableRetabloCost70x50, price: editablePrintedPhoto70x50Price },
+                    { dim: '70x100 cm', label: 'Gigante (1m)', cost: editableRetabloCost70x100, price: editablePrintedPhoto70x100Price }
+                  ].map((item, idx) => {
+                    const c = Number(item.cost) || 0;
+                    const p = Number(item.price) || 0;
+                    const diff = Math.max(0, p - c);
+                    return (
+                      <div key={idx} className="p-2.5 rounded-xl bg-stone-900 border border-stone-800 flex flex-col justify-between text-xs space-y-1.5 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono font-bold text-white text-[11px]">{item.dim}</span>
+                          <span className="text-[9px] text-amber-400 font-bold">{item.label}</span>
+                        </div>
+                        <div className="space-y-0.5 text-[11px] font-mono">
+                          <div className="flex justify-between text-rose-300">
+                            <span className="text-[10px] text-stone-400">Pagas:</span>
+                            <span className="font-bold">${c.toLocaleString('es-CO')}</span>
+                          </div>
+                          <div className="flex justify-between text-amber-300">
+                            <span className="text-[10px] text-stone-400">Cobras:</span>
+                            <span className="font-bold">${p.toLocaleString('es-CO')}</span>
+                          </div>
+                        </div>
+                        <div className="pt-1 border-t border-stone-800 text-[10px] font-mono font-bold text-emerald-400 flex items-center justify-between bg-emerald-950/40 px-1.5 py-0.5 rounded">
+                          <span>Ganas:</span>
+                          <span>+${diff.toLocaleString('es-CO')}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 {/* 20x30 */}
-                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="bg-stone-950 p-4 sm:p-5 rounded-2xl border border-stone-800 hover:border-amber-500/40 transition-all space-y-3.5 shadow-md">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black font-mono text-white">20x30 cm</span>
-                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black font-mono text-white">20x30 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30">
                         Retablo HD
                       </span>
                     </div>
@@ -8342,20 +8432,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const prof = p - c;
                       const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
                       return (
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           {pct}% utilidad
                         </span>
                       );
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-                        Costo Taller:
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-rose-950/20 border border-rose-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-rose-300 uppercase block tracking-wider">
+                        🛒 Lo que yo pago:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-rose-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8363,17 +8453,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editableRetabloCost20x30}
                           onChange={(e) => setEditableRetabloCost20x30(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                          className="w-full bg-stone-900 border border-rose-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-rose-200 focus:outline-none focus:border-rose-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Costo elaboración taller</span>
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
-                        Precio Cliente:
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-amber-300 uppercase block tracking-wider">
+                        🏷️ A precio mío:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8381,26 +8472,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editablePrintedPhoto20x30Price}
                           onChange={(e) => setEditablePrintedPhoto20x30Price(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                          className="w-full bg-stone-900 border border-amber-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Cobro al cliente</span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
-                    <span className="font-mono font-bold text-emerald-400">
+                  <div className="p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1">
+                      <span>💰</span>
+                      <span>Mi Ganancia Limpia:</span>
+                    </span>
+                    <span className="font-mono font-black text-emerald-400 text-xs">
                       +${(Math.max(0, (Number(editablePrintedPhoto20x30Price) || 0) - (Number(editableRetabloCost20x30) || 0))).toLocaleString('es-CO')} COP
                     </span>
                   </div>
                 </div>
 
                 {/* 30x45 */}
-                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="bg-stone-950 p-4 sm:p-5 rounded-2xl border border-stone-800 hover:border-amber-500/40 transition-all space-y-3.5 shadow-md">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black font-mono text-white">30x45 cm</span>
-                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black font-mono text-white">30x45 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30">
                         Retablo Mediano
                       </span>
                     </div>
@@ -8410,20 +8505,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const prof = p - c;
                       const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
                       return (
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           {pct}% utilidad
                         </span>
                       );
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-                        Costo Taller:
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-rose-950/20 border border-rose-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-rose-300 uppercase block tracking-wider">
+                        🛒 Lo que yo pago:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-rose-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8431,17 +8526,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editableRetabloCost30x45}
                           onChange={(e) => setEditableRetabloCost30x45(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                          className="w-full bg-stone-900 border border-rose-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-rose-200 focus:outline-none focus:border-rose-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Costo elaboración taller</span>
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
-                        Precio Cliente:
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-amber-300 uppercase block tracking-wider">
+                        🏷️ A precio mío:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8449,26 +8545,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editablePrintedPhoto30x45Price}
                           onChange={(e) => setEditablePrintedPhoto30x45Price(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                          className="w-full bg-stone-900 border border-amber-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Cobro al cliente</span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
-                    <span className="font-mono font-bold text-emerald-400">
+                  <div className="p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1">
+                      <span>💰</span>
+                      <span>Mi Ganancia Limpia:</span>
+                    </span>
+                    <span className="font-mono font-black text-emerald-400 text-xs">
                       +${(Math.max(0, (Number(editablePrintedPhoto30x45Price) || 0) - (Number(editableRetabloCost30x45) || 0))).toLocaleString('es-CO')} COP
                     </span>
                   </div>
                 </div>
 
                 {/* 40x50 */}
-                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="bg-stone-950 p-4 sm:p-5 rounded-2xl border border-stone-800 hover:border-amber-500/40 transition-all space-y-3.5 shadow-md">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black font-mono text-white">40x50 cm</span>
-                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black font-mono text-white">40x50 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30">
                         Retablo Galería
                       </span>
                     </div>
@@ -8478,20 +8578,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const prof = p - c;
                       const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
                       return (
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           {pct}% utilidad
                         </span>
                       );
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-                        Costo Taller:
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-rose-950/20 border border-rose-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-rose-300 uppercase block tracking-wider">
+                        🛒 Lo que yo pago:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-rose-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8499,17 +8599,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editableRetabloCost40x50}
                           onChange={(e) => setEditableRetabloCost40x50(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                          className="w-full bg-stone-900 border border-rose-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-rose-200 focus:outline-none focus:border-rose-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Costo elaboración taller</span>
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
-                        Precio Cliente:
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-amber-300 uppercase block tracking-wider">
+                        🏷️ A precio mío:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8517,27 +8618,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editablePrintedPhoto40x50Price}
                           onChange={(e) => setEditablePrintedPhoto40x50Price(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                          className="w-full bg-stone-900 border border-amber-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Cobro al cliente</span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
-                    <span className="font-mono font-bold text-emerald-400">
+                  <div className="p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1">
+                      <span>💰</span>
+                      <span>Mi Ganancia Limpia:</span>
+                    </span>
+                    <span className="font-mono font-black text-emerald-400 text-xs">
                       +${(Math.max(0, (Number(editablePrintedPhoto40x50Price) || 0) - (Number(editableRetabloCost40x50) || 0))).toLocaleString('es-CO')} COP
                     </span>
                   </div>
                 </div>
 
                 {/* 50x70 */}
-                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="bg-stone-950 p-4 sm:p-5 rounded-2xl border border-stone-800 hover:border-amber-500/40 transition-all space-y-3.5 shadow-md">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black font-mono text-white">50x70 cm</span>
-                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                        Retablo Gran Formato
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black font-mono text-white">50x70 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30">
+                        Gran Formato
                       </span>
                     </div>
                     {(() => {
@@ -8546,20 +8651,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const prof = p - c;
                       const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
                       return (
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           {pct}% utilidad
                         </span>
                       );
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-                        Costo Taller:
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-rose-950/20 border border-rose-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-rose-300 uppercase block tracking-wider">
+                        🛒 Lo que yo pago:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-rose-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8567,17 +8672,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editableRetabloCost50x70}
                           onChange={(e) => setEditableRetabloCost50x70(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                          className="w-full bg-stone-900 border border-rose-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-rose-200 focus:outline-none focus:border-rose-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Costo elaboración taller</span>
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
-                        Precio Cliente:
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-amber-300 uppercase block tracking-wider">
+                        🏷️ A precio mío:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8585,27 +8691,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editablePrintedPhoto50x70Price}
                           onChange={(e) => setEditablePrintedPhoto50x70Price(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                          className="w-full bg-stone-900 border border-amber-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Cobro al cliente</span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
-                    <span className="font-mono font-bold text-emerald-400">
+                  <div className="p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1">
+                      <span>💰</span>
+                      <span>Mi Ganancia Limpia:</span>
+                    </span>
+                    <span className="font-mono font-black text-emerald-400 text-xs">
                       +${(Math.max(0, (Number(editablePrintedPhoto50x70Price) || 0) - (Number(editableRetabloCost50x70) || 0))).toLocaleString('es-CO')} COP
                     </span>
                   </div>
                 </div>
 
                 {/* 70x50 */}
-                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="bg-stone-950 p-4 sm:p-5 rounded-2xl border border-stone-800 hover:border-amber-500/40 transition-all space-y-3.5 shadow-md">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black font-mono text-white">70x50 cm</span>
-                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                        Retablo Panorámico
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black font-mono text-white">70x50 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-500/30">
+                        Panorámico Sala
                       </span>
                     </div>
                     {(() => {
@@ -8614,20 +8724,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const prof = p - c;
                       const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
                       return (
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           {pct}% utilidad
                         </span>
                       );
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-                        Costo Taller:
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-rose-950/20 border border-rose-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-rose-300 uppercase block tracking-wider">
+                        🛒 Lo que yo pago:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-rose-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8635,17 +8745,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editableRetabloCost70x50}
                           onChange={(e) => setEditableRetabloCost70x50(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                          className="w-full bg-stone-900 border border-rose-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-rose-200 focus:outline-none focus:border-rose-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Costo elaboración taller</span>
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
-                        Precio Cliente:
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-amber-300 uppercase block tracking-wider">
+                        🏷️ A precio mío:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8653,27 +8764,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editablePrintedPhoto70x50Price}
                           onChange={(e) => setEditablePrintedPhoto70x50Price(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                          className="w-full bg-stone-900 border border-amber-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Cobro al cliente</span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
-                    <span className="font-mono font-bold text-emerald-400">
+                  <div className="p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1">
+                      <span>💰</span>
+                      <span>Mi Ganancia Limpia:</span>
+                    </span>
+                    <span className="font-mono font-black text-emerald-400 text-xs">
                       +${(Math.max(0, (Number(editablePrintedPhoto70x50Price) || 0) - (Number(editableRetabloCost70x50) || 0))).toLocaleString('es-CO')} COP
                     </span>
                   </div>
                 </div>
 
                 {/* 70x100 */}
-                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                <div className="bg-stone-950 p-4 sm:p-5 rounded-2xl border border-stone-800 hover:border-amber-500/40 transition-all space-y-3.5 shadow-md">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-black font-mono text-white">70x100 cm</span>
-                      <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded">
-                        Retablo Gigante (1m)
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-black font-mono text-white">70x100 cm</span>
+                      <span className="bg-amber-400 text-stone-950 text-[10px] font-black px-2 py-0.5 rounded">
+                        Gigante (1m)
                       </span>
                     </div>
                     {(() => {
@@ -8682,20 +8797,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       const prof = p - c;
                       const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
                       return (
-                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           {pct}% utilidad
                         </span>
                       );
                     })()}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-                        Costo Taller:
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-rose-950/20 border border-rose-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-rose-300 uppercase block tracking-wider">
+                        🛒 Lo que yo pago:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-rose-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8703,17 +8818,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editableRetabloCost70x100}
                           onChange={(e) => setEditableRetabloCost70x100(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                          className="w-full bg-stone-900 border border-rose-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-rose-200 focus:outline-none focus:border-rose-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Costo elaboración taller</span>
                     </div>
 
-                    <div>
-                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
-                        Precio Cliente:
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-2.5 rounded-xl space-y-1">
+                      <label className="text-[10px] font-extrabold text-amber-300 uppercase block tracking-wider">
+                        🏷️ A precio mío:
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-400 font-bold">$</span>
                         <input
                           type="number"
                           required
@@ -8721,15 +8837,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           step={1000}
                           value={editablePrintedPhoto70x100Price}
                           onChange={(e) => setEditablePrintedPhoto70x100Price(e.target.value)}
-                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                          className="w-full bg-stone-900 border border-amber-500/50 rounded-lg pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
                         />
                       </div>
+                      <span className="text-[9px] text-stone-400 block">Cobro al cliente</span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
-                    <span className="font-mono font-bold text-emerald-400">
+                  <div className="p-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 flex items-center justify-between text-xs">
+                    <span className="font-bold text-emerald-300 text-[11px] flex items-center gap-1">
+                      <span>💰</span>
+                      <span>Mi Ganancia Limpia:</span>
+                    </span>
+                    <span className="font-mono font-black text-emerald-400 text-xs">
                       +${(Math.max(0, (Number(editablePrintedPhoto70x100Price) || 0) - (Number(editableRetabloCost70x100) || 0))).toLocaleString('es-CO')} COP
                     </span>
                   </div>
