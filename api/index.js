@@ -199,7 +199,7 @@ function resetLoginAttempts(ip) {
 }
 
 // Limpieza periódica de entradas antiguas del rate limiter (cada 10 min)
-setInterval(() => {
+const limpiezaPeriodica = setInterval(() => {
   const now = Date.now();
   for (const [ip, record] of loginAttempts.entries()) {
     if (record.lockedUntil && now > record.lockedUntil + LOGIN_WINDOW_MS) {
@@ -209,6 +209,10 @@ setInterval(() => {
     }
   }
 }, 10 * 60 * 1000);
+// En serverless un temporizador activo mantiene la instancia viva. Con unref() la
+// limpieza sigue funcionando mientras la instancia atiende peticiones, pero no
+// impide que el proceso termine (era la causa del cuelgue al cargar el modulo).
+if (typeof limpiezaPeriodica.unref === 'function') limpiezaPeriodica.unref();
 
 // ==============================================================================
 // HASHING Y COMPARACIÓN SEGURA
