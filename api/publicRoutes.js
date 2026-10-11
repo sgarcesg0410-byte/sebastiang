@@ -10,7 +10,7 @@
 // ==============================================================================
 
 import { createReceiptToken, verifyReceiptToken, toPublicBooking } from './security.js';
-import { computeBookingPaymentStatus } from '../src/services/financials.js';
+import { computeBookingPaymentStatus } from './financials.js';
 
 /** Limitador simple en memoria para rutas públicas (por instancia del serverless). */
 function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000 } = {}) {

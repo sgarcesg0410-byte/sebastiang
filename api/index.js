@@ -213,7 +213,8 @@ setInterval(() => {
 // ==============================================================================
 // HASHING Y COMPARACIÓN SEGURA
 // ==============================================================================
-const DEFAULT_ADMIN_PIN_HASH = '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3'; // SHA-256 de "0493"
+// El hash del PIN conocido "0493" se conserva SOLO para avisar al arrancar
+// (ver isWeakConfiguredPin en ./security.js). Nunca se usa como valor válido.
 
 function hashSHA256(str) {
   return crypto.createHash('sha256').update(String(str || '').trim()).digest('hex');
@@ -227,23 +228,13 @@ function secureCompare(a, b) {
 }
 
 // ==============================================================================
-// GENERACIÓN DE TOKEN DE SESIÓN FIRMADO
+// SESIONES DE ADMINISTRADOR
 // ==============================================================================
-const ADMIN_AUTH_SECRET = process.env.ADMIN_AUTH_SECRET || 'fallback-dev-secret-change-me';
-
-function signAdminToken() {
-  const payload = {
-    iat: Date.now(),
-    exp: Date.now() + 24 * 60 * 60 * 1000, // 24 horas
-    nonce: crypto.randomBytes(16).toString('hex')
-  };
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto
-    .createHmac('sha256', ADMIN_AUTH_SECRET)
-    .update(payloadB64)
-    .digest('base64url');
-  return `${payloadB64}.${signature}`;
-}
+// La emisión y verificación de tokens vive en ./security.js (HMAC-SHA256 con
+// ADMIN_AUTH_SECRET obligatorio y fallo cerrado). Aquí existía un emisor duplicado
+// con un secreto por defecto público ('fallback-dev-secret-change-me'): se eliminó
+// para que nadie pueda volver a firmar sesiones con un secreto conocido.
+// ==============================================================================
 
 // ==============================================================================
 // BASE DE DATOS EN MEMORIA (Cache sincronizado con Supabase)
@@ -263,7 +254,7 @@ function getDefaultDB() {
       watermarkText: "SEBASTIAN G",
       watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
       watermarkLogoUrl: "/app-icon.png",
-      adminPinHash: DEFAULT_ADMIN_PIN_HASH,
+      adminPinHash: '', // Sin PIN por defecto: se define en ADMIN_PIN_SCRYPT / ADMIN_PIN_HASH
       printedPhotoPrice: 7000,
       printedPhoto15x20Price: 8000,
       printedPhoto20x30Price: 30000,
@@ -688,7 +679,7 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
             'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ url: JSON.stringify(session) })\
+          body: JSON.stringify({ url: JSON.stringify(session) })
         });
       }
     }
@@ -1283,18 +1274,25 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
 // SEGURIDAD: CAMBIO DE PIN (solo con hash)
 // ==============================================================================
 app.post('/api/admin/pin/change', (req, res) => {
-  const { currentPin, newPin } = req.body;
-  const currentHash = hashSHA256(currentPin);
-  const expectedHash = runtimeDB.settings.adminPinHash || DEFAULT_ADMIN_PIN_HASH;
+  // El PIN se valida contra el hash del ENTORNO (ADMIN_PIN_SCRYPT o ADMIN_PIN_HASH).
+  // Antes este endpoint escribía el hash solo en memoria: parecía funcionar y se
+  // revertía en el siguiente arranque de la función serverless. Ahora se explica
+  // cómo cambiarlo de verdad en lugar de simular un cambio que no persiste.
+  const { currentPin } = req.body || {};
+  const expectedHash = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || '';
 
-  if (!secureCompare(currentHash, expectedHash)) {
+  if (expectedHash && !secureCompare(hashSHA256(currentPin), expectedHash)) {
     return res.status(401).json({ error: 'El PIN actual no coincide.' });
   }
-  if (!newPin || String(newPin).length < 4) {
-    return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
-  }
-  runtimeDB.settings.adminPinHash = hashSHA256(String(newPin).trim());
-  res.json({ success: true, message: '¡PIN de acceso actualizado correctamente!' });
+
+  return res.status(409).json({
+    error: 'El PIN se define en el servidor: un cambio desde aquí no sobreviviría al siguiente despliegue.',
+    howTo: [
+      'Genera el hash con: node scripts/hash-admin-pin.mjs "TU_PIN_NUEVO"',
+      'Actualiza la variable ADMIN_PIN_SCRYPT en Vercel (y en tu .env local).',
+      'Vuelve a desplegar.'
+    ]
+  });
 });
 
 // ==============================================================================

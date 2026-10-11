@@ -14,7 +14,7 @@ import {
   validateOrEnforcePrice,
   resolveLoyaltyDiscountPercent,
   LOYALTY_DISCOUNT_PERCENT
-} from '../shared/pricing.js';
+} from './pricing.js';
 
 /** Últimos 8 dígitos de un teléfono ('' si no hay suficientes). */
 export function phoneKey(value) {
