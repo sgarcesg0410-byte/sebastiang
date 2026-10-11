@@ -620,13 +620,17 @@ app.get('/api/gallery/:token', async (req, res) => {
   if (!session) return res.status(404).json({ error: 'Galería no encontrada.' });
 
   const now = Date.now();
-  const expiresTime = new Date(session.expiresAt).getTime();
-  const isExpired = now > expiresTime;
+  const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
+  const isExpired = expiresTime > 0 && now > expiresTime;
   const isSubmitted = session.status === 'submitted' || session.status === 'delivered';
   const isDelivered = session.status === 'delivered';
 
+  // Si la sesión expiró y no ha sido entregada, el servidor NO envía fotos
+  const photos = (isExpired && !isDelivered) ? [] : (session.photos || []);
+
   res.json({
     ...session,
+    photos,
     isExpired,
     isSubmitted,
     isDelivered,
@@ -659,6 +663,12 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
     }
 
     if (session) {
+      const now = Date.now();
+      const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
+      if (expiresTime > 0 && now > expiresTime && session.status !== 'delivered') {
+        return res.status(410).json({ error: 'La vigencia de 3 días de esta sesión ha expirado.' });
+      }
+
       if (Array.isArray(selections)) {
         const selMap = new Map();
         selections.forEach(item => {
@@ -716,6 +726,11 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   }
 
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
+  const now = Date.now();
+  const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
+  if (expiresTime > 0 && now > expiresTime && session.status !== 'delivered') {
+    return res.status(410).json({ error: 'La vigencia de 3 días de esta sesión ha expirado. Por favor contacta a Sebastian G para reactivarla.' });
+  }
   if (session.status === 'submitted') {
     return res.status(403).json({ error: 'Esta selección ya fue enviada previamente y se encuentra bloqueada.' });
   }

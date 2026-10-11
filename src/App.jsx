@@ -361,8 +361,8 @@ export default function App() {
         />
       )}
 
-      {/* PROTECCIÓN GLOBAL DE SEGURIDAD ANTI-CAPTURAS Y ANTI-GESTOS */}
-      <SecurityOverlay enabled={true}>
+      {/* PROTECCIÓN DE SEGURIDAD EXCLUSIVA EN GALERÍA PRIVADA (no interfiere en portada) */}
+      <SecurityOverlay enabled={currentView === 'gallery'}>
         {/* CONTENIDO SEGÚN VISTA */}
         <main className="flex-1">
           {currentView === 'home' && (

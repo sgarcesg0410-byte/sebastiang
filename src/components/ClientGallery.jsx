@@ -708,15 +708,25 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
             </div>
           )}
 
-          {/* MENSAJES DE ESTADO DE BLOQUEO */}
-          {galleryData.isExpired && !galleryData.isSubmitted && (
-            <div className="bg-red-950/80 border-2 border-red-500/60 rounded-2xl p-5 flex items-center gap-4 text-left">
-              <Lock className="w-8 h-8 text-red-400 shrink-0" />
-              <div>
-                <h4 className="text-base font-bold text-red-200">Enlace de selección expirado</h4>
-                <p className="text-xs text-red-100/80 mt-1">
-                  Han transcurrido los 3 días de vigencia acordados. Por favor contacta a Sebastian G para reactivar tu sesión si aún no has elegido tus fotos.
-                </p>
+          {/* MENSAJES DE ESTADO DE BLOQUEO POR VIGENCIA (3 DÍAS) */}
+          {galleryData.isExpired && !galleryData.isSubmitted && !galleryData.isDelivered && (
+            <div className="bg-red-950/80 border-2 border-red-500/60 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl">
+              <div className="w-16 h-16 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-bold text-white">Enlace de Selección Expirado (3 Días)</h3>
+              <p className="text-xs sm:text-sm text-stone-300 max-w-lg mx-auto">
+                Han transcurrido los 3 días de vigencia acordados para elegir tus fotos. Para proteger tu sesión, las imágenes se encuentran temporalmente pausadas.
+              </p>
+              <div className="pt-2">
+                <a
+                  href={`https://wa.me/573244725167?text=${encodeURIComponent(`Hola Sebastian G, el enlace de mi sesión "${galleryData.clientName || 'Cliente'}" ha expirado. ¿Podrías reactivarlo para terminar de elegir mis fotos?`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-xl transition-all"
+                >
+                  <span>Solicitar Reactivación por WhatsApp 📲</span>
+                </a>
               </div>
             </div>
           )}
@@ -820,39 +830,41 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           </div>
         </div>
 
-        {/* GRID DE FOTOS CON PROTECCIÓN Y MARCA DE AGUA GIGANTE */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {(galleryData.photos || []).map((photo, index) => {
-            const isSelected = Boolean(selections[photo.id]?.selected);
-            const clientComment = selections[photo.id]?.comment || '';
+        {/* GRID DE FOTOS CON PROTECCIÓN Y MARCA DE AGUA (solo si la sesión sigue vigente o fue entregada) */}
+        {(!galleryData.isExpired || galleryData.isDelivered || galleryData.isSubmitted) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {(galleryData.photos || []).map((photo, index) => {
+              const isSelected = Boolean(selections[photo.id]?.selected);
+              const clientComment = selections[photo.id]?.comment || '';
 
-            return (
-              <div
-                key={photo.id}
-                className={`relative rounded-3xl overflow-hidden bg-stone-900 border transition-all duration-300 ${
-                  isSelected
-                    ? 'border-amber-400 ring-2 ring-amber-400/40 shadow-2xl shadow-amber-500/10'
-                    : 'border-stone-800'
-                }`}
-              >
-                {/* CONTENEDOR DE IMAGEN CON PROTECCIÓN */}
-                <div 
-                  className="relative aspect-[4/5] w-full overflow-hidden bg-black select-none cursor-pointer"
-                  onClick={() => togglePhotoSelection(photo.id)}
+              return (
+                <div
+                  key={photo.id}
+                  className={`relative rounded-3xl overflow-hidden bg-stone-900 border transition-all duration-300 ${
+                    isSelected
+                      ? 'border-amber-400 ring-2 ring-amber-400/40 shadow-2xl shadow-amber-500/10'
+                      : 'border-stone-800'
+                  }`}
                 >
-                  {/* FOTO RENDERIZADA EN CANVAS (INMUNE A INSPECCIÓN Y DESCARGA) */}
-                  <ProtectedCanvasImage
-                    src={photo.url}
-                    alt={photo.title}
-                    objectFit="cover"
-                    watermark={false}
-                  />
+                  {/* CONTENEDOR DE IMAGEN CON PROTECCIÓN */}
+                  <div 
+                    className="relative aspect-[4/5] w-full overflow-hidden bg-black select-none cursor-pointer"
+                    onClick={() => togglePhotoSelection(photo.id)}
+                  >
+                    {/* FOTO RENDERIZADA EN CANVAS (CON MARCA DE AGUA FUSIONADA EN PÍXELES SI NO ESTÁ ENTREGADA) */}
+                    <ProtectedCanvasImage
+                      src={photo.url}
+                      alt={photo.title}
+                      objectFit="cover"
+                      watermark={!galleryData.isDelivered && galleryData.status !== 'delivered'}
+                      watermarkText={galleryData?.watermarkSettings?.watermarkText || "SEBASTIAN G"}
+                    />
 
-                  {/* MARCA DE AGUA: EXCLUSIVAMENTE EL LOGOTIPO DEL FOTÓGRAFO EN EL CENTRO */}
-                  <div className="watermark-overlay z-20 pointer-events-none flex items-center justify-center">
-                    <div className="watermark-content flex items-center justify-center">
-                      <img
-                        src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
+                    {/* MARCA DE AGUA: LOGOTIPO DEL FOTÓGRAFO EN EL CENTRO */}
+                    <div className="watermark-overlay z-20 pointer-events-none flex items-center justify-center">
+                      <div className="watermark-content flex items-center justify-center">
+                        <img
+                          src={galleryData?.watermarkSettings?.watermarkLogoUrl || "/app-icon.png"}
                         alt="Sebastian G"
                         className="w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-2xl drop-shadow-[0_4px_16px_rgba(0,0,0,0.85)] opacity-85"
                       />
@@ -932,8 +944,10 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
             );
           })}
         </div>
+        )}
 
-        {/* BARRA FLOTANTE INFERIOR PARA ENVIAR SELECCIÓN FINAL */}
+        {/* BARRA FLOTANTE INFERIOR PARA ENVIAR SELECCIÓN FINAL (oculta si expiró) */}
+        {(!galleryData.isExpired || galleryData.isDelivered) && (
         <div className="fixed bottom-0 inset-x-0 z-40 bg-stone-950/95 backdrop-blur-md border-t border-stone-800 p-4 shadow-2xl">
           <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
@@ -987,6 +1001,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
             </div>
           </div>
         </div>
+        )}
 
         {/* MODAL DE CONFIRMACIÓN Y PASARELA DE PAGO DIRECTO */}
         {confirmModalOpen && (

@@ -104,21 +104,52 @@ export default function ProtectedCanvasImage({
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
 
-    // Marca de agua central protegida en pixeles (únicamente en el centro)
+    // Marca de agua protegida en pixeles del canvas (mosaico diagonal + sello central)
     if (watermark) {
       ctx.save();
+
+      // 1. Mosaico diagonal repetido a lo largo de toda la fotografía
+      ctx.save();
+      ctx.rotate(-28 * Math.PI / 180);
+      const stepX = Math.max(180, Math.floor(targetWidth * 0.45));
+      const stepY = Math.max(80, Math.floor(targetHeight * 0.15));
+      const diagSize = Math.max(targetWidth, targetHeight) * 2;
+      const mosaicFontSize = Math.max(12, Math.floor(targetWidth * 0.035));
+      ctx.font = `800 ${mosaicFontSize}px sans-serif`;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.lineWidth = 2;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      const centerTitleSize = Math.max(16, Math.floor(targetWidth * 0.07));
+      const mosaicText = 'SEBASTIAN G • MUESTRA';
+      for (let y = -diagSize; y < diagSize; y += stepY) {
+        for (let x = -diagSize; x < diagSize; x += stepX) {
+          ctx.strokeText(mosaicText, x, y);
+          ctx.fillText(mosaicText, x, y);
+        }
+      }
+      ctx.restore();
+
+      // 2. Marca de agua central destacada
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const centerTitleSize = Math.max(18, Math.floor(targetWidth * 0.065));
       ctx.font = `900 ${centerTitleSize}px sans-serif`;
-      ctx.lineWidth = Math.max(2.5, centerTitleSize * 0.12);
+      ctx.lineWidth = Math.max(3, centerTitleSize * 0.14);
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
       ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 10;
       ctx.strokeText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
       ctx.fillText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
+
+      // Subtexto central
+      const subSize = Math.max(10, Math.floor(targetWidth * 0.026));
+      ctx.font = `700 ${subSize}px sans-serif`;
+      ctx.lineWidth = 2;
+      ctx.strokeText('MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA', targetWidth / 2, (targetHeight / 2) + centerTitleSize * 1.1);
+      ctx.fillText('MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA', targetWidth / 2, (targetHeight / 2) + centerTitleSize * 1.1);
 
       ctx.restore();
     }
