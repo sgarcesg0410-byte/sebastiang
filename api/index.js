@@ -405,10 +405,6 @@ app.get('/api/packages', (req, res) => {
   res.json(runtimeDB.packages || []);
 });
 
-app.get('/api/reviews', (req, res) => {
-  res.json(runtimeDB.reviews || []);
-});
-
 
 app.get('/api/admin/wallets', (req, res) => {
   res.json(runtimeDB.walletBalances || { nequi: 0, daviplata: 0, dale: 0 });
@@ -494,7 +490,7 @@ app.post('/api/bookings', async (req, res) => {
   // En Vercel Serverless, res.json() congela el proceso inmediatamente y descarta
   // cualquier promesa no resuelta. Es mandatorio esperar la sincronización a la nube,
   // el envío de correos y la notificación push con Promise.allSettled antes de responder:
-  const backgroundTasks = [
+  await Promise.allSettled([
     syncBookingToSupabaseServer(newBooking).catch(e => {
       console.warn('Supabase sync server error:', e?.message || e);
       return null;
@@ -512,9 +508,7 @@ app.post('/api/bookings', async (req, res) => {
       console.error('Error OneSignal Push reserva:', err?.message || err);
       return null;
     })
-  ];
-
-  await Promise.allSettled(backgroundTasks);
+  ]);
 
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
@@ -1576,18 +1570,18 @@ app.all('/api/bot-webhook', async (req, res) => {
     } else if (cleanMsg === '4' || cleanMsg.includes('nequi') || cleanMsg.includes('pago')) {
       replyText = `💳 *CUENTAS OFICIALES:*\n🟣 Nequi: 324 472 5167\n🔴 DaviPlata: @PLATA3244725167\n🟡 Dale!: @SGG04`;
     } else if (cleanMsg === '5' || cleanMsg.includes('humano') || cleanMsg.includes('sebastian')) {
-      sendOneSignalPush({
+      await sendOneSignalPush({
         title: '💬 Cliente solicita hablar contigo',
         message: `${sender} quiere hablar con Sebastian G en WhatsApp`,
         url: 'https://sebastiang.app/?mode=admin'
-      });
+      }).catch(err => console.error('Error push bot WhatsApp:', err?.message || err));
       replyText = `👨💼 *¡Entendido! Ya le avisé a Sebastian.* En unos minutos estará contigo.`;
     } else if (cleanMsg.includes('comprobante') || cleanMsg.includes('transfiri')) {
-      sendOneSignalPush({
+      await sendOneSignalPush({
         title: '💰 Comprobante enviado por WhatsApp',
         message: `${sender} indica que envió un comprobante`,
         url: 'https://sebastiang.app/?mode=admin'
-      });
+      }).catch(err => console.error('Error push bot WhatsApp:', err?.message || err));
       replyText = `✅ *¡Muchas gracias por tu comprobante!* Sebastian lo revisará en breve.`;
     } else {
       replyText = `¡Hola! 👋 Bienvenido a *Sebastian G • Fotografía* 📸✨\n1️⃣ Paquetes y precios\n2️⃣ Reservar fecha\n3️⃣ Ver portafolio\n4️⃣ Cuentas de pago\n5️⃣ Hablar con Sebastian\n👉 *Escribe el número de la opción*`;

@@ -182,8 +182,58 @@ import {
 
 import { findNextBookingSameDay, parseDateTimeString, minutesToLabel } from '../services/bookingAvailability';
 
+// Función para quemar la marca de agua antipiratería directamente en los píxeles de la imagen
+function applyCanvasWatermark(ctx, width, height, title = 'SEBASTIAN G', sub = 'MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA') {
+  ctx.save();
+
+  // 1. Mosaico diagonal repetido a lo largo de toda la imagen
+  ctx.save();
+  ctx.rotate(-28 * Math.PI / 180);
+  const stepX = Math.max(180, Math.floor(width * 0.45));
+  const stepY = Math.max(80, Math.floor(height * 0.15));
+  const diagSize = Math.max(width, height) * 2;
+  const mosaicFontSize = Math.max(12, Math.floor(width * 0.035));
+  ctx.font = `800 ${mosaicFontSize}px sans-serif`;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.lineWidth = 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const mosaicText = 'SEBASTIAN G • MUESTRA';
+  for (let y = -diagSize; y < diagSize; y += stepY) {
+    for (let x = -diagSize; x < diagSize; x += stepX) {
+      ctx.strokeText(mosaicText, x, y);
+      ctx.fillText(mosaicText, x, y);
+    }
+  }
+  ctx.restore();
+
+  // 2. Sello central destacado
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const centerTitleSize = Math.max(18, Math.floor(width * 0.065));
+  ctx.font = `900 ${centerTitleSize}px sans-serif`;
+  ctx.lineWidth = Math.max(3, centerTitleSize * 0.14);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+  ctx.shadowBlur = 10;
+  ctx.strokeText(title, width / 2, height / 2);
+  ctx.fillText(title, width / 2, height / 2);
+
+  // Subtexto central
+  const subSize = Math.max(10, Math.floor(width * 0.026));
+  ctx.font = `700 ${subSize}px sans-serif`;
+  ctx.lineWidth = 2;
+  ctx.strokeText(sub, width / 2, (height / 2) + centerTitleSize * 1.1);
+  ctx.fillText(sub, width / 2, (height / 2) + centerTitleSize * 1.1);
+
+  ctx.restore();
+}
+
 // Función para procesar y optimizar fotos de manera ultraligera y segura (ideal para celulares, APK y web)
-async function compressImageFile(file, maxWidth = 1200, quality = 0.78) {
+async function compressImageFile(file, maxWidth = 1200, quality = 0.78, watermark = false) {
   // Detectar soporte para WebP (reduce 95% el peso manteniendo colores y nitidez profesionales)
   let targetMime = 'image/jpeg';
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
@@ -231,6 +281,9 @@ async function compressImageFile(file, maxWidth = 1200, quality = 0.78) {
         ctx.imageSmoothingQuality = 'medium';
         ctx.drawImage(bitmap, 0, 0, width, height);
         if (bitmap.close) bitmap.close();
+        if (watermark) {
+          applyCanvasWatermark(ctx, width, height);
+        }
         return canvas.toDataURL(targetMime, quality);
       }
     } catch (errBitmap) {
@@ -277,6 +330,9 @@ async function compressImageFile(file, maxWidth = 1200, quality = 0.78) {
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'medium';
           ctx.drawImage(img, 0, 0, width, height);
+          if (watermark) {
+            applyCanvasWatermark(ctx, width, height);
+          }
           resolve(canvas.toDataURL(targetMime, quality));
         } catch (e) {
           if (src && src.startsWith('data:')) resolve(src);
@@ -3032,8 +3088,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setProcessProgress({ current: i + 1, total: files.length });
       const file = files[i];
       try {
-        // Redimensionamiento a 1280px con 78% de calidad: nitidez HD, peso ligero (~90KB) y 0 fallos de memoria
-        const compressedBase64 = await compressImageFile(file, 1280, 0.78);
+        // Redimensionamiento a 1280px con 78% de calidad y marca de agua antipiratería quemada en el archivo
+        const compressedBase64 = await compressImageFile(file, 1280, 0.78, true);
         newItems.push({
           id: `upl-${Date.now()}-${startIndex + i + 1}-${Math.random().toString(36).substring(2, 6)}`,
           title: `Foto #${startIndex + i + 1}`,
