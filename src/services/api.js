@@ -203,6 +203,133 @@ export function addDeletedCatalogId(id) {
   } catch (e) {}
 }
 
+export const DEFAULT_PRINT_SIZES = [
+  {
+    id: '10x15',
+    dimensions: '10x15 cm',
+    label: '10x15 cm',
+    price: 7000,
+    category: 'foto',
+    type: 'Foto Impresa',
+    desc: 'Papel fotográfico profesional de laboratorio • Formato estándar de bolsillo o álbum',
+    tag: 'Estándar'
+  },
+  {
+    id: '15x20',
+    dimensions: '15x20 cm',
+    label: '15x20 cm',
+    price: 8000,
+    category: 'foto',
+    type: 'Foto Impresa',
+    desc: 'Papel fotográfico profesional • Formato ideal para portarretratos de mesa',
+    tag: 'Portarretrato'
+  },
+  {
+    id: '20x30',
+    dimensions: '20x30 cm',
+    label: '20x30 cm',
+    price: 30000,
+    category: 'ampliacion',
+    type: 'Ampliación HD',
+    desc: 'Ampliación tamaño carta / A4 de alta definición para enmarcar',
+    tag: 'Ampliación'
+  },
+  {
+    id: '30x45',
+    dimensions: '30x45 cm',
+    label: '30x45 cm',
+    price: 60000,
+    category: 'cuadro',
+    type: 'Cuadro Mediano',
+    desc: 'Medida perfecta para decoración en salas, estudios o pasillos',
+    tag: 'Cuadro'
+  },
+  {
+    id: '40x50',
+    dimensions: '40x50 cm',
+    label: '40x50 cm',
+    price: 85000,
+    category: 'cuadro',
+    type: 'Cuadro Galería',
+    desc: 'Formato de galería con nitidez y presencia cinematográfica',
+    tag: 'Galería'
+  },
+  {
+    id: '50x70',
+    dimensions: '50x70 cm',
+    label: '50x70 cm',
+    price: 110000,
+    category: 'gran_formato',
+    type: 'Gran Formato',
+    desc: 'Gran formato vertical de alto impacto visual y elegancia',
+    tag: 'Gran Formato'
+  },
+  {
+    id: '70x50',
+    dimensions: '70x50 cm',
+    label: '70x50 cm',
+    price: 120000,
+    category: 'gran_formato',
+    type: 'Panorámico / Retablo',
+    desc: 'Gran formato horizontal / acabado retablo de lujo para sala principal',
+    tag: 'Panorámico'
+  },
+  {
+    id: '70x100',
+    dimensions: '70x100 cm',
+    label: '70x100 cm',
+    price: 200000,
+    category: 'premium',
+    type: 'Cuadro Premium (1 metro)',
+    desc: 'Cuadro / póster gigante de 1 metro • Máximo lujo fotográfico',
+    tag: 'Póster Gigante (1m)'
+  }
+];
+
+export function getPrintSizes(settings = {}) {
+  const custom = settings?.printSizes;
+  if (Array.isArray(custom) && custom.length > 0) return custom;
+  return DEFAULT_PRINT_SIZES.map(item => {
+    let p = item.price;
+    if (item.id === '10x15' && settings.printedPhotoPrice) p = Number(settings.printedPhotoPrice);
+    if (item.id === '15x20' && settings.printedPhoto15x20Price) p = Number(settings.printedPhoto15x20Price);
+    if (item.id === '20x30' && settings.printedPhoto20x30Price) p = Number(settings.printedPhoto20x30Price);
+    if (item.id === '30x45' && settings.printedPhoto30x45Price) p = Number(settings.printedPhoto30x45Price);
+    if (item.id === '40x50' && settings.printedPhoto40x50Price) p = Number(settings.printedPhoto40x50Price);
+    if (item.id === '50x70' && settings.printedPhoto50x70Price) p = Number(settings.printedPhoto50x70Price);
+    if (item.id === '70x50' && settings.printedPhoto70x50Price) p = Number(settings.printedPhoto70x50Price);
+    if (item.id === '70x100' && settings.printedPhoto70x100Price) p = Number(settings.printedPhoto70x100Price);
+    return { ...item, price: p };
+  });
+}
+
+export function formatPrintedPhotosSummary(bookingOrSizes, sizesCatalog = DEFAULT_PRINT_SIZES) {
+  if (!bookingOrSizes) return '';
+  const sizes = bookingOrSizes.printedSizes || (typeof bookingOrSizes === 'object' && !bookingOrSizes.packageName ? bookingOrSizes : {});
+  const parts = [];
+
+  for (const [id, qty] of Object.entries(sizes)) {
+    const q = Number(qty);
+    if (q > 0) {
+      const match = sizesCatalog.find(s => s.id === id);
+      const name = match ? match.dimensions : id;
+      const isLarge = match?.category === 'cuadro' || match?.category === 'gran_formato' || match?.category === 'premium';
+      parts.push(`+ ${q} ${isLarge ? 'Cuadro(s)' : 'Foto(s)'} ${name}`);
+    }
+  }
+
+  if (parts.length === 0 && typeof bookingOrSizes === 'object') {
+    const c10 = Number(bookingOrSizes.printedPhotos10x15Count || (bookingOrSizes.printedPhotosCount && !bookingOrSizes.printedPhotos15x20Count ? bookingOrSizes.printedPhotosCount : 0));
+    const c15 = Number(bookingOrSizes.printedPhotos15x20Count || 0);
+    if (c10 > 0 && c15 > 0) parts.push(`+ ${c10} Fotos (10x15) y + ${c15} Fotos (15x20)`);
+    else if (c10 > 0) parts.push(`+ ${c10} Fotos (10x15)`);
+    else if (c15 > 0) parts.push(`+ ${c15} Fotos (15x20)`);
+    else if (Number(bookingOrSizes.printedPhotosCount) > 0) parts.push(`+ ${bookingOrSizes.printedPhotosCount} Fotos impresas`);
+  }
+
+  return parts.join(', ');
+}
+
 export const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
   photographerWhatsApp: "+573244725167",
@@ -215,7 +342,14 @@ export const DEFAULT_SETTINGS = {
   watermarkLogoUrl: "/app-icon.png",
   adminPinHash: DEFAULT_PIN_HASH,
   printedPhotoPrice: 7000,
-  printedPhoto15x20Price: 8000
+  printedPhoto15x20Price: 8000,
+  printedPhoto20x30Price: 30000,
+  printedPhoto30x45Price: 60000,
+  printedPhoto40x50Price: 85000,
+  printedPhoto50x70Price: 110000,
+  printedPhoto70x50Price: 120000,
+  printedPhoto70x100Price: 200000,
+  printSizes: DEFAULT_PRINT_SIZES
 };
 
 // Helpers de almacenamiento local de respaldo
@@ -1066,17 +1200,10 @@ export async function createBooking(data) {
   if (!directWhatsAppUrl) {
     const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
     const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
-    const count10x15 = Number(newBooking.printedPhotos10x15Count || (newBooking.printedPhotosCount && !newBooking.printedPhotos15x20Count ? newBooking.printedPhotosCount : 0));
-    const count15x20 = Number(newBooking.printedPhotos15x20Count || 0);
     let printedDetails = '';
-    if (count10x15 > 0 && count15x20 > 0) {
-      printedDetails = `🖼️ *Fotos Impresas:* ${count10x15} en 10x15 y ${count15x20} en 15x20\n`;
-    } else if (count10x15 > 0) {
-      printedDetails = `🖼️ *Fotos Impresas (10x15):* ${count10x15} unidades\n`;
-    } else if (count15x20 > 0) {
-      printedDetails = `🖼️ *Fotos Impresas (15x20):* ${count15x20} unidades\n`;
-    } else if (Number(newBooking.printedPhotosCount) > 0) {
-      printedDetails = `🖼️ *Fotos Impresas:* ${newBooking.printedPhotosCount} unidades\n`;
+    const summary = formatPrintedPhotosSummary(newBooking);
+    if (summary) {
+      printedDetails = `🖼️ *Fotos Impresas / Cuadros:* ${summary}\n`;
     }
 
     const msg = encodeURIComponent(

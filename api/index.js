@@ -451,12 +451,28 @@ app.post('/api/settings', (req, res) => {
 });
 
 app.post('/api/bookings', (req, res) => {
-  const { clientName, clientWhatsApp, clientEmail, packageId, locationType, specificLocation, dateTime, description } = req.body;
+  const { 
+    clientName, 
+    clientWhatsApp, 
+    clientEmail, 
+    packageId, 
+    locationType, 
+    specificLocation, 
+    dateTime, 
+    description,
+    totalPrice,
+    printedPhotosCount,
+    printedPhotos10x15Count,
+    printedPhotos15x20Count,
+    printedSizes,
+    printedPhotosSummary
+  } = req.body;
   const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
 
   let finalPrice = pkg.price;
   const surcharge = runtimeDB.settings.outOfSanAnteroSurcharge || 10000;
   if (locationType === 'outside') finalPrice += surcharge;
+  if (totalPrice && Number(totalPrice) > 0) finalPrice = Number(totalPrice);
 
   const newBooking = {
     id: `book-${Date.now()}`,
@@ -470,6 +486,11 @@ app.post('/api/bookings', (req, res) => {
     specificLocation: (specificLocation || '').trim(),
     dateTime,
     description: (description || '').trim(),
+    printedPhotosCount: Number(printedPhotosCount) || 0,
+    printedPhotos10x15Count: Number(printedPhotos10x15Count) || 0,
+    printedPhotos15x20Count: Number(printedPhotos15x20Count) || 0,
+    printedSizes: printedSizes || {},
+    printedPhotosSummary: printedPhotosSummary || '',
     createdAt: new Date().toISOString(),
     status: 'pending',
     isReal: true
@@ -501,6 +522,7 @@ app.post('/api/bookings', (req, res) => {
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
     (newBooking.clientEmail ? `✉️ *Correo:* ${newBooking.clientEmail}\n` : '') +
     `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice.toLocaleString('es-CO')} COP)\n` +
+    (newBooking.printedPhotosSummary ? `🖼️ *Fotos Impresas / Cuadros:* ${newBooking.printedPhotosSummary}\n` : '') +
     `📍 *Lugar:* ${newBooking.locationType === 'outside_san_antero' ? 'Locación Especial / Fuera (' + newBooking.specificLocation + ')' : 'Sesión Local (' + newBooking.specificLocation + ')'}\n` +
     `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
     `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}`
@@ -912,7 +934,7 @@ app.get('/api/admin/payments', (req, res) => {
 });
 
 app.post('/api/payments', (req, res) => {
-  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount, printedPhotos10x15Count, printedPhotos15x20Count, status, concept } = req.body;
+  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount, printedPhotos10x15Count, printedPhotos15x20Count, printedSizes, printedPhotosSummary, status, concept } = req.body;
   const newPayment = {
     id: `pay-${Date.now()}`,
     clientName: (clientName || 'Cliente').trim(),
@@ -927,6 +949,8 @@ app.post('/api/payments', (req, res) => {
     printedPhotosCount: Number(printedPhotosCount) || 0,
     printedPhotos10x15Count: Number(printedPhotos10x15Count) || 0,
     printedPhotos15x20Count: Number(printedPhotos15x20Count) || 0,
+    printedSizes: printedSizes || {},
+    printedPhotosSummary: printedPhotosSummary || '',
     concept: concept || 'Sesión Fotográfica',
     status: status || 'verified',
     createdAt: new Date().toISOString()
@@ -953,7 +977,9 @@ app.post('/api/payments', (req, res) => {
   };
   const methodName = methodNames[newPayment.method] || newPayment.method;
 
-  const printedDetailText = (newPayment.printedPhotos10x15Count > 0 && newPayment.printedPhotos15x20Count > 0)
+  const printedDetailText = newPayment.printedPhotosSummary
+    ? ` + ${newPayment.printedPhotosSummary}`
+    : (newPayment.printedPhotos10x15Count > 0 && newPayment.printedPhotos15x20Count > 0)
     ? ` + ${newPayment.printedPhotos10x15Count} impr. 10x15 y ${newPayment.printedPhotos15x20Count} impr. 15x20`
     : newPayment.printedPhotos15x20Count > 0
       ? ` + ${newPayment.printedPhotos15x20Count} fotos impresas 15x20`
