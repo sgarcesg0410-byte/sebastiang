@@ -85,6 +85,7 @@ import {
 } from '../services/onesignal';
 import { 
   verifyAdminPin, 
+  changeAdminPasswordOnServer,
   forgetTrustedDevice,
   getAdminBookings, 
   updateBookingStatus, 
@@ -394,6 +395,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [isPushSubscribed, setIsPushSubscribed] = useState(false);
   const [isTestingPush, setIsTestingPush] = useState(false);
   const [pushStatusMessage, setPushStatusMessage] = useState('');
+
+  // Cambio de Contraseña de Administrador desde el Dashboard
+  const [pinChangeForm, setPinChangeForm] = useState({ currentPin: '', newPin: '', confirmPin: '' });
+  const [pinChangeMsg, setPinChangeMsg] = useState('');
+  const [pinChangeError, setPinChangeError] = useState('');
+  const [isChangingPin, setIsChangingPin] = useState(false);
+  const [showCurrentPin, setShowCurrentPin] = useState(false);
+  const [showNewPin, setShowNewPin] = useState(false);
 
   // Pestañas
   const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'payments' | 'reviews' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
@@ -3320,6 +3329,32 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       reader.readAsText(file);
     } catch (err) {
       alert('Error al leer archivo: ' + err.message);
+    }
+  };
+
+  const handleChangePinSubmit = async (e) => {
+    e.preventDefault();
+    setPinChangeMsg('');
+    setPinChangeError('');
+
+    if (pinChangeForm.newPin.length < 8) {
+      setPinChangeError('La nueva contraseña debe tener al menos 8 caracteres para máxima seguridad.');
+      return;
+    }
+    if (pinChangeForm.newPin !== pinChangeForm.confirmPin) {
+      setPinChangeError('La nueva contraseña y su confirmación no coinciden.');
+      return;
+    }
+
+    try {
+      setIsChangingPin(true);
+      const res = await changeAdminPasswordOnServer(pinChangeForm.currentPin, pinChangeForm.newPin);
+      setPinChangeMsg(res.message || '✓ ¡Contraseña actualizada con éxito en la nube!');
+      setPinChangeForm({ currentPin: '', newPin: '', confirmPin: '' });
+    } catch (err) {
+      setPinChangeError(err.message || 'Error al actualizar contraseña.');
+    } finally {
+      setIsChangingPin(false);
     }
   };
 
@@ -8748,30 +8783,116 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           </div>
 
-          {/* SECCIÓN 2: SEGURIDAD Y ACCESO DE LA BÓVEDA */}
-          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-4">
+          {/* SECCIÓN 2: SEGURIDAD Y CAMBIO DE CONTRASEÑA DIRECTO */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-5">
             <div>
               <span className="text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
                 <Lock className="w-4 h-4 text-amber-400" />
                 Seguridad de la Bóveda VIP
               </span>
               <h3 className="text-xl font-serif font-bold text-white mt-1">
-                Contraseña Maestra de Acceso
+                Cambiar Contraseña del Panel
               </h3>
               <p className="text-xs text-stone-400 mt-1">
-                Por seguridad de nivel bancario, la contraseña está protegida mediante derivación criptográfica scrypt en el servidor (Vercel).
+                Actualiza tu clave de acceso directamente desde aquí. Se guardará de forma segura y cifrada (scrypt) en la nube para todos tus dispositivos.
               </p>
             </div>
 
-            <div className="p-4 bg-stone-950/80 border border-stone-800/80 rounded-2xl space-y-2 text-xs text-stone-300">
-              <div className="flex items-center gap-2 text-amber-400 font-semibold">
-                <ShieldCheck className="w-4 h-4" />
-                <span>Protección Criptográfica Activa</span>
+            {pinChangeMsg && (
+              <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{pinChangeMsg}</span>
               </div>
-              <p className="text-stone-400 text-[11px] leading-relaxed">
-                Para rotar tu contraseña en cualquier momento, genera un nuevo hash con <code className="text-amber-300 bg-stone-900 px-1.5 py-0.5 rounded font-mono">node scripts/hash-admin-pin.mjs &quot;TuNuevaClave&quot;</code> y actualiza la variable de entorno <code className="text-amber-300 bg-stone-900 px-1.5 py-0.5 rounded font-mono">ADMIN_PIN_SCRYPT</code> en tu panel de Vercel.
-              </p>
-            </div>
+            )}
+
+            {pinChangeError && (
+              <div className="p-3 bg-red-950/80 border border-red-500/50 rounded-xl text-red-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{pinChangeError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePinSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
+                  Contraseña Actual *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showCurrentPin ? "text" : "password"}
+                    required
+                    value={pinChangeForm.currentPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, currentPin: e.target.value })}
+                    placeholder="Escribe tu contraseña actual"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-amber-500 font-mono pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPin(!showCurrentPin)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-stone-500 hover:text-amber-400"
+                  >
+                    {showCurrentPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
+                    Nueva Contraseña (Mínimo 8 caracteres) *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPin ? "text" : "password"}
+                      required
+                      value={pinChangeForm.newPin}
+                      onChange={(e) => setPinChangeForm({ ...pinChangeForm, newPin: e.target.value })}
+                      placeholder="Mínimo 8 caracteres"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-amber-500 font-mono pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPin(!showNewPin)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-stone-500 hover:text-amber-400"
+                    >
+                      {showNewPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
+                    Confirma tu Nueva Contraseña *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={pinChangeForm.confirmPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, confirmPin: e.target.value })}
+                    placeholder="Repite la nueva contraseña"
+                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isChangingPin || !pinChangeForm.currentPin || !pinChangeForm.newPin}
+                className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-bold py-3.5 rounded-xl text-xs transition-all shadow-md shadow-amber-500/20 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isChangingPin ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-stone-950" />
+                    <span>Guardando nueva contraseña en la nube...</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-4 h-4" />
+                    <span>Actualizar Contraseña de Acceso</span>
+                  </>
+                )}
+              </button>
+            </form>
           </div>
 
           {/* SECCIÓN 2.5: ACCESO BIOMÉTRICO (HUELLA DACTILAR / FACE ID) */}

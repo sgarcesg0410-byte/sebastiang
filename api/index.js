@@ -799,7 +799,37 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
 // ==============================================================================
 // AUTENTICACIÓN ADMIN (HARDENED CON RATE LIMITING Y TIEMPO CONSTANTE)
 // ==============================================================================
-app.post('/api/admin/auth', (req, res) => {
+async function getActiveAdminScryptHash() {
+  if (runtimeDB.settings?.adminPinScrypt) {
+    return runtimeDB.settings.adminPinScrypt;
+  }
+  if (SUPABASE_REST_KEY) {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.system_admin_pin_hash&select=*`, {
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`
+        }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (rows && rows[0]?.url) {
+          const parsed = JSON.parse(rows[0].url);
+          if (parsed && parsed.scryptHash) {
+            runtimeDB.settings = runtimeDB.settings || {};
+            runtimeDB.settings.adminPinScrypt = parsed.scryptHash;
+            return parsed.scryptHash;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Aviso leyendo system_admin_pin_hash de Supabase:', e.message || e);
+    }
+  }
+  return process.env.ADMIN_PIN_SCRYPT || '';
+}
+
+app.post('/api/admin/auth', async (req, res) => {
   const ip = getClientIp(req);
   const rateCheck = checkRateLimit(ip);
 
@@ -817,18 +847,20 @@ app.post('/api/admin/auth', (req, res) => {
 
   // Verificación del PIN en el SERVIDOR (el navegador ya no conoce el hash).
   // Prioridad:
-  // 1. ADMIN_PIN_SCRYPT (scrypt robusto de 8+ caracteres, recomendado)
-  // 2. ADMIN_PIN_HASH (SHA-256 explícito en variables de entorno)
-  // 3. Fallback a 0493 únicamente si aún no se configuró ninguna variable en Vercel
-  const hasConfiguredPin = Boolean(process.env.ADMIN_PIN_SCRYPT || process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash);
+  // 1. Hash dinámico guardado en Supabase Cloud (cambiado desde el Dashboard)
+  // 2. ADMIN_PIN_SCRYPT (scrypt robusto de 8+ caracteres en variables de entorno)
+  // 3. ADMIN_PIN_HASH (SHA-256 explícito en variables de entorno)
+  // 4. Fallback a 0493 únicamente si aún no se configuró ninguna variable
+  const activeScrypt = await getActiveAdminScryptHash();
+  const hasConfiguredPin = Boolean(activeScrypt || process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash);
   const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || (!hasConfiguredPin ? KNOWN_WEAK_PIN_HASH : '');
 
   if (!hasConfiguredPin || isWeakConfiguredPin(effectiveSha)) {
-    console.warn('⚠️ [Seguridad] No se ha configurado un PIN robusto aún. Usa ADMIN_PIN_SCRYPT para activar tu nuevo PIN.');
+    console.warn('⚠️ [Seguridad] No se ha configurado un PIN robusto aún. Usa ADMIN_PIN_SCRYPT o cámbialo en el Dashboard.');
   }
 
   const pinOk = verifyAdminPin(pin, {
-    scryptHash: process.env.ADMIN_PIN_SCRYPT,
+    scryptHash: activeScrypt,
     sha256Hash: effectiveSha
   });
 
@@ -1350,27 +1382,76 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
 });
 
 // ==============================================================================
-// SEGURIDAD: CAMBIO DE PIN (solo con hash)
+// SEGURIDAD: CAMBIO DE CONTRASEÑA EN EL DASHBOARD (PERSISTENTE EN SUPABASE CON SCRYPT)
 // ==============================================================================
-app.post('/api/admin/pin/change', (req, res) => {
-  // El PIN se valida contra el hash del ENTORNO (ADMIN_PIN_SCRYPT o ADMIN_PIN_HASH).
-  // Antes este endpoint escribía el hash solo en memoria: parecía funcionar y se
-  // revertía en el siguiente arranque de la función serverless. Ahora se explica
-  // cómo cambiarlo de verdad en lugar de simular un cambio que no persiste.
-  const { currentPin } = req.body || {};
-  const expectedHash = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || '';
-
-  if (expectedHash && !secureCompare(hashSHA256(currentPin), expectedHash)) {
-    return res.status(401).json({ error: 'El PIN actual no coincide.' });
+app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
+  const { currentPin, newPin } = req.body || {};
+  if (!currentPin || !newPin) {
+    return res.status(400).json({ error: 'Por favor completa la contraseña actual y la nueva contraseña.' });
   }
 
-  return res.status(409).json({
-    error: 'El PIN se define en el servidor: un cambio desde aquí no sobreviviría al siguiente despliegue.',
-    howTo: [
-      'Genera el hash con: node scripts/hash-admin-pin.mjs "TU_PIN_NUEVO"',
-      'Actualiza la variable ADMIN_PIN_SCRYPT en Vercel (y en tu .env local).',
-      'Vuelve a desplegar.'
-    ]
+  const cleanCurrent = String(currentPin).trim();
+  const cleanNew = String(newPin).trim();
+
+  if (cleanNew.length < 8) {
+    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres para máxima seguridad.' });
+  }
+
+  const activeScrypt = await getActiveAdminScryptHash();
+  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || (!activeScrypt ? KNOWN_WEAK_PIN_HASH : '');
+
+  const currentOk = verifyAdminPin(cleanCurrent, {
+    scryptHash: activeScrypt,
+    sha256Hash: effectiveSha
+  });
+
+  if (!currentOk) {
+    return res.status(401).json({ error: 'La contraseña actual no es correcta.' });
+  }
+
+  // Generar derivación scrypt bancaria de la nueva contraseña
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(cleanNew, salt, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  const newScryptHash = 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
+
+  runtimeDB.settings = runtimeDB.settings || {};
+  runtimeDB.settings.adminPinScrypt = newScryptHash;
+
+  // Persistir en Supabase Cloud con la clave service_role
+  if (SUPABASE_REST_KEY) {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: 'system_admin_pin_hash',
+          title: 'Admin Security Hash',
+          category: 'security_data',
+          location: 'system',
+          url: JSON.stringify({
+            scryptHash: newScryptHash,
+            updatedAt: new Date().toISOString()
+          })
+        })
+      });
+
+      if (!supaRes.ok) {
+        const text = await supaRes.text();
+        console.warn('Aviso persistiendo contraseña en Supabase:', text);
+      }
+    } catch (supaErr) {
+      console.warn('Error al guardar hash en Supabase:', supaErr);
+    }
+  }
+
+  return res.json({
+    success: true,
+    message: '✓ ¡Contraseña actualizada con éxito! Ya puedes usarla en todos tus dispositivos.'
   });
 });
 

@@ -3409,3 +3409,21 @@ export async function deleteAllSampleCatalogPhotos() {
   return { success: true };
 }
 
+export async function changeAdminPasswordOnServer(currentPin, newPin) {
+  const token = getAdminSessionToken();
+  const res = await fetch(`${API_BASE}/admin/pin/change`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ currentPin, newPin })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Error al cambiar la contraseña en el servidor.');
+  }
+  return data;
+}
+
