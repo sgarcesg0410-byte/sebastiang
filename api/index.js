@@ -1133,7 +1133,10 @@ app.post('/api/admin/sessions', (req, res) => {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const cleanName = clientName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-  const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
+  // Token de la galeria: aleatorio CRIPTOGRAFICO y sin el nombre del cliente.
+  // Antes era `${cleanName}-${Math.random()}`: 6 caracteres de un PRNG no
+  // criptografico y el nombre de la persona en el enlace (adivinable + fuga de identidad).
+  const token = crypto.randomUUID();
   const finalPrice = Number(totalPrice || packagePrice || sessionBasePrice || 0);
 
   const newSession = {

@@ -2931,7 +2931,10 @@ export async function createAdminSession(data) {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const cleanName = (data.clientName || 'cliente').toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-  const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
+  // Token de la galeria: aleatorio CRIPTOGRAFICO y sin el nombre del cliente.
+  // Antes era `${cleanName}-${Math.random()}`: adivinable y con el nombre dentro.
+  const token = (globalThis.crypto?.randomUUID?.() ||
+    `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
 
   const finalPrice = Number(data.totalPrice || data.packagePrice || data.sessionBasePrice || 0);
 

@@ -431,7 +431,10 @@ app.post('/api/admin/sessions', (req, res) => {
 
   // Token único legible y seguro
   const cleanName = clientName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-  const token = `${cleanName}-${Math.random().toString(36).substring(2, 8)}`;
+  // Token de la galeria: aleatorio CRIPTOGRAFICO y sin el nombre del cliente.
+  // Antes era `${cleanName}-${Math.random()}`: 6 caracteres de un PRNG no
+  // criptografico y el nombre de la persona en el enlace (adivinable + fuga de identidad).
+  const token = crypto.randomUUID();
 
   const newSession = {
     id: `sess-${Date.now()}`,
