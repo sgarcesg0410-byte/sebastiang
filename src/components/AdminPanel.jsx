@@ -6725,13 +6725,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         <div className="max-w-3xl mx-auto space-y-6">
           <div>
             <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-              Calidad Lightroom Ultra HD • 3 Días de Vigencia
+              Galería de Preselección • Vigencia de 3 Días
             </span>
             <h3 className="text-2xl font-serif font-bold text-white">
               Crear Galería Privada para Selección del Cliente
             </h3>
             <p className="text-xs text-stone-400 mt-1">
-              Sube tus fotos editadas desde tu celular o PC. Conservan la nitidez, rango dinámico y colorimetría de Lightroom, protegidas con tu marca de agua central gigante de <strong>Sebastian G</strong>.
+              Sube tus fotos de muestra desde tu celular o PC. Se optimizan a ~1280 px con tu marca de agua indeleble de <strong>Sebastian G</strong> quemada en sus píxeles para que tu cliente elija sus favoritas con total agilidad. La entrega final en máxima resolución sin marcas se envía por enlace externo (WeTransfer / Drive) al entregar la sesión.
             </p>
           </div>
 

@@ -45,18 +45,6 @@ export default function ProtectedCanvasImage({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
-    const isLosingFocus = isTouchDevice ? document.hidden : (!document.hasFocus() || document.hidden);
-
-    // Si el escudo de seguridad está activo o se perdió el foco, pintar negro absoluto
-    if (
-      document.documentElement.classList.contains('security-blackout') ||
-      isLosingFocus
-    ) {
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, targetWidth, targetHeight);
-      return;
-    }
 
     if (!img || !img.complete || img.naturalWidth === 0) {
       ctx.fillStyle = '#0c0a09';

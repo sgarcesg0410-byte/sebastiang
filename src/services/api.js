@@ -1672,9 +1672,7 @@ export async function syncLiveGallerySelection(token, selections, selectedCount)
   }
 }
 
-// --- SISTEMA DE AUTENTICACIÓN CON DOBLE FACTOR (2FA) & DISPOSITIVOS CONFIABLES ---
-let active2FACodeHash = null;
-let active2FAExpiresAt = 0;
+// --- DISPOSITIVOS CONFIABLES ---
 
 export function isTrustedDevice() {
   try {
@@ -1703,120 +1701,6 @@ export function forgetTrustedDevice() {
   } catch (e) {}
 }
 
-export async function generateTwoFactorCode() {
-  // Generar código numérico criptográfico de 6 dígitos
-  let code = '';
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
-    const arr = new Uint32Array(1);
-    window.crypto.getRandomValues(arr);
-    code = String((arr[0] % 900000) + 100000);
-  } else {
-    code = String(Math.floor(100000 + Math.random() * 900000));
-  }
-
-  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutos
-  const codeHash = await hashStringSHA256(code);
-  active2FACodeHash = codeHash;
-  active2FAExpiresAt = expiresAt;
-
-  // 1. Guardar reto 2FA en Supabase para validación en la nube (tabla catalog)
-  try {
-    await supabase.from('catalog').upsert({
-      id: 'system_2fa_challenge',
-      title: 'Active 2FA Challenge',
-      category: 'system_security',
-      url: JSON.stringify({
-        codeHash,
-        expiresAt,
-        requestedAt: Date.now()
-      })
-    });
-  } catch (e) {
-    console.warn('Aviso Supabase 2FA challenge:', e);
-  }
-
-  // 2. Enviar correo real automático a sgarcesg0410@gmail.com vía backend Vercel
-  try {
-    await fetch(`${API_BASE}/send-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: '2fa_code',
-        data: {
-          code,
-          targetEmail: 'sgarcesg0410@gmail.com'
-        }
-      })
-    });
-  } catch (e) {
-    console.warn('Error enviando correo 2FA:', e);
-  }
-
-  return {
-    success: true,
-    expiresAt,
-    emailMasked: 'sga••••••0410@gmail.com',
-    secondaryEmailMasked: 'reservas@sebastiang.app'
-  };
-}
-
-export async function verifyTwoFactorCode(inputCode, rememberDevice = false) {
-  const cleanInput = String(inputCode || '').trim().toUpperCase();
-  if (!cleanInput) {
-    throw new Error('Por favor ingresa el código completo de 6 dígitos.');
-  }
-
-  const inputHash = await hashStringSHA256(cleanInput);
-
-  let expectedHash = active2FACodeHash;
-  let expires = active2FAExpiresAt;
-
-  // Si no está en memoria local, consultar Supabase por si se generó en otro contexto
-  if (!expectedHash) {
-    try {
-      const { data } = await supabase.from('catalog').select('*').eq('id', 'system_2fa_challenge').single();
-      if (data && data.url) {
-        const parsed = JSON.parse(data.url);
-        if (parsed && parsed.codeHash) {
-          expectedHash = parsed.codeHash;
-          expires = parsed.expiresAt;
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (!expectedHash) {
-    throw new Error('No hay ningún código activo o ha expirado. Por favor solicita uno nuevo.');
-  }
-
-  if (Date.now() > expires) {
-    active2FACodeHash = null;
-    active2FAExpiresAt = 0;
-    throw new Error('El código ha expirado (más de 10 minutos). Por favor genera uno nuevo.');
-  }
-
-  if (!secureCompare(inputHash, expectedHash)) {
-    throw new Error('Código de verificación 2FA incorrecto. Revisa tu correo sgarcesg0410@gmail.com.');
-  }
-
-  // Código validado exitosamente
-  active2FACodeHash = null;
-  active2FAExpiresAt = 0;
-
-  // Limpiar reto en Supabase
-  try {
-    await supabase.from('catalog').delete().eq('id', 'system_2fa_challenge');
-  } catch (e) {}
-
-  if (rememberDevice) {
-    saveTrustedDevice();
-  }
-
-  return {
-    success: true,
-    token: generateSessionToken()
-  };
-}
 
 const ADMIN_SESSION_TOKEN_KEY = 'sebastian_g_admin_server_session_v1';
 
@@ -3523,13 +3407,5 @@ export async function deleteAllSampleCatalogPhotos() {
     console.warn('Fallback local al purgar muestras:', err);
   }
   return { success: true };
-}
-
-export async function changeAdminPin() {
-  throw new Error('La contraseña maestra se administra de forma segura en las variables de entorno de Vercel.');
-}
-
-export async function recoverAdminPin() {
-  throw new Error('La recuperación de credenciales se gestiona mediante rotación de claves en Vercel.');
 }
 
