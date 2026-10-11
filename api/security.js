@@ -62,7 +62,13 @@ export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
   const value = String(pin ?? '');
   if (!value) return false;
 
-  const scryptConfig = scryptHash || process.env.ADMIN_PIN_SCRYPT || '';
+  let scryptConfig = String(scryptHash || process.env.ADMIN_PIN_SCRYPT || '').trim();
+  if (scryptConfig.startsWith('ADMIN_PIN_SCRYPT=')) {
+    scryptConfig = scryptConfig.substring('ADMIN_PIN_SCRYPT='.length).trim();
+  }
+  if ((scryptConfig.startsWith('"') && scryptConfig.endsWith('"')) || (scryptConfig.startsWith("'") && scryptConfig.endsWith("'"))) {
+    scryptConfig = scryptConfig.slice(1, -1).trim();
+  }
   if (scryptConfig.startsWith('scrypt$')) {
     const [, saltHex, hashHex] = scryptConfig.split('$');
     if (!saltHex || !hashHex) return false;
