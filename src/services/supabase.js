@@ -27,17 +27,31 @@ export const baseSupabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   }
 });
 
+function getStoredAdminToken() {
+  try {
+    return sessionStorage.getItem('sebastian_g_admin_server_session_v1')
+      || localStorage.getItem('sebastian_g_admin_server_session_v1')
+      || '';
+  } catch (e) {
+    return '';
+  }
+}
+
 /**
  * Ejecuta una mutación (upsert, insert, update, delete) pasando por el proxy
  * /api/admin/db con la sesión firmada de administrador.
  */
 async function executeProxyWrite(table, op, payload, match) {
   try {
+    const token = getStoredAdminToken();
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    };
+
     const res = await fetch('/api/admin/db', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify({ table, op, payload, match })
     });
 
@@ -57,7 +71,8 @@ async function executeProxyWrite(table, op, payload, match) {
 
 /**
  * Constructor de consultas encadenables para escrituras.
- * Soporta .eq(), .in(), y se puede usar directamente con `await`.
+ * Soporta .eq(), .in(), .match(), .select(), .single(), .maybeSingle(),
+ * y se puede usar directamente con `await`.
  */
 function createWriteBuilder(table, op, payload) {
   const match = {};
@@ -69,6 +84,21 @@ function createWriteBuilder(table, op, payload) {
     },
     in(col, vals) {
       match[col] = vals;
+      return builder;
+    },
+    match(obj) {
+      if (obj && typeof obj === 'object') {
+        Object.assign(match, obj);
+      }
+      return builder;
+    },
+    select() {
+      return builder;
+    },
+    single() {
+      return builder;
+    },
+    maybeSingle() {
       return builder;
     },
     then(onFulfilled, onRejected) {

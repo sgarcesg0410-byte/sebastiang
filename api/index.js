@@ -1565,7 +1565,12 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
 
   let url = `${SUPABASE_REST_URL}/rest/v1/${table}`;
   const filters = Object.entries(match || {})
-    .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`);
+    .map(([col, val]) => {
+      if (Array.isArray(val)) {
+        return `${encodeURIComponent(col)}=in.(${val.map(v => encodeURIComponent(v)).join(',')})`;
+      }
+      return `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`;
+    });
   if (filters.length) url += `?${filters.join('&')}`;
 
   const method = op === 'delete' ? 'DELETE' : (op === 'update' ? 'PATCH' : 'POST');
