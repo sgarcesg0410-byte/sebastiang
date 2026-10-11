@@ -1530,3 +1530,128 @@ app.all('/api/bot-webhook', async (req, res) => {
 });
 
 export default app;
+
+// ==============================================================================
+// PROXY DE BASE DE DATOS AUTENTICADO (Fase 2 - Opcion A)
+// ==============================================================================
+// El navegador ya no escribe directo en Supabase con la clave publica: manda la
+// operacion aqui, con su sesion de administrador, y el servidor la ejecuta con
+// service_role. Lista blanca estricta de tablas y operaciones.
+const DB_ALLOWED_TABLES = ['catalog', 'bookings', 'sessions', 'payments', 'reviews', 'system_config'];
+const DB_ALLOWED_OPS = ['upsert', 'insert', 'update', 'delete'];
+
+app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
+  const { table, op, payload, match } = req.body || {};
+
+  if (!DB_ALLOWED_TABLES.includes(String(table))) {
+    return res.status(400).json({ error: `Tabla no permitida: ${table}` });
+  }
+  if (!DB_ALLOWED_OPS.includes(String(op))) {
+    return res.status(400).json({ error: `Operacion no permitida: ${op}` });
+  }
+  if (!SUPABASE_REST_KEY) {
+    return res.status(503).json({ error: 'El servidor no tiene configurada la clave de Supabase.' });
+  }
+  if ((op === 'update' || op === 'delete') && (!match || !Object.keys(match).length)) {
+    return res.status(400).json({ error: 'Actualizar o borrar exige "match" para no afectar a toda la tabla.' });
+  }
+
+  const headers = {
+    'apikey': SUPABASE_REST_KEY,
+    'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': op === 'upsert' ? 'resolution=merge-duplicates,return=representation' : 'return=representation'
+  };
+
+  let url = `${SUPABASE_REST_URL}/rest/v1/${table}`;
+  const filters = Object.entries(match || {})
+    .map(([col, val]) => `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`);
+  if (filters.length) url += `?${filters.join('&')}`;
+
+  const method = op === 'delete' ? 'DELETE' : (op === 'update' ? 'PATCH' : 'POST');
+  const body = op === 'delete' ? undefined : JSON.stringify(payload ?? {});
+
+  try {
+    const r = await fetch(url, { method, headers, body });
+    const text = await r.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+    if (!r.ok) {
+      console.error(`[db] ${op} ${table} fallo (${r.status}):`, String(text).slice(0, 300));
+      return res.status(r.status).json({ error: 'Supabase rechazo la operacion.', detail: data });
+    }
+    return res.json({ success: true, data: Array.isArray(data) ? data : (data ? [data] : []) });
+  } catch (e) {
+    console.error('[db] error de red:', e?.message || e);
+    return res.status(502).json({ error: 'No se pudo contactar con Supabase.' });
+  }
+});
+
+// ==============================================================================
+// CLIENTES VIP (viven en catalog con id vip-<telefono> y url = JSON del cliente)
+// ==============================================================================
+async function supaFetch(path, init = {}) {
+  const headers = {
+    'apikey': SUPABASE_REST_KEY,
+    'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+    'Content-Type': 'application/json',
+    ...(init.headers || {})
+  };
+  return fetch(`${SUPABASE_REST_URL}/rest/v1/${path}`, { ...init, headers });
+}
+
+app.get('/api/admin/vip', requireAdminAuth, async (req, res) => {
+  try {
+    const r = await supaFetch('catalog?category=eq.vip_client&select=*');
+    const rows = r.ok ? await r.json() : [];
+    const clients = (Array.isArray(rows) ? rows : []).map(row => {
+      try { return JSON.parse(row.url); } catch (e) { return null; }
+    }).filter(Boolean);
+    return res.json(clients);
+  } catch (e) {
+    console.error('[vip] error al listar:', e?.message || e);
+    return res.status(502).json({ error: 'No se pudieron cargar los clientes VIP.' });
+  }
+});
+
+app.post('/api/admin/vip', requireAdminAuth, async (req, res) => {
+  const { client, id } = req.body || {};
+  if (!client || typeof client !== 'object') {
+    return res.status(400).json({ error: 'Falta el objeto "client".' });
+  }
+  const phone = String(client.clientWhatsApp || client.phone || '').replace(/\D/g, '');
+  const rowId = id || `vip-${phone}`;
+  if (!phone && !id) return res.status(400).json({ error: 'El cliente necesita telefono o id.' });
+  try {
+    const r = await supaFetch('catalog', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify({
+        id: rowId,
+        title: client.clientName || client.name || 'Cliente VIP',
+        category: 'vip_client',
+        location: phone,
+        url: JSON.stringify({ ...client, id: rowId })
+      })
+    });
+    if (!r.ok) return res.status(r.status).json({ error: 'Supabase rechazo el guardado del VIP.' });
+    return res.json({ success: true, id: rowId });
+  } catch (e) {
+    console.error('[vip] error al guardar:', e?.message || e);
+    return res.status(502).json({ error: 'No se pudo guardar el cliente VIP.' });
+  }
+});
+
+app.delete('/api/admin/vip/:id', requireAdminAuth, async (req, res) => {
+  const raw = String(req.params.id || '');
+  const variants = [raw, raw.startsWith('vip-') ? raw : `vip-${raw}`, `vip-vip-${raw.replace(/^vip-/, '')}`];
+  try {
+    for (const v of [...new Set(variants)]) {
+      await supaFetch(`catalog?id=eq.${encodeURIComponent(v)}`, { method: 'DELETE' });
+    }
+    return res.json({ success: true });
+  } catch (e) {
+    console.error('[vip] error al borrar:', e?.message || e);
+    return res.status(502).json({ error: 'No se pudo borrar el cliente VIP.' });
+  }
+});
