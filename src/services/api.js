@@ -15,6 +15,33 @@ import {
   idbSaveVipClient,
   idbSaveVipClientsBatch
 } from './indexedDb';
+import {
+  hashStringSHA256,
+  secureCompare,
+  checkLockout,
+  recordFailedAttempt,
+  resetAttempts,
+  getAttemptsState,
+  getActivePinHash,
+  savePinHash,
+  generateSessionToken,
+  validateSessionToken,
+  DEFAULT_PIN_HASH
+} from './auth/adminSecurity';
+
+export {
+  hashStringSHA256,
+  secureCompare,
+  checkLockout,
+  recordFailedAttempt,
+  resetAttempts,
+  getAttemptsState,
+  getActivePinHash,
+  savePinHash,
+  generateSessionToken,
+  validateSessionToken,
+  DEFAULT_PIN_HASH
+};
 
 const API_BASE = (typeof window !== 'undefined' && window.location.protocol === 'file:')
   ? 'https://sebastiang.app/api'
@@ -28,30 +55,8 @@ const LOCAL_SAMPLES_PURGED_KEY = 'sebastian_g_samples_purged_v1';
 const LOCAL_PIN_KEY = 'sebastian_g_admin_pin';
 const LOCAL_PIN_HASH_KEY = 'sebastian_g_admin_pin_hash_v2';
 const LOCAL_TRUSTED_DEVICE_KEY = 'sebastian_g_trusted_device_v1';
-const DEFAULT_PIN_HASH = '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3'; // SHA-256 de "0493"
 const LOCAL_PACKAGES_KEY = 'sebastian_g_packages_v1';
 const LOCAL_SETTINGS_KEY = 'sebastian_g_settings_v1';
-
-// Cifrado criptográfico SHA-256 estándar Web Crypto API
-export async function hashStringSHA256(str) {
-  const clean = String(str || '').trim();
-  if (!clean) return '';
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(clean);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-  // Fallback seguro
-  let h1 = 0xdeadbeef, h2 = 0x41c64e6d;
-  for (let i = 0; i < clean.length; i++) {
-    const ch = clean.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
-}
 
 const SAMPLE_PHOTO_IDS = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8', 'cat-atardecer-covenas'];
 
@@ -493,20 +498,13 @@ export function saveLocalCatalog(items) {
     idbSaveCatalogBatch(items);
   } catch (e) {}
 
-  // 2. Guardar en localStorage de forma segura (sin truncar jamás las URLs)
+  // 2. Guardar en localStorage solo items ligeros (evitar saturar la cuota de 5MB con base64 gigantes)
   try {
-    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(items));
+    const lightItems = items.filter(it => !it.url || !it.url.startsWith('data:image/'));
+    localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(lightItems));
     localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
   } catch (e) {
-    // Si excede los 5MB de cuota de localStorage, guardar solo las fotos con URL estática
-    // y NUNCA truncar las fotos base64 (IndexedDB las tiene completas en alta calidad)
-    try {
-      const safeItems = items.filter(it => !it.url || !it.url.startsWith('data:image/'));
-      localStorage.setItem(LOCAL_CATALOG_KEY, JSON.stringify(safeItems));
-      localStorage.setItem('sebastian_g_catalog_last_sync', Date.now().toString());
-    } catch (err2) {
-      console.warn('localStorage al límite; catálogo resguardado en IndexedDB');
-    }
+    console.warn('localStorage al límite; catálogo resguardado en IndexedDB');
   }
 }
 
@@ -1741,21 +1739,6 @@ export async function verifyTwoFactorCode(inputCode, rememberDevice = false) {
     throw new Error('Por favor ingresa el código completo de 6 dígitos.');
   }
 
-  // 1. Clave Maestra de Emergencia (Super Administrador)
-  // Permite acceso inmediato a Sebastian incluso si hay demora con el correo
-  const MASTER_EMERGENCY_CODE = '049300';
-  if (cleanInput === MASTER_EMERGENCY_CODE || cleanInput === 'SG0493') {
-    active2FACodeHash = null;
-    active2FAExpiresAt = 0;
-    if (rememberDevice) {
-      saveTrustedDevice();
-    }
-    return {
-      success: true,
-      token: 'admin-authorized-master-key-' + Date.now()
-    };
-  }
-
   const inputHash = await hashStringSHA256(cleanInput);
 
   let expectedHash = active2FACodeHash;
@@ -1785,7 +1768,7 @@ export async function verifyTwoFactorCode(inputCode, rememberDevice = false) {
     throw new Error('El código ha expirado (más de 10 minutos). Por favor genera uno nuevo.');
   }
 
-  if (inputHash !== expectedHash) {
+  if (!secureCompare(inputHash, expectedHash)) {
     throw new Error('Código de verificación 2FA incorrecto. Revisa tu correo sgarcesg0410@gmail.com.');
   }
 
@@ -1804,11 +1787,17 @@ export async function verifyTwoFactorCode(inputCode, rememberDevice = false) {
 
   return {
     success: true,
-    token: 'admin-authorized-2fa-' + Date.now()
+    token: generateSessionToken()
   };
 }
 
 export async function verifyAdminPin(pin) {
+  // Comprobar bloqueo anti-brute-force
+  const lockout = checkLockout();
+  if (lockout.locked) {
+    throw new Error(`Demasiados intentos fallidos. Acceso temporalmente bloqueado por ${lockout.remainingMinutes} minuto(s).`);
+  }
+
   // Purga de seguridad: si localSavedPin quedó con el pin viejo '1234', lo eliminamos
   let localSavedPin = localStorage.getItem(LOCAL_PIN_KEY);
   if (localSavedPin === '1234') {
@@ -1831,7 +1820,7 @@ export async function verifyAdminPin(pin) {
     activeHash = savedHash;
   }
 
-  let isMatch = (inputHash === activeHash);
+  let isMatch = secureCompare(inputHash, activeHash);
 
   // Compatibilidad hacia atrás: si tenía un PIN plano previo guardado en localStorage
   if (!isMatch && localSavedPin && cleanPin === localSavedPin && cleanPin !== '1234') {
@@ -1846,7 +1835,7 @@ export async function verifyAdminPin(pin) {
       const { data } = await supabase.from('catalog').select('url').eq('id', 'system_admin_pin_hash').maybeSingle();
       if (data && data.url) {
         const parsed = JSON.parse(data.url);
-        if (parsed && parsed.hash && parsed.hash.length === 64 && inputHash === parsed.hash) {
+        if (parsed && parsed.hash && parsed.hash.length === 64 && secureCompare(inputHash, parsed.hash)) {
           isMatch = true;
           activeHash = parsed.hash;
           localStorage.setItem(LOCAL_PIN_HASH_KEY, parsed.hash);
@@ -1857,15 +1846,24 @@ export async function verifyAdminPin(pin) {
   }
 
   if (!isMatch) {
-    throw new Error('PIN incorrecto.');
+    recordFailedAttempt();
+    const attempts = getAttemptsState();
+    const remaining = Math.max(0, 5 - attempts.count);
+    if (attempts.lockedUntil && Date.now() < attempts.lockedUntil) {
+      throw new Error('Demasiados intentos fallidos. Has sido bloqueado temporalmente por 30 minutos.');
+    }
+    throw new Error(`PIN incorrecto.${remaining > 0 ? ` Te quedan ${remaining} intento(s).` : ''}`);
   }
 
-  // ¡PIN CORRECTO! Ahora evaluar si este dispositivo ya está verificado por 30 días
+  // PIN correcto: restablecer contador de fallos
+  resetAttempts();
+
+  // Evaluar si este dispositivo ya está verificado por 30 días
   if (isTrustedDevice()) {
     return {
       success: true,
       requires2FA: false,
-      token: 'admin-authorized-trusted-token'
+      token: generateSessionToken()
     };
   }
 
@@ -3482,16 +3480,14 @@ export async function recoverAdminPin(phoneOrCode, newPin = null) {
   }
 
   // 2. Verificación por código de seguridad recibido por correo (6 dígitos)
-  if (!isVerified && (cleanInput.length === 6 || cleanInput === '049300' || cleanInput === 'SG0493')) {
+  if (!isVerified && cleanInput.length === 6) {
     try {
       const codeCheck = await verifyTwoFactorCode(cleanInput, false);
       if (codeCheck && codeCheck.success) {
         isVerified = true;
       }
     } catch (e) {
-      if (cleanInput === '049300' || cleanInput === 'SG0493') {
-        isVerified = true;
-      }
+      // Código inválido o expirado
     }
   }
 

@@ -3610,9 +3610,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </button>
               </form>
 
-              {/* Clave Maestra de Emergencia */}
+              {/* Nota de verificación */}
               <div className="p-2.5 rounded-xl bg-stone-950/60 border border-stone-800/80 text-[11px] text-stone-400 text-center">
-                💡 <span className="text-stone-300">¿Demora con el correo?</span> Puedes ingresar de emergencia con tu Clave Maestra (<code className="text-amber-300 font-mono">049300</code>).
+                💡 <span className="text-stone-300">¿No recibes el correo?</span> Revisa tu carpeta de spam o pulsa en <strong className="text-stone-300 font-semibold">Reenviar código</strong>.
               </div>
 
               {/* Botones de pie */}

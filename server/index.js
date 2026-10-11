@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,8 +17,7 @@ app.use(express.json({ limit: '50mb' }));
 
 // --- CONFIGURACIÓN Y CLIENTE ONESIGNAL PUSH 24/7 ---
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
-const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || 
-  Buffer.from('b3NfdjJfYXBwX3hycm13YWV4cWpmaTVpMmU1ZGhxZ2dyYmRsYmZiaDIybG50ZWZxbnZlbDQyaHdqaGRqMnNmZ2J3cXBlamZtcHlld243bmlzNXBzZmdkbW54NTJ5eTV5a2twYmtuMmF5cnZvc21pZmE=', 'base64').toString('utf-8');
+const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || '';
 
 async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
   if (!ONESIGNAL_REST_API_KEY || !ONESIGNAL_APP_ID) return null;
@@ -87,7 +87,7 @@ function writeDB(data) {
 // Obtener configuración pública
 app.get('/api/settings', (req, res) => {
   const db = readDB();
-  const { adminPin, ...publicSettings } = db.settings || {};
+  const { adminPin, adminPinHash, ...publicSettings } = db.settings || {};
   res.json(publicSettings);
 });
 
@@ -341,15 +341,21 @@ app.post('/api/gallery/:token/submit', (req, res) => {
 
 // --- RUTAS DE ADMINISTRACIÓN (FOTÓGRAFO) ---
 
-// Validar PIN de administrador
+// Validar PIN de administrador con SHA-256 y comparación de tiempo constante
 app.post('/api/admin/auth', (req, res) => {
   const { pin } = req.body;
   const db = readDB();
-  if (pin === db.settings.adminPin) {
-    res.json({ success: true, token: 'admin-authorized-token' });
-  } else {
-    res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
-  }
+  const inputHash = crypto.createHash('sha256').update(String(pin || '').trim()).digest('hex');
+  const storedHash = db.settings.adminPinHash || (db.settings.adminPin ? crypto.createHash('sha256').update(String(db.settings.adminPin).trim()).digest('hex') : '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3');
+
+  try {
+    const isMatch = crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(storedHash));
+    if (isMatch) {
+      return res.json({ success: true, token: 'admin-authorized-token-' + Date.now() });
+    }
+  } catch (e) {}
+
+  res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
 });
 
 // Obtener todas las reservas para el fotógrafo
@@ -532,13 +538,25 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
 app.post('/api/admin/pin/change', (req, res) => {
   const { currentPin, newPin } = req.body;
   const db = readDB();
-  if (currentPin !== db.settings.adminPin) {
+  const currentHash = crypto.createHash('sha256').update(String(currentPin || '').trim()).digest('hex');
+  const storedHash = db.settings.adminPinHash || (db.settings.adminPin ? crypto.createHash('sha256').update(String(db.settings.adminPin).trim()).digest('hex') : '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3');
+
+  try {
+    const isMatch = crypto.timingSafeEqual(Buffer.from(currentHash), Buffer.from(storedHash));
+    if (!isMatch) {
+      return res.status(401).json({ error: 'El PIN actual no coincide.' });
+    }
+  } catch (e) {
     return res.status(401).json({ error: 'El PIN actual no coincide.' });
   }
-  if (!newPin || String(newPin).length < 4) {
+
+  if (!newPin || String(newPin).trim().length < 4) {
     return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
   }
-  db.settings.adminPin = String(newPin).trim();
+
+  const newHash = crypto.createHash('sha256').update(String(newPin).trim()).digest('hex');
+  db.settings.adminPinHash = newHash;
+  delete db.settings.adminPin;
   writeDB(db);
   res.json({ success: true, message: '¡PIN de acceso actualizado correctamente!' });
 });
@@ -558,15 +576,17 @@ app.post('/api/admin/pin/recover', (req, res) => {
   }
 
   if (newPin) {
-    if (String(newPin).length < 4) {
+    if (String(newPin).trim().length < 4) {
       return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
     }
-    db.settings.adminPin = String(newPin).trim();
+    const newHash = crypto.createHash('sha256').update(String(newPin).trim()).digest('hex');
+    db.settings.adminPinHash = newHash;
+    delete db.settings.adminPin;
     writeDB(db);
     return res.json({ success: true, message: '¡PIN restablecido con éxito!' });
   }
 
-  res.json({ success: true, verified: true, currentPin: db.settings.adminPin });
+  res.json({ success: true, verified: true });
 });
 
 // --- WEBHOOK INTELIGENTE PARA WHATSAPP BOT (AutoResponder for WA / WhatsAuto) ---

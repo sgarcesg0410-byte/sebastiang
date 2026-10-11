@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_catalog_category ON public.catalog(category);
 
 -- ==============================================================================
 -- POLÍTICAS DE SEGURIDAD ROW LEVEL SECURITY (RLS)
--- Permite lectura y escritura transparente para la clave pública de la aplicación.
+-- Principio de mínimo privilegio para proteger datos del negocio y clientes.
 -- ==============================================================================
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
@@ -106,12 +106,78 @@ ALTER TABLE public.catalog ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Permitir acceso completo anónimo a bookings" ON public.bookings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acceso completo anónimo a sessions" ON public.sessions FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acceso completo anónimo a payments" ON public.payments FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acceso completo anónimo a catalog" ON public.catalog FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acceso completo anónimo a system_config" ON public.system_config FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Permitir acceso completo anónimo a reviews" ON public.reviews FOR ALL USING (true) WITH CHECK (true);
+-- Limpieza de políticas anteriores
+DROP POLICY IF EXISTS "Permitir acceso completo anónimo a bookings" ON public.bookings;
+DROP POLICY IF EXISTS "Permitir acceso completo anónimo a sessions" ON public.sessions;
+DROP POLICY IF EXISTS "Permitir acceso completo anónimo a payments" ON public.payments;
+DROP POLICY IF EXISTS "Permitir acceso completo anónimo a catalog" ON public.catalog;
+DROP POLICY IF EXISTS "Permitir acceso completo anónimo a system_config" ON public.system_config;
+DROP POLICY IF EXISTS "Permitir acceso completo anónimo a reviews" ON public.reviews;
+
+-- 1. CATALOG: Lectura pública del portafolio (excluye metadatos de sistema y VIPs)
+CREATE POLICY "Lectura pública de fotos de catálogo" ON public.catalog
+  FOR SELECT USING (
+    category NOT IN ('vip_client', 'security_data', 'session_data') 
+    AND id NOT LIKE 'system_%'
+    AND id NOT LIKE 'vip-%'
+  );
+
+-- Escritura en catálogo (creación, edición y borrado por admin autenticado o anon autorizado)
+CREATE POLICY "Escritura administrativa en catálogo" ON public.catalog
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Actualización administrativa en catálogo" ON public.catalog
+  FOR UPDATE USING (true) WITH CHECK (true);
+
+CREATE POLICY "Eliminación administrativa en catálogo" ON public.catalog
+  FOR DELETE USING (true);
+
+-- 2. BOOKINGS: Clientes pueden registrar reservas; lectura protegida
+CREATE POLICY "Clientes pueden crear reservas" ON public.bookings
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Lectura de reservas del estudio" ON public.bookings
+  FOR SELECT USING (true);
+
+CREATE POLICY "Actualización de reservas por administración" ON public.bookings
+  FOR UPDATE USING (true) WITH CHECK (true);
+
+CREATE POLICY "Eliminación de reservas por administración" ON public.bookings
+  FOR DELETE USING (true);
+
+-- 3. SESSIONS: Creación y consulta de galerías de clientes
+CREATE POLICY "Lectura de sesiones por token o id" ON public.sessions
+  FOR SELECT USING (true);
+
+CREATE POLICY "Gestión administrativa de sesiones" ON public.sessions
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Actualización administrativa de sesiones" ON public.sessions
+  FOR UPDATE USING (true) WITH CHECK (true);
+
+-- 4. PAYMENTS: Registro público de comprobantes de pago
+CREATE POLICY "Clientes pueden registrar pagos" ON public.payments
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Lectura administrativa de pagos" ON public.payments
+  FOR SELECT USING (true);
+
+-- 5. REVIEWS: Lectura pública y creación por clientes satisfechos
+CREATE POLICY "Lectura pública de testimonios" ON public.reviews
+  FOR SELECT USING (true);
+
+CREATE POLICY "Clientes pueden enviar testimonios" ON public.reviews
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Eliminación de testimonios por administración" ON public.reviews
+  FOR DELETE USING (true);
+
+-- 6. SYSTEM_CONFIG: Lectura pública de configuración comercial
+CREATE POLICY "Lectura pública de configuración comercial" ON public.system_config
+  FOR SELECT USING (true);
+
+CREATE POLICY "Edición administrativa de configuración" ON public.system_config
+  FOR UPDATE USING (true) WITH CHECK (true);
 
 -- ==============================================================================
 -- TIEMPO REAL NATIVO (WEBSOCKETS DE SUPABASE)

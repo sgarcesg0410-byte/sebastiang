@@ -10,7 +10,7 @@
     "watermarkText": "SEBASTIAN G",
     "watermarkSubtext": "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
     "watermarkLogoUrl": "/app-icon.png",
-    "adminPin": "0493",
+    "adminPinHash": "5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3",
     "printedPhotoPrice": 7000,
     "printedPhoto15x20Price": 8000
   },

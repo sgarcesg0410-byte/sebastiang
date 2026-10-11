@@ -1,30 +1,38 @@
 import express from 'express';
 import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { 
-  sendNewBookingEmails, 
-  sendBookingConfirmedEmail, 
+import crypto from 'crypto';
+import {
+  sendNewBookingEmails,
+  sendBookingConfirmedEmail,
   sendPhotoDeliveryEmail,
-  sendTwoFactorCodeEmail 
+  sendTwoFactorCodeEmail
 } from './emailService.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
-
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// --- CONFIGURACIÓN Y CLIENTE ONESIGNAL PUSH 24/7 ---
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
-const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || 
-  Buffer.from('b3NfdjJfYXBwX3hycm13YWV4cWpmaTVpMmU1ZGhxZ2dyYmRsYmZiaDIybG50ZWZxbnZlbDQyaHdqaGRqMnNmZ2J3cXBlamZtcHlld243bmlzNXBzZmdkbW54NTJ5eTV5a2twYmtuMmF5cnZvc21pZmE=', 'base64').toString('utf-8');
+// ==============================================================================
+// CONFIGURACIÓN Y CLIENTE ONESIGNAL PUSH 24/7
+// ==============================================================================
+// Las claves se leen EXCLUSIVAMENTE desde variables de entorno.
+// Si no están configuradas, las notificaciones push se deshabilitan sin fallar.
+// ==============================================================================
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || '';
+const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || '';
+
+if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
+  console.warn(
+    '⚠️ [OneSignal] ONESIGNAL_APP_ID o ONESIGNAL_REST_API_KEY no configuradas. ' +
+    'Las notificaciones push estarán deshabilitadas.'
+  );
+}
 
 async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
-  if (!ONESIGNAL_REST_API_KEY || !ONESIGNAL_APP_ID) return null;
+  if (!ONESIGNAL_REST_API_KEY || !ONESIGNAL_APP_ID) {
+    console.warn('[OneSignal] Push omitido: credenciales no configuradas.');
+    return null;
+  }
   try {
     const payload = JSON.stringify({
       app_id: ONESIGNAL_APP_ID,
@@ -44,7 +52,6 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
       },
       body: payload
     });
-
     const resJson = await response.json();
     console.log('OneSignal Push enviado:', resJson);
     return resJson;
@@ -54,12 +61,21 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
   }
 }
 
-// Sincronización inmutable directa a Supabase Cloud desde el backend de Vercel
-const SUPABASE_REST_URL = 'https://maqqzcawbdhhfqxoabyq.supabase.co';
-const SUPABASE_REST_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hcXF6Y2F3YmRoaGZxeG9hYnlxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2NDUzNzksImV4cCI6MjEwNjIyMTM3OX0.o35exqFEzfbL58avn8KuVtGkN2uo61ZYh_nmziT1IUY';
+// ==============================================================================
+// SUPABASE CLOUD (Fuente canónica de verdad)
+// ==============================================================================
+const SUPABASE_REST_URL = process.env.SUPABASE_REST_URL || 'https://maqqzcawbdhhfqxoabyq.supabase.co';
+const SUPABASE_REST_KEY = process.env.SUPABASE_REST_KEY || '';
+
+if (!SUPABASE_REST_KEY) {
+  console.warn(
+    '⚠️ [Supabase] SUPABASE_REST_KEY no configurada. ' +
+    'La sincronización con la nube estará limitada.'
+  );
+}
 
 async function syncBookingToSupabaseServer(b) {
-  if (!b || !b.id) return;
+  if (!b || !b.id || !SUPABASE_REST_KEY) return;
   const supaId = b.id.startsWith('book-') ? b.id : `book-${b.id}`;
   try {
     await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings`, {
@@ -85,7 +101,6 @@ async function syncBookingToSupabaseServer(b) {
         status: b.status || 'pending'
       })
     });
-
     await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
       method: 'POST',
       headers: {
@@ -107,48 +122,125 @@ async function syncBookingToSupabaseServer(b) {
   }
 }
 
-// Endpoint dedicado para enviar notificaciones Push desde cualquier parte del sistema
-app.post('/api/send-push', async (req, res) => {
-  const { title, message, url, data } = req.body || {};
-  if (!title || !message) {
-    return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
-  }
-  const result = await sendOneSignalPush({ title, message, url, data });
-  res.json({ success: true, result });
-});
+// ==============================================================================
+// RATE LIMITER EN MEMORIA (Anti-Brute-Force)
+// ==============================================================================
+const loginAttempts = new Map(); // IP -> { count, windowStart, lockedUntil }
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
+const LOGIN_LOCKOUT_MS = 30 * 60 * 1000; // 30 minutos
 
-// Helper para persistir y leer base de datos (con soporte /tmp para entornos serverless de Vercel)
-function saveDB(data) {
-  try {
-    const tmpPath = path.join('/tmp', 'db.json');
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2));
-  } catch (e) {}
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-    }
-  } catch (e) {}
+function getClientIp(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.socket?.remoteAddress
+    || 'unknown';
 }
 
-function getDB() {
-  try {
-    const tmpPath = path.join('/tmp', 'db.json');
-    if (fs.existsSync(tmpPath)) {
-      return JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
-    }
-  } catch (e) {}
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const record = loginAttempts.get(ip);
 
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      return JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-    }
-  } catch (err) {
-    console.error('Error leyendo base de datos:', err);
+  if (!record) return { allowed: true };
+
+  // Si el bloqueo expiró, limpiar
+  if (record.lockedUntil && now > record.lockedUntil) {
+    loginAttempts.delete(ip);
+    return { allowed: true };
   }
 
+  // Si está bloqueado
+  if (record.lockedUntil && now < record.lockedUntil) {
+    return {
+      allowed: false,
+      retryAfterMs: record.lockedUntil - now,
+      retryAfterMin: Math.ceil((record.lockedUntil - now) / 60000)
+    };
+  }
+
+  // Si la ventana expiró, resetear
+  if (record.windowStart && now - record.windowStart > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(ip);
+    return { allowed: true };
+  }
+
+  return { allowed: true, attempts: record.count };
+}
+
+function recordFailedLogin(ip) {
+  const now = Date.now();
+  const record = loginAttempts.get(ip) || { count: 0, windowStart: now, lockedUntil: 0 };
+
+  record.count += 1;
+  if (!record.windowStart) record.windowStart = now;
+
+  if (record.count >= MAX_LOGIN_ATTEMPTS) {
+    record.lockedUntil = now + LOGIN_LOCKOUT_MS;
+    record.count = 0;
+    record.windowStart = 0;
+  }
+
+  loginAttempts.set(ip, record);
+  return record;
+}
+
+function resetLoginAttempts(ip) {
+  loginAttempts.delete(ip);
+}
+
+// Limpieza periódica de entradas antiguas del rate limiter (cada 10 min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of loginAttempts.entries()) {
+    if (record.lockedUntil && now > record.lockedUntil + LOGIN_WINDOW_MS) {
+      loginAttempts.delete(ip);
+    } else if (!record.lockedUntil && record.windowStart && now - record.windowStart > LOGIN_WINDOW_MS * 2) {
+      loginAttempts.delete(ip);
+    }
+  }
+}, 10 * 60 * 1000);
+
+// ==============================================================================
+// HASHING Y COMPARACIÓN SEGURA
+// ==============================================================================
+const DEFAULT_ADMIN_PIN_HASH = '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3'; // SHA-256 de "0493"
+
+function hashSHA256(str) {
+  return crypto.createHash('sha256').update(String(str || '').trim()).digest('hex');
+}
+
+// Comparación en tiempo constante (anti-timing-attack)
+function secureCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+// ==============================================================================
+// GENERACIÓN DE TOKEN DE SESIÓN FIRMADO
+// ==============================================================================
+const ADMIN_AUTH_SECRET = process.env.ADMIN_AUTH_SECRET || 'fallback-dev-secret-change-me';
+
+function signAdminToken() {
+  const payload = {
+    iat: Date.now(),
+    exp: Date.now() + 24 * 60 * 60 * 1000, // 24 horas
+    nonce: crypto.randomBytes(16).toString('hex')
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', ADMIN_AUTH_SECRET)
+    .update(payloadB64)
+    .digest('base64url');
+  return `${payloadB64}.${signature}`;
+}
+
+// ==============================================================================
+// BASE DE DATOS EN MEMORIA (Cache sincronizado con Supabase)
+// ==============================================================================
+// NOTA: Ya NO se usa /tmp/db.json. En Vercel serverless /tmp se pierde entre
+// cold starts. Supabase Cloud es la fuente canónica de verdad.
+// ==============================================================================
+function getDefaultDB() {
   return {
     settings: {
       photographerName: "Sebastian G",
@@ -160,7 +252,7 @@ function getDB() {
       watermarkText: "SEBASTIAN G",
       watermarkSubtext: "MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA",
       watermarkLogoUrl: "/app-icon.png",
-      adminPin: "0493",
+      adminPinHash: DEFAULT_ADMIN_PIN_HASH,
       printedPhotoPrice: 7000,
       printedPhoto15x20Price: 8000,
       printedPhoto20x30Price: 30000,
@@ -178,14 +270,9 @@ function getDB() {
     },
     packages: [
       {
-        id: "pkg-4fotos",
-        name: "4 Fotos Digitales",
-        price: 45000,
-        photoCount: 4,
-        freePhotos: 2,
-        totalPhotos: 6,
-        duration: "45 minutos",
-        outfits: "1 a 2 cambios",
+        id: "pkg-4fotos", name: "4 Fotos Digitales", price: 45000,
+        photoCount: 4, freePhotos: 2, totalPhotos: 6,
+        duration: "45 minutos", outfits: "1 a 2 cambios",
         description: "Ideal para fotos individuales, retratos en playa o sesión casual.",
         features: [
           "4 Fotos Digitales en Alta Calidad",
@@ -197,14 +284,9 @@ function getDB() {
         popular: false
       },
       {
-        id: "pkg-6fotos",
-        name: "6 Fotos Digitales",
-        price: 65000,
-        photoCount: 6,
-        freePhotos: 2,
-        totalPhotos: 8,
-        duration: "1 hora",
-        outfits: "2 cambios de vestuario",
+        id: "pkg-6fotos", name: "6 Fotos Digitales", price: 65000,
+        photoCount: 6, freePhotos: 2, totalPhotos: 8,
+        duration: "1 hora", outfits: "2 cambios de vestuario",
         description: "Perfecto para parejas, cumpleaños o retratos con variedad de poses.",
         features: [
           "6 Fotos Digitales en Alta Calidad",
@@ -216,14 +298,9 @@ function getDB() {
         popular: false
       },
       {
-        id: "pkg-8fotos",
-        name: "8 Fotos Digitales",
-        price: 75000,
-        photoCount: 8,
-        freePhotos: 2,
-        totalPhotos: 10,
-        duration: "1 hora y media",
-        outfits: "2 a 3 cambios",
+        id: "pkg-8fotos", name: "8 Fotos Digitales", price: 75000,
+        photoCount: 8, freePhotos: 2, totalPhotos: 10,
+        duration: "1 hora y media", outfits: "2 a 3 cambios",
         description: "Nuestra opción favorita para familias, quinceañeras y atardeceres frente al mar.",
         features: [
           "8 Fotos Digitales en Alta Calidad",
@@ -235,14 +312,9 @@ function getDB() {
         popular: true
       },
       {
-        id: "pkg-10fotos",
-        name: "10 Fotos Digitales",
-        price: 85000,
-        photoCount: 10,
-        freePhotos: 2,
-        totalPhotos: 12,
-        duration: "Hasta 2 horas",
-        outfits: "Cambios ilimitados",
+        id: "pkg-10fotos", name: "10 Fotos Digitales", price: 85000,
+        photoCount: 10, freePhotos: 2, totalPhotos: 12,
+        duration: "Hasta 2 horas", outfits: "Cambios ilimitados",
         description: "Cobertura completa con fotos variadas de plano entero, medio cuerpo y primeros planos.",
         features: [
           "10 Fotos Digitales en Alta Calidad",
@@ -254,109 +326,32 @@ function getDB() {
         popular: false
       }
     ],
-    catalog: [
-      { id: 'cat-verano-salsero', title: 'Verano salsero', category: 'Retratos', location: 'Playas de Coveñas', url: '/catalog/verano-salsero.jpg' },
-      { id: 'cat-1789878355199', title: 'Amor al  campo', category: 'Retratos', location: 'Torrente -Coveñas', url: '/catalog/cat-1789878355199.jpg' },
-      { id: 'cat-1789902452640', title: 'Atardecer', category: 'Retratos', location: 'Playas el Edén - Coveñas', url: '/catalog/cat-1789902452640.jpg' },
-      { id: 'cat-1789916017066', title: 'Feliz cumpleaños  Thiago', category: 'Retratos', location: 'Nuevo Agrado', url: '/catalog/cat-1789916017066.jpg' },
-      { id: 'cat-1789916075257', title: 'Atardeceres', category: 'Retratos', location: 'Malecón , San Antero', url: '/catalog/cat-1789916075257.jpg' },
-      { id: 'cat-1789916145830', title: 'Morenas con estilo', category: 'Retratos', location: 'Malecón, San Antero', url: '/catalog/cat-1789916145830.jpg' },
-      { id: 'cat-1789916197806', title: 'Unión Familiar', category: 'Retratos', location: 'Tijereta, San Antero', url: '/catalog/cat-1789916197806.jpg' },
-      { id: 'cat-1789916408679', title: 'Feliz cumpleaños Kairys', category: 'Playas San Antero', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789916408679.jpg' },
-      { id: 'cat-1789916617329', title: 'ANGT', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789916617329.jpg' },
-      { id: 'cat-1789949201412', title: 'Feliz cumpleaños Daniela', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789949201412.jpg' },
-      { id: 'cat-1789949301568', title: 'Jesús, un niño lleno de alegría', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789949301568.jpg' },
-      { id: 'cat-1789949471911', title: 'Feliz  cumpleaños Julieta', category: 'Retratos', location: 'Via la culebra ,Cotorra', url: '/catalog/cat-1789949471911.jpg' },
-      { id: 'cat-1789951307326', title: 'Los 6 años de Christy', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1789951307326.jpg' },
-      { id: 'cat-1789951453602', title: 'Felices 16', category: 'Retratos', location: 'Cotorra', url: '/catalog/cat-1789951453602.jpg' },
-      { id: 'cat-1789951546306', title: 'Los 9 meses de Celeste', category: 'Retratos', location: 'Playas el Eden ,Coveñas', url: '/catalog/cat-1789951546306.jpg' },
-      { id: 'cat-1789951644266', title: 'celebramos un cumpleaños rodeado de la magia  Ayda Luz', category: 'Retratos', location: 'Malecon, San Antero', url: '/catalog/cat-1789951644266.jpg' },
-      { id: 'cat-1789951931767', title: 'Una sesión llena de amor, ilusión', category: 'Retratos', location: 'Coveñas, Sucre', url: '/catalog/cat-1789951931767.jpg' },
-      { id: 'cat-1789952024846', title: 'Feliz primer cumpleaños, Shamara', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1789952024846.jpg' },
-      { id: 'cat-1790137885828', title: '10 años de Thiago', category: 'Retratos', location: 'Malecon, San Antero', url: '/catalog/cat-1790137885828.jpg' },
-      { id: 'cat-1790138062113', title: 'Celebramos un cumpleaños lleno de alegría', category: 'Retratos', location: 'Malecón, San Antero', url: '/catalog/cat-1790138062113.jpg' },
-      { id: 'cat-1790138129671', title: 'cumpleaños de Liam', category: 'Retratos', location: 'Tolu', url: '/catalog/cat-1790138129671.jpg' },
-      { id: 'cat-1790138192390', title: 'Una sesión llena de color, alegría', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138192390.jpg' },
-      { id: 'cat-1790138313878', title: 'Celebramos los 15 años de Sofía', category: 'Retratos', location: 'Malecon,Coveñas', url: '/catalog/cat-1790138313878.jpg' },
-      { id: 'cat-1790138378422', title: 'Elegancia, seguridad y belleza', category: 'Retratos', location: 'Malecon, San Antero', url: '/catalog/cat-1790138378422.jpg' },
-      { id: 'cat-1790138441725', title: 'La verdadera belleza resplandece cuando te muestras tal y como eres', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138441725.jpg' },
-      { id: 'cat-1790138504516', title: 'Entre el azul del cielo y la calma del mar,', category: 'Retratos', location: 'Malecón, San Antero', url: '/catalog/cat-1790138504516.jpg' },
-      { id: 'cat-1790138561501', title: 'Una tarde llena de amor, sonrisas', category: 'Retratos', location: 'Tolu playa', url: '/catalog/cat-1790138561501.jpg' },
-      { id: 'cat-1790138633284', title: 'La magia de lo natural se refleja en cada toma', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790138633284.jpg' },
-      { id: 'cat-1790138725659', title: 'Ariadna celebró sus 9 años', category: 'Retratos', location: 'San Antero', url: '/catalog/cat-1790138725659.jpg' },
-      { id: 'cat-1790138815867', title: 'Hoy celebramos los 6 años de Santiago', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138815867.jpg' },
-      { id: 'cat-1790138962906', title: 'Entre la brisa del mar y el sonido de las olas, florece una conexión', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790138962906.jpg' },
-      { id: 'cat-1790138998265', title: 'La belleza no tiene límites. Con su esencia, confianza y elegancia', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790138998265.jpg' },
-      { id: 'cat-1790139087441', title: 'Una morena que brilla con luz propia, reflejando confianza, amor propio', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139087441.jpg' },
-      { id: 'cat-1790139202456', title: 'Entre risas, abrazos y miradas llenas de amor, vivimos una sesión mágica junto a Maylin esta hermosa niña de 2 años y su mamá.', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139202456.jpg' },
-      { id: 'cat-1790139247128', title: 'Entre la brisa del mar y la magia del atardecer, su cabello crespo bailaba con el viento como una obra de arte natural', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790139247128.jpg' },
-      { id: 'cat-1790139302008', title: 'El amor de mamá.', category: 'Retratos', location: 'Playa Blanca, San Antero', url: '/catalog/cat-1790139302008.jpg' },
-      { id: 'cat-1790139359055', title: 'Hay amistades que se convierten en familia y corazones que viven cada etapa como si fuera propia 💕✨', category: 'Retratos', location: 'Malecon,Coveñas', url: '/catalog/cat-1790139359055.jpg' },
-      { id: 'cat-1790139435319', title: 'Los 6 llegaron llenos de diversión, juegos y mucho pastel!', category: 'Retratos', location: 'Nuevo Agrado, San Antero', url: '/catalog/cat-1790139435319.jpg' }
-    ],
-    bookings: [
-      {
-        id: "book-real-jennifer-vasquez",
-        clientName: "Jennifer Vásquez",
-        clientWhatsApp: "+57 320 892 1635",
-        packageId: "pkg-8fotos",
-        packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
-        totalPrice: 85000,
-        locationType: "outside_san_antero",
-        specificLocation: "Coveñas",
-        dateTime: "30/09/2026 a las 3:00 p. m.",
-        description: "Sesión de fotos de juramento de bandera de su hijo",
-        createdAt: "2026-09-19T10:00:00.000Z",
-        status: "confirmed",
-        isReal: true
-      },
-      {
-        id: "book-1790280190756",
-        clientName: "Marlin torres",
-        clientWhatsApp: "+57 313 666 7262",
-        packageId: "pkg-6fotos",
-        packageName: "6 Fotos Digitales",
-        totalPrice: 75000,
-        locationType: "outside_san_antero",
-        specificLocation: "Locación Especial / Fuera",
-        dateTime: "03/10/2026 a las 3:10 p. m.",
-        description: "Primer mes bebé",
-        createdAt: "2026-09-24T20:03:10.756Z",
-        status: "confirmed",
-        isReal: true
-      },
-      {
-        id: "book-laura-vanesa-maza-1790651249486",
-        clientName: "Laura Vanesa Maza de Hoyos",
-        clientWhatsApp: "+57 313 597 5323",
-        packageId: "pkg-4fotos",
-        packageName: "4 Fotos Digitales",
-        totalPrice: 45000,
-        locationType: "san_antero",
-        specificLocation: "Jose Antonio Galán",
-        dateTime: "29/11/2026 a las 4:00 p. m.",
-        description: "Grado",
-        createdAt: "2026-09-29T03:07:32.000Z",
-        status: "confirmed",
-        isReal: true
-      }
-    ],
+    catalog: [],
+    bookings: [],
     payments: [],
     sessions: [],
     reviews: [],
-    walletBalances: {
-      nequi: 0,
-      daviplata: 0,
-      dale: 0
-    }
+    walletBalances: { nequi: 0, daviplata: 0, dale: 0 }
   };
 }
 
-// En memoria para serverless
-let runtimeDB = getDB();
+let runtimeDB = getDefaultDB();
+
+// ==============================================================================
+// ENDPOINTS PÚBLICOS
+// ==============================================================================
+
+app.post('/api/send-push', async (req, res) => {
+  const { title, message, url, data } = req.body || {};
+  if (!title || !message) {
+    return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
+  }
+  const result = await sendOneSignalPush({ title, message, url, data });
+  res.json({ success: true, result });
+});
 
 app.get('/api/settings', (req, res) => {
-  const { adminPin, ...publicSettings } = runtimeDB.settings || {};
+  const { adminPin, adminPinHash, ...publicSettings } = runtimeDB.settings || {};
   res.json(publicSettings);
 });
 
@@ -368,7 +363,6 @@ app.get('/api/packages', (req, res) => {
   res.json(runtimeDB.packages || []);
 });
 
-// Reseñas y Calificaciones Públicas de Clientes (Testimonios)
 app.get('/api/reviews', (req, res) => {
   res.json(runtimeDB.reviews || []);
 });
@@ -390,15 +384,6 @@ app.post('/api/gallery/:token/review', (req, res) => {
   if (!runtimeDB.reviews) runtimeDB.reviews = [];
   runtimeDB.reviews.unshift(newReview);
 
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.reviews = runtimeDB.reviews;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
-
   sendOneSignalPush({
     title: '⭐ ¡Nueva Reseña de Cliente!',
     message: `${newReview.clientName} (${newReview.rating}★): "${(newReview.comment || 'Excelente sesión').slice(0, 60)}"`,
@@ -409,7 +394,6 @@ app.post('/api/gallery/:token/review', (req, res) => {
   res.json({ success: true, review: newReview });
 });
 
-// Saldos Base Oficiales de Cuentas (Nequi, DaviPlata, Dale)
 app.get('/api/admin/wallets', (req, res) => {
   res.json(runtimeDB.walletBalances || { nequi: 0, daviplata: 0, dale: 0 });
 });
@@ -418,14 +402,6 @@ app.post('/api/admin/wallets', (req, res) => {
   const balances = req.body;
   if (balances && typeof balances === 'object') {
     runtimeDB.walletBalances = { ...runtimeDB.walletBalances, ...balances };
-    try {
-      const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-      if (fs.existsSync(dbPath)) {
-        const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-        current.walletBalances = runtimeDB.walletBalances;
-        fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-      }
-    } catch (e) {}
   }
   res.json({ success: true, walletBalances: runtimeDB.walletBalances });
 });
@@ -434,14 +410,6 @@ app.post('/api/packages', (req, res) => {
   const { packages } = req.body;
   if (Array.isArray(packages)) {
     runtimeDB.packages = packages;
-    try {
-      const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-      if (fs.existsSync(dbPath)) {
-        const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-        current.packages = packages;
-        fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-      }
-    } catch (e) {}
   }
   res.json({ success: true, packages: runtimeDB.packages });
 });
@@ -449,41 +417,23 @@ app.post('/api/packages', (req, res) => {
 app.post('/api/settings', (req, res) => {
   const newSettings = req.body;
   if (newSettings && typeof newSettings === 'object') {
-    runtimeDB.settings = { ...runtimeDB.settings, ...newSettings };
-    try {
-      const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-      if (fs.existsSync(dbPath)) {
-        const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-        current.settings = runtimeDB.settings;
-        fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-      }
-    } catch (e) {}
+    // Nunca permitir que se sobreescriba el hash del PIN por este endpoint
+    const { adminPin, adminPinHash, ...safeSettings } = newSettings;
+    runtimeDB.settings = { ...runtimeDB.settings, ...safeSettings };
   }
   res.json({ success: true, settings: runtimeDB.settings });
 });
 
 app.post('/api/bookings', (req, res) => {
-  const { 
-    clientName, 
-    clientWhatsApp, 
-    clientEmail, 
-    packageId, 
-    locationType, 
-    specificLocation, 
-    dateTime, 
-    description,
-    totalPrice,
-    printedPhotosCount,
-    printedPhotos10x15Count,
-    printedPhotos15x20Count,
-    retablosCount,
-    printedSizes,
-    paperPhotosSummary,
-    retablosSummary,
-    printedPhotosSummary
+  const {
+    clientName, clientWhatsApp, clientEmail, packageId,
+    locationType, specificLocation, dateTime, description,
+    totalPrice, printedPhotosCount, printedPhotos10x15Count,
+    printedPhotos15x20Count, retablosCount, printedSizes,
+    paperPhotosSummary, retablosSummary, printedPhotosSummary
   } = req.body;
-  const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
 
+  const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
   let finalPrice = pkg.price;
   const surcharge = runtimeDB.settings.outOfSanAnteroSurcharge || 10000;
   if (locationType === 'outside') finalPrice += surcharge;
@@ -515,16 +465,12 @@ app.post('/api/bookings', (req, res) => {
   };
 
   runtimeDB.bookings.unshift(newBooking);
-
-  saveDB(runtimeDB);
   syncBookingToSupabaseServer(newBooking).catch(e => console.warn('Supabase sync server error:', e));
 
-  // Disparo asíncrono de correos automáticos (a Sebastián y al cliente si suministró correo)
   sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
     console.error('Error enviando correos de nueva reserva:', err);
   });
 
-  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
   sendOneSignalPush({
     title: '📸 ¡Nueva Reserva Recibida!',
     message: `${newBooking.clientName} ha reservado ${newBooking.packageName} (${newBooking.dateTime})`,
@@ -535,7 +481,7 @@ app.post('/api/bookings', (req, res) => {
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
   const msgText = encodeURIComponent(
-    `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
+    `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n` +
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
     (newBooking.clientEmail ? `✉️ *Correo:* ${newBooking.clientEmail}\n` : '') +
@@ -555,7 +501,6 @@ app.post('/api/bookings', (req, res) => {
   });
 });
 
-// Endpoint oficial de envío de correos desde el software
 app.post('/api/send-email', async (req, res) => {
   const { type, data } = req.body || {};
   try {
@@ -591,7 +536,6 @@ app.get('/api/gallery/:token', async (req, res) => {
   const { token } = req.params;
   let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
-  // Soporte para demostración pública sin ensuciar la base de datos de clientes reales
   if (!session && token === 'demo-cliente-2026') {
     session = {
       id: "sess-demo",
@@ -615,8 +559,7 @@ app.get('/api/gallery/:token', async (req, res) => {
     };
   }
 
-  // Si no está en memoria, consultar directamente en Supabase Cloud
-  if (!session && token !== 'demo-cliente-2026') {
+  if (!session && token !== 'demo-cliente-2026' && SUPABASE_REST_KEY) {
     try {
       const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
         headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
@@ -655,14 +598,13 @@ app.get('/api/gallery/:token', async (req, res) => {
   });
 });
 
-// Sincronización en vivo mientras el cliente selecciona fotos en su celular
 app.post('/api/gallery/:token/live-selection', async (req, res) => {
   try {
     const { token } = req.params;
     const { selections, selectedCount } = req.body || {};
-
     let session = (runtimeDB.sessions || []).find(s => s.token === token);
-    if (!session) {
+
+    if (!session && SUPABASE_REST_KEY) {
       const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
         headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
       });
@@ -694,20 +636,18 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
       session.selectedCount = selectedCount || (session.photos ? session.photos.filter(p => p.selected).length : 0);
       session.lastSelectionUpdate = new Date().toISOString();
 
-      // Guardar en Supabase para que Realtime notifique al Panel de Administrador inmediatamente
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
-        method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: JSON.stringify(session)
-        })
-      });
+      if (SUPABASE_REST_KEY) {
+        await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': SUPABASE_REST_KEY,
+            'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ url: JSON.stringify(session) })\
+        });
+      }
     }
-
     res.json({ success: true, selectedCount: session?.selectedCount || 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -719,8 +659,7 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   const { selections } = req.body;
   let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
-  // Si no está en memoria, buscar en Supabase Cloud
-  if (!session) {
+  if (!session && SUPABASE_REST_KEY) {
     try {
       const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
         headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
@@ -737,12 +676,10 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   }
 
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
-
   if (session.status === 'submitted') {
     return res.status(403).json({ error: 'Esta selección ya fue enviada previamente y se encuentra bloqueada.' });
   }
 
-  // Actualizar fotos elegidas y comentarios
   const selMap = new Map();
   (selections || []).forEach(item => {
     selMap.set(item.id, {
@@ -750,59 +687,50 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
       comment: (item.clientComment || '').trim()
     });
   });
-
   session.photos = session.photos.map(p => {
     const update = selMap.get(p.id);
-    if (update) {
-      return { ...p, selected: update.selected, clientComment: update.comment };
-    }
+    if (update) return { ...p, selected: update.selected, clientComment: update.comment };
     return p;
   });
-
   session.status = 'submitted';
   session.submittedAt = new Date().toISOString();
   const selectedPhotos = session.photos.filter(p => p.selected);
   session.selectedCount = selectedPhotos.length;
 
-  // Actualizar en Supabase Cloud de forma inmutable
-  try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
-      method: 'PATCH',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        url: JSON.stringify(session)
-      })
-    });
-  } catch (errSupa) {
-    console.warn('Error al actualizar selección en Supabase:', errSupa);
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ url: JSON.stringify(session) })
+      });
+    } catch (errSupa) {
+      console.warn('Error al actualizar selección en Supabase:', errSupa);
+    }
   }
 
-  // Armar lista detallada de fotos seleccionadas con sus notas
-  let summary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n\n`;
+  let summary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n`;
   summary += `👤 *Cliente:* ${session.clientName}\n`;
   summary += `📦 *Sesión:* ${session.packageTitle}\n`;
-  summary += `🔢 *Total Elegidas:* ${selectedPhotos.length} fotos\n\n`;
+  summary += `🔢 *Total Elegidas:* ${selectedPhotos.length} fotos\n`;
   summary += `*Lista de fotos seleccionadas:*\n`;
-
   selectedPhotos.forEach((p, idx) => {
     summary += `\n${idx + 1}. *${p.title}*`;
     if (p.clientComment) {
-      summary += `\n   💬 _Nota:_ "${p.clientComment}"`;
+      summary += `\n💬 _Nota:_ "${p.clientComment}"`;
     }
   });
-
-  summary += `\n\n_Quedo atento a la entrega final en alta resolución. ¡Muchas gracias!_`;
+  summary += `\n_Quedo atento a la entrega final en alta resolución. ¡Muchas gracias!_`;
 
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
   const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${encodeURIComponent(summary)}`;
   const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${encodeURIComponent(summary)}`;
 
-  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
   sendOneSignalPush({
     title: `📸 ¡${session.clientName || 'Cliente'} envió sus fotos!`,
     message: `Eligió ${selectedPhotos.length} fotos de su paquete "${session.packageTitle}". ¡Lista para procesar!`,
@@ -820,78 +748,117 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   });
 });
 
+// ==============================================================================
+// AUTENTICACIÓN ADMIN (HARDENED CON RATE LIMITING Y TIEMPO CONSTANTE)
+// ==============================================================================
 app.post('/api/admin/auth', (req, res) => {
-  const { pin } = req.body;
-  if (pin === (runtimeDB.settings.adminPin || '0493')) {
-    res.json({ success: true, token: 'admin-authorized-token' });
-  } else {
-    res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
+  const ip = getClientIp(req);
+  const rateCheck = checkRateLimit(ip);
+
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      error: `Demasiados intentos. Bloqueado por ${rateCheck.retryAfterMin} minutos.`,
+      retryAfterMs: rateCheck.retryAfterMs
+    });
   }
+
+  const { pin } = req.body;
+  if (!pin || typeof pin !== 'string') {
+    return res.status(400).json({ error: 'PIN requerido.' });
+  }
+
+  // Hash del PIN ingresado
+  const inputHash = hashSHA256(pin);
+
+  // Hash esperado: desde settings o por defecto
+  const expectedHash = runtimeDB.settings.adminPinHash || DEFAULT_ADMIN_PIN_HASH;
+
+  // Comparación en tiempo constante
+  if (!secureCompare(inputHash, expectedHash)) {
+    const newRecord = recordFailedLogin(ip);
+    const remaining = MAX_LOGIN_ATTEMPTS - newRecord.count;
+
+    if (newRecord.lockedUntil) {
+      return res.status(429).json({
+        error: 'Cuenta bloqueada temporalmente por demasiados intentos fallidos.',
+        lockedUntil: newRecord.lockedUntil
+      });
+    }
+
+    return res.status(401).json({
+      error: 'PIN incorrecto.',
+      attemptsRemaining: Math.max(0, remaining)
+    });
+  }
+
+  // Login exitoso
+  resetLoginAttempts(ip);
+  const token = signAdminToken();
+  res.json({ success: true, token });
 });
 
 app.get('/api/admin/bookings', async (req, res) => {
   try {
-    const diskDB = getDB();
     const map = new Map();
-    (diskDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, { ...b, isReal: true }); });
     (runtimeDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, { ...b, isReal: true }); });
 
-    // Consultar Supabase Cloud en paralelo (catálogo booking_data y tabla bookings)
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.booking_data&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (Array.isArray(rows)) {
-          rows.forEach(r => {
-            try {
-              const b = JSON.parse(r.url);
-              if (b && b.id) {
-                const existing = map.get(b.id);
-                map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
-              }
-            } catch (err) {}
-          });
+    if (SUPABASE_REST_KEY) {
+      try {
+        const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.booking_data&select=*`, {
+          headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+        });
+        if (supaRes.ok) {
+          const rows = await supaRes.json();
+          if (Array.isArray(rows)) {
+            rows.forEach(r => {
+              try {
+                const b = JSON.parse(r.url);
+                if (b && b.id) {
+                  const existing = map.get(b.id);
+                  map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
+                }
+              } catch (err) {}
+            });
+          }
         }
+      } catch (errCloud) {
+        console.warn('Error recuperando reservas de Supabase catalog:', errCloud);
       }
-    } catch (errCloud) {
-      console.warn('Error recuperando reservas de Supabase catalog:', errCloud);
-    }
 
-    try {
-      const supaBookingsRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaBookingsRes.ok) {
-        const rows = await supaBookingsRes.json();
-        if (Array.isArray(rows)) {
-          rows.forEach(b => {
-            if (b && b.id) {
-              const formatted = {
-                id: b.id,
-                clientName: b.client_name,
-                clientWhatsApp: b.client_whatsapp,
-                clientEmail: b.client_email,
-                packageId: b.package_id,
-                packageName: b.package_name,
-                totalPrice: Number(b.total_price || 0),
-                locationType: b.location_type,
-                specificLocation: b.specific_location,
-                dateTime: b.date_time,
-                description: b.description,
-                status: b.status,
-                createdAt: b.created_at,
-                isReal: true
-              };
-              const existing = map.get(b.id);
-              map.set(b.id, existing ? { ...existing, ...formatted, isReal: true } : formatted);
-            }
-          });
+      try {
+        const supaBookingsRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?select=*`, {
+          headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+        });
+        if (supaBookingsRes.ok) {
+          const rows = await supaBookingsRes.json();
+          if (Array.isArray(rows)) {
+            rows.forEach(b => {
+              if (b && b.id) {
+                const formatted = {
+                  id: b.id,
+                  clientName: b.client_name,
+                  clientWhatsApp: b.client_whatsapp,
+                  clientEmail: b.client_email,
+                  packageId: b.package_id,
+                  packageName: b.package_name,
+                  totalPrice: Number(b.total_price || 0),
+                  locationType: b.location_type,
+                  specificLocation: b.specific_location,
+                  dateTime: b.date_time,
+                  description: b.description,
+                  status: b.status,
+                  createdAt: b.created_at,
+                  isReal: true
+                };
+                const existing = map.get(b.id);
+                map.set(b.id, existing ? { ...existing, ...formatted, isReal: true } : formatted);
+              }
+            });
+          }
         }
+      } catch (errDirect) {
+        console.warn('Error recuperando reservas de Supabase bookings:', errDirect);
       }
-    } catch (errDirect) {
-      console.warn('Error recuperando reservas de Supabase bookings:', errDirect);
     }
 
     runtimeDB.bookings = Array.from(map.values());
@@ -912,10 +879,7 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
   } else {
     Object.assign(booking, updates, { isReal: true });
   }
-
-  saveDB(runtimeDB);
   await syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
-
   res.json({ success: true, booking });
 });
 
@@ -923,37 +887,46 @@ app.delete('/api/admin/bookings/:id', async (req, res) => {
   const { id } = req.params;
   const supaId = id.startsWith('book-') ? id : `book-${id}`;
   runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id && b.id !== supaId);
-  saveDB(runtimeDB);
 
-  try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-    });
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-    });
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(supaId)}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-    });
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-    });
-  } catch (e) {}
-
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(supaId)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+    } catch (e) {}
+  }
   res.json({ success: true });
 });
 
-// --- PASARELAS DE PAGO DIRECTO (NEQUI, DAVIPLATA, DALE) ---
+// ==============================================================================
+// PASARELAS DE PAGO
+// ==============================================================================
 app.get('/api/admin/payments', (req, res) => {
   res.json(runtimeDB.payments || []);
 });
 
 app.post('/api/payments', (req, res) => {
-  const { clientName, clientWhatsApp, sessionToken, packageTitle, amount, method, reference, voucherUrl, extraPhotosCount, printedPhotosCount, printedPhotos10x15Count, printedPhotos15x20Count, retablosCount, printedSizes, paperPhotosSummary, retablosSummary, printedPhotosSummary, status, concept } = req.body;
+  const {
+    clientName, clientWhatsApp, sessionToken, packageTitle, amount, method,
+    reference, voucherUrl, extraPhotosCount, printedPhotosCount,
+    printedPhotos10x15Count, printedPhotos15x20Count, retablosCount,
+    printedSizes, paperPhotosSummary, retablosSummary, printedPhotosSummary,
+    status, concept
+  } = req.body;
+
   const newPayment = {
     id: `pay-${Date.now()}`,
     clientName: (clientName || 'Cliente').trim(),
@@ -961,7 +934,7 @@ app.post('/api/payments', (req, res) => {
     sessionToken: sessionToken || '',
     packageTitle: packageTitle || 'Sesión Fotográfica',
     amount: Number(amount) || 0,
-    method: method || 'nequi', // 'nequi' | 'daviplata' | 'dale'
+    method: method || 'nequi',
     reference: (reference || '').trim(),
     voucherUrl: voucherUrl || null,
     extraPhotosCount: Number(extraPhotosCount) || 0,
@@ -980,15 +953,6 @@ app.post('/api/payments', (req, res) => {
 
   if (!runtimeDB.payments) runtimeDB.payments = [];
   runtimeDB.payments.unshift(newPayment);
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.payments = runtimeDB.payments;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
 
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
@@ -1013,17 +977,16 @@ app.post('/api/payments', (req, res) => {
   }
 
   const msgText = encodeURIComponent(
-    `💰 *¡Hola Sebastian G! Acabo de registrar mi pago de fotos:*\n\n` +
+    `💰 *¡Hola Sebastian G! Acabo de registrar mi pago de fotos:*\n` +
     `👤 *Cliente:* ${newPayment.clientName}\n` +
     `📱 *WhatsApp:* ${newPayment.clientWhatsApp}\n` +
     `💵 *Monto Transferido:* $${newPayment.amount.toLocaleString('es-CO')} COP\n` +
     `💳 *Pasarela / Billetera:* ${methodName}\n` +
     `🔢 *Referencia:* ${newPayment.reference || 'Comprobante adjunto'}` +
-    detailItems + `\n\n` +
+    detailItems + `\n` +
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
 
-  // Disparo de notificación Push 24/7 en segundo plano vía OneSignal
   sendOneSignalPush({
     title: '💰 ¡Nuevo Pago Registrado!',
     message: `${newPayment.clientName} registró pago de $${newPayment.amount.toLocaleString('es-CO')} COP (${methodName})`,
@@ -1044,18 +1007,7 @@ app.patch('/api/admin/payments/:id', (req, res) => {
   const { status } = req.body;
   const payment = (runtimeDB.payments || []).find(p => p.id === id);
   if (!payment) return res.status(404).json({ error: 'Pago no encontrado.' });
-
   payment.status = status;
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.payments = runtimeDB.payments;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
-
   res.json({ success: true, payment });
 });
 
@@ -1079,42 +1031,24 @@ app.delete('/api/admin/sessions/:id', (req, res) => {
   const { id } = req.params;
   const rawId = (id || '').trim();
   const cleanId = rawId.replace(/^sess-/, '');
-
   runtimeDB.sessions = (runtimeDB.sessions || []).filter(s => {
     if (!s) return false;
-    const match = 
-      s.id === rawId || 
-      s.token === rawId || 
-      s.id === cleanId || 
-      s.token === cleanId || 
-      s.id === `sess-${cleanId}` || 
+    const match =
+      s.id === rawId ||
+      s.token === rawId ||
+      s.id === cleanId ||
+      s.token === cleanId ||
+      s.id === `sess-${cleanId}` ||
       s.token === `sess-${cleanId}`;
     return !match;
   });
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.sessions = runtimeDB.sessions;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
-
   res.json({ success: true });
 });
+
 app.post('/api/admin/sessions', (req, res) => {
   const {
-    clientName,
-    clientWhatsApp,
-    packageTitle,
-    maxPhotosAllowed,
-    photos,
-    totalPrice,
-    packagePrice,
-    sessionBasePrice,
-    bookingId,
-    location
+    clientName, clientWhatsApp, packageTitle, maxPhotosAllowed, photos,
+    totalPrice, packagePrice, sessionBasePrice, bookingId, location
   } = req.body;
 
   if (!clientName || !clientWhatsApp || !photos || photos.length === 0) {
@@ -1154,34 +1088,26 @@ app.post('/api/admin/sessions', (req, res) => {
 
   runtimeDB.sessions.unshift(newSession);
 
-  // Sincronizar sesión con Supabase Cloud
-  try {
-    fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: `sess-${token}`,
-        title: newSession.clientName,
-        category: 'session_data',
-        location: newSession.clientWhatsApp,
-        url: JSON.stringify(newSession)
-      })
-    }).catch(e => console.warn('Sync session to Supabase warning:', e));
-  } catch(e) {}
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.sessions = runtimeDB.sessions;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
+  if (SUPABASE_REST_KEY) {
+    try {
+      fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: `sess-${token}`,
+          title: newSession.clientName,
+          category: 'session_data',
+          location: newSession.clientWhatsApp,
+          url: JSON.stringify(newSession)
+        })
+      }).catch(e => console.warn('Sync session to Supabase warning:', e));
+    } catch(e) {}
+  }
 
   res.status(201).json({
     success: true,
@@ -1193,25 +1119,21 @@ app.post('/api/admin/sessions', (req, res) => {
 app.post('/api/admin/sessions/:id/reopen', (req, res) => {
   const { id } = req.params;
   const { additionalDays = 3, allowReSelection = true } = req.body;
-
   const session = (runtimeDB.sessions || []).find(s => s.id === id);
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   const newExpires = new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000);
   session.expiresAt = newExpires.toISOString();
-
   if (allowReSelection) {
     session.status = 'pending';
     session.submittedAt = null;
   }
-
   res.json({ success: true, session });
 });
 
 app.post('/api/admin/sessions/:id/deliver', (req, res) => {
   const { id } = req.params;
   const { finalDeliveryUrl, deliveryService = 'wetransfer', deliveryNotes = '', finalPhotos = [] } = req.body;
-
   const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
@@ -1223,23 +1145,15 @@ app.post('/api/admin/sessions/:id/deliver', (req, res) => {
   if (Array.isArray(finalPhotos) && finalPhotos.length > 0) {
     session.finalPhotos = finalPhotos;
   }
-
-  try {
-    const dbPath = path.join(process.cwd(), 'server', 'data', 'db.json');
-    if (fs.existsSync(dbPath)) {
-      const current = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-      current.sessions = runtimeDB.sessions;
-      fs.writeFileSync(dbPath, JSON.stringify(current, null, 2));
-    }
-  } catch (e) {}
-
   res.json({ success: true, session });
 });
 
 app.post('/api/admin/settings', (req, res) => {
   const { settings, packages } = req.body;
   if (settings) {
-    runtimeDB.settings = { ...runtimeDB.settings, ...settings };
+    // Nunca permitir que se sobreescriba el hash del PIN por este endpoint
+    const { adminPin, adminPinHash, ...safeSettings } = settings;
+    runtimeDB.settings = { ...runtimeDB.settings, ...safeSettings };
   }
   if (packages && Array.isArray(packages)) {
     runtimeDB.packages = packages;
@@ -1247,7 +1161,9 @@ app.post('/api/admin/settings', (req, res) => {
   res.json({ success: true, settings: runtimeDB.settings, packages: runtimeDB.packages });
 });
 
-// --- GESTIÓN DE CATÁLOGO (FOTOS PÚBLICAS) ---
+// ==============================================================================
+// GESTIÓN DE CATÁLOGO
+// ==============================================================================
 app.post('/api/admin/catalog', (req, res) => {
   const { id, title, category, url, location } = req.body;
   if (!title || !url) {
@@ -1262,12 +1178,8 @@ app.post('/api/admin/catalog', (req, res) => {
     createdAt: new Date().toISOString()
   };
   if (!runtimeDB.catalog) runtimeDB.catalog = [];
-  // Evitar duplicados por ID o por URL
   runtimeDB.catalog = runtimeDB.catalog.filter(c => c.id !== newItem.id && c.url !== newItem.url);
   runtimeDB.catalog.unshift(newItem);
-
-  saveDB(runtimeDB);
-
   res.status(201).json({ success: true, item: newItem });
 });
 
@@ -1276,15 +1188,11 @@ app.delete('/api/admin/catalog/:id', (req, res) => {
   const bodyTitle = req.body && req.body.title ? req.body.title.trim().toLowerCase() : null;
   const target = (runtimeDB.catalog || []).find(c => c.id === id);
   const targetTitle = bodyTitle || (target?.title ? target.title.trim().toLowerCase() : null);
-
   runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => {
     if (c.id === id) return false;
     if (targetTitle && c.title && c.title.trim().toLowerCase() === targetTitle) return false;
     return true;
   });
-
-  saveDB(runtimeDB);
-
   res.json({ success: true, id });
 });
 
@@ -1294,22 +1202,24 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
       (c.url && c.url.includes('unsplash.com'));
     return !isSample;
   });
-
-  saveDB(runtimeDB);
-
   res.json({ success: true, catalog: runtimeDB.catalog });
 });
 
-// --- SEGURIDAD Y CAMBIO / RECUPERACIÓN DE PIN ---
+// ==============================================================================
+// SEGURIDAD: CAMBIO DE PIN (solo con hash)
+// ==============================================================================
 app.post('/api/admin/pin/change', (req, res) => {
   const { currentPin, newPin } = req.body;
-  if (currentPin !== (runtimeDB.settings.adminPin || '0493')) {
+  const currentHash = hashSHA256(currentPin);
+  const expectedHash = runtimeDB.settings.adminPinHash || DEFAULT_ADMIN_PIN_HASH;
+
+  if (!secureCompare(currentHash, expectedHash)) {
     return res.status(401).json({ error: 'El PIN actual no coincide.' });
   }
   if (!newPin || String(newPin).length < 4) {
     return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
   }
-  runtimeDB.settings.adminPin = String(newPin).trim();
+  runtimeDB.settings.adminPinHash = hashSHA256(String(newPin).trim());
   res.json({ success: true, message: '¡PIN de acceso actualizado correctamente!' });
 });
 
@@ -1318,7 +1228,6 @@ app.post('/api/admin/pin/recover', (req, res) => {
   const cleanPhone = (phone || '').replace(/\D/g, '');
   const p1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const p2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
-
   const matchesP1 = cleanPhone.length >= 7 && (p1.endsWith(cleanPhone) || cleanPhone.endsWith(p1.slice(-10)));
   const matchesP2 = cleanPhone.length >= 7 && (p2.endsWith(cleanPhone) || cleanPhone.endsWith(p2.slice(-10)));
 
@@ -1330,45 +1239,46 @@ app.post('/api/admin/pin/recover', (req, res) => {
     if (String(newPin).length < 4) {
       return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
     }
-    runtimeDB.settings.adminPin = String(newPin).trim();
+    runtimeDB.settings.adminPinHash = hashSHA256(String(newPin).trim());
     return res.json({ success: true, message: '¡PIN restablecido con éxito!' });
   }
 
-  res.json({ success: true, verified: true, currentPin: runtimeDB.settings.adminPin });
+  res.json({ success: true, verified: true });
 });
 
-// --- CALIFICACIONES & RESEÑAS PÚBLICAS Y DE CLIENTES ---
+// ==============================================================================
+// RESEÑAS
+// ==============================================================================
 app.get('/api/reviews', async (req, res) => {
   let reviews = runtimeDB.reviews || [];
 
-  // Sincronizar con Supabase Cloud para recopilar reseñas almacenadas
-  try {
-    const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.review_data&select=*&order=created_at.desc`, {
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`
+  if (SUPABASE_REST_KEY) {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.review_data&select=*&order=created_at.desc`, {
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`
+        }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (Array.isArray(rows)) {
+          const cloudReviews = rows.map(r => {
+            try { return JSON.parse(r.url); } catch (e) { return null; }
+          }).filter(Boolean);
+          const map = new Map();
+          [...reviews, ...cloudReviews].forEach(rev => {
+            if (rev && rev.id) map.set(rev.id, rev);
+          });
+          reviews = Array.from(map.values());
+          runtimeDB.reviews = reviews;
+        }
       }
-    });
-    if (supaRes.ok) {
-      const rows = await supaRes.json();
-      if (Array.isArray(rows)) {
-        const cloudReviews = rows.map(r => {
-          try { return JSON.parse(r.url); } catch (e) { return null; }
-        }).filter(Boolean);
-
-        const map = new Map();
-        [...reviews, ...cloudReviews].forEach(rev => {
-          if (rev && rev.id) map.set(rev.id, rev);
-        });
-        reviews = Array.from(map.values());
-        runtimeDB.reviews = reviews;
-      }
+    } catch (err) {
+      console.warn('Error obteniendo reseñas desde Supabase:', err);
     }
-  } catch (err) {
-    console.warn('Error obteniendo reseñas desde Supabase:', err);
   }
 
-  // Filtrar reseñas temporales y remover datos de paquetes o sesiones
   reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')).map(r => {
     const clean = { ...r };
     delete clean.sessionTitle;
@@ -1379,13 +1289,11 @@ app.get('/api/reviews', async (req, res) => {
   res.json(reviews);
 });
 
-// Guardar reseña pública directa (desde https://sebastiang.app/calificar)
 app.post('/api/reviews', async (req, res) => {
   const { clientName, rating, recommend, comment } = req.body || {};
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan nombre del cliente o comentario.' });
   }
-
   const newReview = {
     id: `rev-${Date.now()}`,
     clientName: String(clientName).trim(),
@@ -1396,34 +1304,32 @@ app.post('/api/reviews', async (req, res) => {
     verified: true,
     createdAt: new Date().toISOString()
   };
-
   if (!runtimeDB.reviews) runtimeDB.reviews = [];
   runtimeDB.reviews.unshift(newReview);
-  saveDB(runtimeDB);
 
-  // Persistir en Supabase Cloud para inmutabilidad y sincronización en tiempo real
-  try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: `rev-${newReview.id}`,
-        title: newReview.clientName,
-        category: 'review_data',
-        location: `${newReview.rating} estrellas`,
-        url: JSON.stringify(newReview)
-      })
-    });
-  } catch (err) {
-    console.warn('Error al guardar reseña en Supabase:', err);
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: `rev-${newReview.id}`,
+          title: newReview.clientName,
+          category: 'review_data',
+          location: `${newReview.rating} estrellas`,
+          url: JSON.stringify(newReview)
+        })
+      });
+    } catch (err) {
+      console.warn('Error al guardar reseña en Supabase:', err);
+    }
   }
 
-  // Disparo de notificación Push 24/7 al fotógrafo
   sendOneSignalPush({
     title: `⭐ ¡Nueva Calificación de ${newReview.clientName}!`,
     message: `${'⭐'.repeat(newReview.rating)} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
@@ -1434,7 +1340,6 @@ app.post('/api/reviews', async (req, res) => {
   res.status(201).json({ success: true, review: newReview });
 });
 
-// Guardar reseña desde galería de cliente
 app.post('/api/gallery/:token/review', async (req, res) => {
   const { clientName, rating, recommend, comment } = req.body || {};
   const newReview = {
@@ -1447,29 +1352,29 @@ app.post('/api/gallery/:token/review', async (req, res) => {
     verified: true,
     createdAt: new Date().toISOString()
   };
-
   if (!runtimeDB.reviews) runtimeDB.reviews = [];
   runtimeDB.reviews.unshift(newReview);
-  saveDB(runtimeDB);
 
-  try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: `rev-${newReview.id}`,
-        title: newReview.clientName,
-        category: 'review_data',
-        location: `${newReview.rating} estrellas`,
-        url: JSON.stringify(newReview)
-      })
-    });
-  } catch (err) {}
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: `rev-${newReview.id}`,
+          title: newReview.clientName,
+          category: 'review_data',
+          location: `${newReview.rating} estrellas`,
+          url: JSON.stringify(newReview)
+        })
+      });
+    } catch (err) {}
+  }
 
   sendOneSignalPush({
     title: `⭐ ¡Nueva Reseña de ${newReview.clientName}!`,
@@ -1481,23 +1386,78 @@ app.post('/api/gallery/:token/review', async (req, res) => {
   res.json({ success: true, review: newReview });
 });
 
-// Eliminar reseña desde el panel de administración
 app.delete('/api/admin/reviews/:id', async (req, res) => {
   const { id } = req.params;
   runtimeDB.reviews = (runtimeDB.reviews || []).filter(r => r.id !== id);
-  saveDB(runtimeDB);
 
-  try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.rev-${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`
-      }
-    });
-  } catch (err) {}
-
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.rev-${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`
+        }
+      });
+    } catch (err) {}
+  }
   res.json({ success: true, id });
+});
+
+// ==============================================================================
+// WEBHOOK BOT WHATSAPP
+// ==============================================================================
+app.all('/api/bot-webhook', async (req, res) => {
+  try {
+    const rawMsg = (req.body?.query?.message || req.body?.message || req.query?.message || '').trim();
+    const sender = (req.body?.query?.sender || req.body?.sender || req.query?.sender || 'Cliente').trim();
+    const cleanMsg = rawMsg.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const packages = Array.isArray(runtimeDB.packages) && runtimeDB.packages.length > 0 ? runtimeDB.packages : [
+      { name: '4 Fotos Digitales', price: 45000, features: ['+ 2 Fotos GRATIS (Total: 6)'] },
+      { name: '6 Fotos Digitales', price: 65000, features: ['+ 2 Fotos GRATIS (Total: 8)'] },
+      { name: '8 Fotos Digitales', price: 75000, features: ['Nuestra más pedida (Total: 10)'] },
+      { name: '10 Fotos Digitales', price: 85000, features: ['+ 2 Fotos GRATIS'] }
+    ];
+
+    let replyText = '';
+
+    if (cleanMsg === '1' || cleanMsg.includes('paquete') || cleanMsg.includes('precio')) {
+      let pkgList = packages.map(p => `🔹 *${p.name}:* $${Number(p.price).toLocaleString('es-CO')} COP`).join('\n');
+      replyText = `📸 *NUESTROS PAQUETES OFICIALES DE FOTOGRAFÍA:*\n${pkgList}\n✨ *Todas las opciones incluyen:* Retoque profesional.\n📅 *¿Deseas apartar tu cupo?*\n👉 https://sebastiang.app/#reservar`;
+    } else if (cleanMsg === '2' || cleanMsg.includes('reservar') || cleanMsg.includes('agendar')) {
+      replyText = `🗓️ *¡EXCELENTE DECISIÓN!*\n🌐 Reserva en la web: https://sebastiang.app/#reservar\n💬 O envía: Nombre, Fecha, Paquete, Locación.`;
+    } else if (cleanMsg === '3' || cleanMsg.includes('foto') || cleanMsg.includes('portafolio')) {
+      replyText = `🎨 *CONOCE NUESTRO TRABAJO:*\n👉 https://sebastiang.app\nInstagram: @sebastiang_fotos`;
+    } else if (cleanMsg === '4' || cleanMsg.includes('nequi') || cleanMsg.includes('pago')) {
+      replyText = `💳 *CUENTAS OFICIALES:*\n🟣 Nequi: 324 472 5167\n🔴 DaviPlata: @PLATA3244725167\n🟡 Dale!: @SGG04`;
+    } else if (cleanMsg === '5' || cleanMsg.includes('humano') || cleanMsg.includes('sebastian')) {
+      sendOneSignalPush({
+        title: '💬 Cliente solicita hablar contigo',
+        message: `${sender} quiere hablar con Sebastian G en WhatsApp`,
+        url: 'https://sebastiang.app/?mode=admin'
+      });
+      replyText = `👨💼 *¡Entendido! Ya le avisé a Sebastian.* En unos minutos estará contigo.`;
+    } else if (cleanMsg.includes('comprobante') || cleanMsg.includes('transfiri')) {
+      sendOneSignalPush({
+        title: '💰 Comprobante enviado por WhatsApp',
+        message: `${sender} indica que envió un comprobante`,
+        url: 'https://sebastiang.app/?mode=admin'
+      });
+      replyText = `✅ *¡Muchas gracias por tu comprobante!* Sebastian lo revisará en breve.`;
+    } else {
+      replyText = `¡Hola! 👋 Bienvenido a *Sebastian G • Fotografía* 📸✨\n1️⃣ Paquetes y precios\n2️⃣ Reservar fecha\n3️⃣ Ver portafolio\n4️⃣ Cuentas de pago\n5️⃣ Hablar con Sebastian\n👉 *Escribe el número de la opción*`;
+    }
+
+    return res.json({
+      replies: [{ message: replyText }],
+      reply: replyText,
+      success: true
+    });
+  } catch (err) {
+    console.error('Error en webhook de bot WhatsApp:', err);
+    return res.status(500).json({ error: 'Error procesando respuesta del bot' });
+  }
 });
 
 export default app;

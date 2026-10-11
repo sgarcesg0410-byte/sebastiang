@@ -1,21 +1,50 @@
 import nodemailer from 'nodemailer';
 
-// Configuración SMTP con Zoho Mail (Puente Oficial reservas@sebastiang.app)
-const ZOHO_CONFIG = {
-  host: process.env.ZOHO_SMTP_HOST || 'smtp.zoho.com',
-  port: parseInt(process.env.ZOHO_SMTP_PORT || '587', 10),
-  secure: false, // Port 587 uses STARTTLS
-  auth: {
-    user: process.env.ZOHO_SMTP_USER || 'reservas@sebastiang.app',
-    pass: process.env.ZOHO_SMTP_PASS || '***REMOVED***'
+// ==============================================================================
+// CONFIGURACIÓN SMTP CON ZOHO MAIL
+// ==============================================================================
+// Las credenciales se leen EXCLUSIVAMENTE desde variables de entorno.
+// Si no están configuradas, el sistema funciona en modo degradado (sin correos)
+// pero NUNCA expone secretos ni falla catastróficamente.
+// ==============================================================================
+
+function getZohoConfig() {
+  const host = process.env.ZOHO_SMTP_HOST || 'smtp.zoho.com';
+  const port = parseInt(process.env.ZOHO_SMTP_PORT || '587', 10);
+  const user = process.env.ZOHO_SMTP_USER || 'reservas@sebastiang.app';
+  const pass = process.env.ZOHO_SMTP_PASS;
+
+  if (!pass) {
+    console.warn(
+      '⚠️ [EmailService] Contraseña SMTP de Zoho no configurada (ZOHO_SMTP_PASS). ' +
+      'Define ZOHO_SMTP_PASS en tus variables de entorno para habilitar el envío de correos.'
+    );
+    return null;
   }
-};
+
+  return {
+    host,
+    port,
+    secure: false, // Port 587 uses STARTTLS
+    auth: { user, pass }
+  };
+}
 
 let cachedTransporter = null;
+let lastConfigWarning = 0;
 
 function getTransporter() {
+  const config = getZohoConfig();
+  if (!config) {
+    const now = Date.now();
+    if (now - lastConfigWarning > 5 * 60 * 1000) {
+      lastConfigWarning = now;
+    }
+    return null;
+  }
+
   if (!cachedTransporter) {
-    cachedTransporter = nodemailer.createTransport(ZOHO_CONFIG);
+    cachedTransporter = nodemailer.createTransport(config);
   }
   return cachedTransporter;
 }
@@ -78,6 +107,11 @@ export async function sendNewBookingEmails(booking, settings = {}) {
   const transporter = getTransporter();
   const results = { adminSent: false, clientSent: false };
 
+  if (!transporter) {
+    console.warn('[EmailService] No se pueden enviar correos: SMTP no configurado.');
+    return results;
+  }
+
   const rawName = (booking.clientName || 'Cliente').trim();
   const firstName = rawName.split(' ')[0] || rawName;
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
@@ -92,11 +126,9 @@ export async function sendNewBookingEmails(booking, settings = {}) {
           🔔 Nueva Reserva Recibida en la Web
         </span>
       </div>
-
       <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6; margin-top: 0;">
         ¡Hola Sebastian! Un cliente acaba de agendar una nueva sesión fotográfica a través de <strong>sebastiang.app</strong>:
       </p>
-
       <table border="0" cellpadding="8" cellspacing="0" width="100%" style="background-color: #0c0a09; border-radius: 12px; margin: 15px 0; border: 1px solid #292524; color: #d6d3d1; font-size: 14px;">
         <tr>
           <td style="color: #a8a29e; width: 35%;">👤 Cliente:</td>
@@ -133,7 +165,6 @@ export async function sendNewBookingEmails(booking, settings = {}) {
           <td style="color: #e7e5e4;">${booking.description}</td>
         </tr>` : ''}
       </table>
-
       <div style="text-align: center; margin-top: 25px;">
         <a href="https://sebastiang.app/?mode=admin" style="display: inline-block; background: linear-gradient(135deg, #d97706, #b45309); color: #ffffff; font-weight: bold; font-size: 14px; padding: 12px 26px; border-radius: 10px; text-decoration: none; box-shadow: 0 4px 14px rgba(217, 119, 6, 0.4);">
           ⚡ Abrir Panel de Control
@@ -163,7 +194,6 @@ export async function sendNewBookingEmails(booking, settings = {}) {
         <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6;">
           Hemos recibido con éxito tu solicitud de reserva para una <strong>Sesión Fotográfica Profesional con Sebastian G</strong>.
         </p>
-
         <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin: 20px 0;">
           <h3 style="color: #f59e0b; font-size: 14px; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">
             📋 Resumen de tu Cita Agendada:
@@ -173,13 +203,11 @@ export async function sendNewBookingEmails(booking, settings = {}) {
           <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Locación:</strong> ${loc}</p>
           <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Valor Total:</strong> $${priceFormatted} COP</p>
         </div>
-
         <div style="background-color: #292524; border-left: 4px solid #34d399; padding: 12px 16px; border-radius: 8px; margin: 20px 0;">
           <p style="margin: 0; color: #e7e5e4; font-size: 13px; line-height: 1.5;">
             💡 <strong>Próximo paso:</strong> Te contactaremos por WhatsApp al número que registraste (<strong>${booking.clientWhatsApp}</strong>) para coordinar detalles de vestuario y confirmar definitivamente tu sesión.
           </p>
         </div>
-
         <div style="text-align: center; margin-top: 25px;">
           <a href="https://wa.me/573244725167" style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: bold; font-size: 14px; padding: 12px 24px; border-radius: 10px; text-decoration: none;">
             💬 Contactar a Sebastian G por WhatsApp
@@ -212,6 +240,8 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
   }
 
   const transporter = getTransporter();
+  if (!transporter) return false;
+
   const rawName = (booking.clientName || 'Cliente').trim();
   const firstName = rawName.split(' ')[0] || rawName;
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
@@ -224,26 +254,22 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
           ✓ ¡Sesión Fotográfica Confirmada!
         </span>
       </div>
-
       <h2 style="color: #f59e0b; margin-top: 0; font-size: 20px;">
         ¡Hola ${firstName}! ✨
       </h2>
       <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6;">
         Te confirmo con mucho agrado que tu <strong>Sesión Fotográfica Profesional con Sebastian G</strong> ha sido agendada de forma exclusiva en mi calendario de trabajo.
       </p>
-
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin: 20px 0;">
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">🗓️ <strong>Fecha y Hora:</strong> ${booking.dateTime}</p>
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📍 <strong>Locación:</strong> ${loc}</p>
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📦 <strong>Paquete:</strong> ${booking.packageName}</p>
       </div>
-
       ${customNotes && customNotes.trim() ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Nota de Sebastian G:</span>
         <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${customNotes.trim()}"</p>
       </div>` : ''}
-
       <div style="background-color: #172554; border-left: 4px solid #3b82f6; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #93c5fd; font-weight: bold; font-size: 13px;">💡 Consejos para el día de tu sesión:</span>
         <ul style="margin: 8px 0 0; padding-left: 18px; color: #e0e7ff; font-size: 13px; line-height: 1.5;">
@@ -253,7 +279,6 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
           <li>⛅ <strong>Garantía de Clima en ${loc}:</strong> Si el clima en ${loc} (lluvia o tormenta) no permite realizar las fotos, reprogramamos para otra fecha sin costo.</li>
         </ul>
       </div>
-
       <p style="color: #a8a29e; font-size: 14px; text-align: center; margin-top: 25px;">
         ¡Será un verdadero placer capturar tus mejores momentos frente al lente! 📸
       </p>
@@ -265,6 +290,7 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
       subject: `🎉 ¡Cita Confirmada! Tu Sesión con Sebastian G (${booking.dateTime})`,
       html
     });
+
     console.log('✓ Confirmación de cita enviada por correo al cliente:', booking.clientEmail);
     return true;
   } catch (err) {
@@ -282,6 +308,8 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
   }
 
   const transporter = getTransporter();
+  if (!transporter) return false;
+
   const rawName = (clientName || 'Cliente').trim();
   const firstName = rawName.split(' ')[0] || rawName;
 
@@ -292,36 +320,30 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
           ✨ ¡Tus Fotos Están Listas en Calidad Original Full HD!
         </span>
       </div>
-
       <h2 style="color: #f59e0b; margin-top: 0; font-size: 20px;">
         ¡Hola ${firstName}! 📸
       </h2>
       <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6;">
         Hemos finalizado la edición y el retoque profesional de tus fotografías seleccionadas correspondientes a tu <strong>${packageName || 'Sesión Fotográfica'}</strong>.
       </p>
-
       <p style="color: #d6d3d1; font-size: 14px; line-height: 1.6;">
         Para que tus fotos conserven el 100% de nitidez, color y resolución original (sin la compresión que aplica WhatsApp), puedes descargarlas directamente en el siguiente botón:
       </p>
-
       <div style="text-align: center; margin: 30px 0;">
         <a href="${downloadUrl}" style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; font-weight: 800; font-size: 16px; padding: 15px 32px; border-radius: 12px; text-decoration: none; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);">
           📥 Descargar Mis Fotos en Máxima Calidad
         </a>
       </div>
-
       ${customNotes && customNotes.trim() ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Nota de Sebastian G:</span>
         <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${customNotes.trim()}"</p>
       </div>` : ''}
-
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
         <p style="margin: 0; color: #a8a29e; font-size: 12px; line-height: 1.5;">
           💡 <strong>Recomendación importante:</strong> Te sugerimos descargar los archivos a tu computador o celular lo antes posible para conservarlos siempre en su resolución original.
         </p>
       </div>
-
       <p style="color: #e7e5e4; font-size: 14px; text-align: center; margin-top: 25px;">
         ¡Fue un verdadero honor haber capturado tus mejores momentos! ✨
       </p>
@@ -333,6 +355,7 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
       subject: `📸 ¡Tus Fotos Están Listas en Calidad Original Full HD! • Sebastian G`,
       html
     });
+
     console.log('✓ Entrega de fotos enviada por correo al cliente:', clientEmail);
     return true;
   } catch (err) {
@@ -346,6 +369,8 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
  */
 export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@gmail.com') {
   const transporter = getTransporter();
+  if (!transporter) return false;
+
   try {
     const dest = (targetEmail || 'sgarcesg0410@gmail.com').trim();
     const html = wrapEmailTemplate(`
@@ -354,21 +379,17 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@g
           🔐 Código de Acceso Seguro (2FA) • Sebastian G
         </span>
       </div>
-
       <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6; margin-top: 0;">
         ¡Hola Sebastian! Se ha solicitado un ingreso al <strong>Panel de Administración</strong> desde un dispositivo no reconocido.
       </p>
-
       <p style="color: #d6d3d1; font-size: 14px; line-height: 1.6;">
         Para confirmar tu identidad y autorizar el acceso privado a tus reservas, fotos y finanzas, ingresa el siguiente código de verificación de 6 dígitos:
       </p>
-
       <div style="text-align: center; margin: 30px 0;">
         <div style="display: inline-block; background: #0c0a09; border: 2px solid #f59e0b; padding: 16px 36px; border-radius: 16px; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #f59e0b; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.25);">
           ${code}
         </div>
       </div>
-
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
         <p style="margin: 0; color: #a8a29e; font-size: 12px; line-height: 1.5;">
           ⏱️ Este código vence en <strong>10 minutos</strong>.<br/>
@@ -384,6 +405,7 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@g
       subject: `🔐 Tu Código de Seguridad 2FA es [ ${code} ] • Sebastian G`,
       html
     });
+
     console.log('✓ Código 2FA enviado por correo a:', dest);
     return true;
   } catch (err) {
@@ -391,4 +413,3 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@g
     return false;
   }
 }
-
