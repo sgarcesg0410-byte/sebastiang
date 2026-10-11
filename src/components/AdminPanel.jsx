@@ -51,6 +51,9 @@ import {
   FileText,
   Printer,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
+  Maximize2,
   List,
   Fingerprint,
   Search,
@@ -137,7 +140,10 @@ import {
   formatPrintedPhotosSummary,
   formatPaperPhotosSummary,
   formatRetablosSummary,
-  getPrintSizes
+  getPrintSizes,
+  getRetabloSizes,
+  calculateRetablosFinancials,
+  DEFAULT_RETABLO_COSTS
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -370,6 +376,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [editablePrintedPhoto50x70Price, setEditablePrintedPhoto50x70Price] = useState(110000);
   const [editablePrintedPhoto70x50Price, setEditablePrintedPhoto70x50Price] = useState(120000);
   const [editablePrintedPhoto70x100Price, setEditablePrintedPhoto70x100Price] = useState(200000);
+  const [editableRetabloCost20x30, setEditableRetabloCost20x30] = useState(15000);
+  const [editableRetabloCost30x45, setEditableRetabloCost30x45] = useState(30000);
+  const [editableRetabloCost40x50, setEditableRetabloCost40x50] = useState(55000);
+  const [editableRetabloCost50x70, setEditableRetabloCost50x70] = useState(80000);
+  const [editableRetabloCost70x50, setEditableRetabloCost70x50] = useState(80000);
+  const [editableRetabloCost70x100, setEditableRetabloCost70x100] = useState(150000);
+  const [showRetabloCostWidget, setShowRetabloCostWidget] = useState(true);
   const [isSavingPrices, setIsSavingPrices] = useState(false);
   const [priceSaveSuccess, setPriceSaveSuccess] = useState('');
 
@@ -1262,6 +1275,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           setEditablePrintedPhoto50x70Price(setData.printedPhoto50x70Price || 110000);
           setEditablePrintedPhoto70x50Price(setData.printedPhoto70x50Price || 120000);
           setEditablePrintedPhoto70x100Price(setData.printedPhoto70x100Price || 200000);
+          setEditableRetabloCost20x30(setData.retabloCost20x30 ?? 15000);
+          setEditableRetabloCost30x45(setData.retabloCost30x45 ?? 30000);
+          setEditableRetabloCost40x50(setData.retabloCost40x50 ?? 55000);
+          setEditableRetabloCost50x70(setData.retabloCost50x70 ?? 80000);
+          setEditableRetabloCost70x50(setData.retabloCost70x50 ?? 80000);
+          setEditableRetabloCost70x100(setData.retabloCost70x100 ?? 150000);
           setEditableSurcharge(setData.outOfSanAnteroSurcharge || 10000);
         }
 
@@ -1692,6 +1711,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         printedPhoto50x70Price: Number(editablePrintedPhoto50x70Price),
         printedPhoto70x50Price: Number(editablePrintedPhoto70x50Price),
         printedPhoto70x100Price: Number(editablePrintedPhoto70x100Price),
+        retabloCost20x30: Number(editableRetabloCost20x30),
+        retabloCost30x45: Number(editableRetabloCost30x45),
+        retabloCost40x50: Number(editableRetabloCost40x50),
+        retabloCost50x70: Number(editableRetabloCost50x70),
+        retabloCost70x50: Number(editableRetabloCost70x50),
+        retabloCost70x100: Number(editableRetabloCost70x100),
         outOfSanAnteroSurcharge: Number(editableSurcharge)
       });
       setSettings(updatedSettings);
@@ -4679,6 +4704,154 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   </span>
                 </div>
 
+                {/* WIDGET EJECUTIVO: CONTROL DE COSTOS & GANANCIAS EN CUADROS DE RETABLOS */}
+                {(() => {
+                  const retabloCatalogWithProfit = getRetabloSizes({
+                    ...settings,
+                    printedPhoto20x30Price: editablePrintedPhoto20x30Price,
+                    printedPhoto30x45Price: editablePrintedPhoto30x45Price,
+                    printedPhoto40x50Price: editablePrintedPhoto40x50Price,
+                    printedPhoto50x70Price: editablePrintedPhoto50x70Price,
+                    printedPhoto70x50Price: editablePrintedPhoto70x50Price,
+                    printedPhoto70x100Price: editablePrintedPhoto70x100Price,
+                    retabloCost20x30: editableRetabloCost20x30,
+                    retabloCost30x45: editableRetabloCost30x45,
+                    retabloCost40x50: editableRetabloCost40x50,
+                    retabloCost50x70: editableRetabloCost50x70,
+                    retabloCost70x50: editableRetabloCost70x50,
+                    retabloCost70x100: editableRetabloCost70x100
+                  });
+
+                  return (
+                    <div className="bg-stone-900 border border-amber-500/30 rounded-3xl p-4 sm:p-6 shadow-xl relative overflow-hidden space-y-4 text-left">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-start sm:items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500/30 to-amber-700/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 shadow-md">
+                            <Maximize2 className="w-5 h-5 text-amber-400" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="text-base sm:text-lg font-serif font-bold text-white flex items-center gap-2">
+                                <span>Control de Costos & Ganancias de Retablos</span>
+                              </h4>
+                              <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                Costo Taller vs. Precio Cliente
+                              </span>
+                            </div>
+                            <p className="text-xs text-stone-300 mt-0.5">
+                              A cómo se los dejas a tus clientes vs. el costo de fabricación en taller y tu ganancia neta en cada medida:
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('pricing-manager')}
+                            className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                            title="Modificar los costos y precios de los retablos"
+                          >
+                            <Settings className="w-3.5 h-3.5" />
+                            <span>Ajustar Precios</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowRetabloCostWidget(prev => !prev)}
+                            className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white transition-colors cursor-pointer"
+                            title={showRetabloCostWidget ? 'Plegar tabla' : 'Desplegar tabla'}
+                          >
+                            {showRetabloCostWidget ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {showRetabloCostWidget && (
+                        <div className="space-y-3 pt-2 border-t border-stone-800/80 animate-in fade-in duration-200">
+                          {/* Grid de las 6 medidas con Costo vs Precio vs Ganancia */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+                            {retabloCatalogWithProfit.map((item) => (
+                              <div
+                                key={item.id}
+                                className="p-3.5 rounded-2xl bg-stone-950/90 border border-stone-800 hover:border-amber-500/40 transition-all flex flex-col justify-between space-y-2 shadow-md group"
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                      {item.tag}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.2 rounded border border-emerald-500/20">
+                                      {item.marginPercent}% utilidad
+                                    </span>
+                                  </div>
+                                  <h5 className="text-base font-black font-mono text-white group-hover:text-amber-300 transition-colors">
+                                    {item.dimensions}
+                                  </h5>
+                                </div>
+
+                                <div className="space-y-1.5 pt-2 border-t border-stone-800/80 text-xs font-mono">
+                                  <div className="flex justify-between items-center text-stone-400">
+                                    <span className="text-[11px] font-sans">Costo Taller:</span>
+                                    <span className="font-semibold text-rose-300">${item.cost.toLocaleString('es-CO')}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-stone-200">
+                                    <span className="text-[11px] font-sans font-bold">A Precio Mío:</span>
+                                    <span className="font-bold text-amber-400">${item.price.toLocaleString('es-CO')}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center pt-1 border-t border-stone-800 text-emerald-400 font-bold bg-emerald-950/25 px-2 py-1 rounded-lg border border-emerald-500/20">
+                                    <span className="text-[10px] font-sans uppercase">Tu Ganancia:</span>
+                                    <span className="text-xs font-black">+${item.profit.toLocaleString('es-CO')}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Resumen en vivo de retablos en las reservas activas en agenda */}
+                          {(() => {
+                            let totalActiveRetablos = 0;
+                            let totalActiveSelling = 0;
+                            let totalActiveCost = 0;
+                            
+                            bookings.forEach(b => {
+                              const fin = calculateRetablosFinancials(b, settings);
+                              totalActiveRetablos += fin.count;
+                              totalActiveSelling += fin.totalSelling;
+                              totalActiveCost += fin.totalCost;
+                            });
+
+                            const totalActiveProfit = totalActiveSelling - totalActiveCost;
+
+                            if (totalActiveRetablos === 0) return null;
+
+                            return (
+                              <div className="p-3 bg-gradient-to-r from-amber-950/40 via-stone-900 to-amber-950/40 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-base">🪵</span>
+                                  <span className="text-stone-300">
+                                    Tienes <strong className="text-white">{totalActiveRetablos} cuadro(s) en retablo</strong> encargados en tus reservas en agenda.
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3 font-mono text-xs">
+                                  <span className="text-stone-400">
+                                    Venta: <strong className="text-amber-300">${totalActiveSelling.toLocaleString('es-CO')}</strong>
+                                  </span>
+                                  <span className="text-stone-400">
+                                    Costo Taller: <strong className="text-rose-300">${totalActiveCost.toLocaleString('es-CO')}</strong>
+                                  </span>
+                                  <span className="text-emerald-400 font-bold bg-emerald-950 px-2 py-0.5 rounded border border-emerald-500/30">
+                                    Ganancia Neta: +${totalActiveProfit.toLocaleString('es-CO')} COP
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {bookings.length === 0 ? (
                   <div className="p-12 text-center bg-stone-900 border border-stone-800 rounded-3xl text-stone-400">
                     No hay reservas registradas todavía.
@@ -5158,6 +5331,57 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           "{booking.description}"
                         </div>
                       )}
+
+                      {/* DETALLE DE FOTOS IMPRESAS Y CUADROS EN RETABLO */}
+                      {(() => {
+                        const retablosFin = calculateRetablosFinancials(booking, settings);
+                        const retablosText = booking.retablosSummary || formatRetablosSummary(booking);
+                        const paperText = booking.paperPhotosSummary || formatPaperPhotosSummary(booking);
+                        const hasRetablos = retablosFin.count > 0 || !!retablosText;
+                        const hasPaper = !!paperText;
+
+                        if (!hasRetablos && !hasPaper) return null;
+
+                        return (
+                          <div className="mt-3 space-y-2 text-xs">
+                            {hasPaper && (
+                              <div className="p-2.5 rounded-xl bg-stone-950/80 border border-stone-800 flex items-center justify-between">
+                                <span className="text-stone-400 flex items-center gap-1.5 font-medium">
+                                  <span>📸</span>
+                                  <span>Fotos en Papel:</span>
+                                </span>
+                                <span className="font-semibold text-stone-200">{paperText}</span>
+                              </div>
+                            )}
+
+                            {hasRetablos && (
+                              <div className="p-3 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                                    <span>🪵</span>
+                                    <span>Cuadros en Retablo ({retablosFin.count || 1}):</span>
+                                  </span>
+                                  {retablosFin.netProfit > 0 && (
+                                    <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                                      +${retablosFin.netProfit.toLocaleString('es-CO')} COP ganancia
+                                    </span>
+                                  )}
+                                </div>
+                                {retablosText && (
+                                  <p className="text-[11px] text-stone-300 font-medium">{retablosText}</p>
+                                )}
+                                {retablosFin.totalSelling > 0 && (
+                                  <div className="flex items-center justify-between text-[10px] font-mono text-stone-400 pt-1.5 border-t border-amber-500/20">
+                                    <span>Venta: <strong className="text-amber-300">${retablosFin.totalSelling.toLocaleString('es-CO')}</strong></span>
+                                    <span>Costo taller: <strong className="text-rose-300">${retablosFin.totalCost.toLocaleString('es-CO')}</strong></span>
+                                    <span>Utilidad: <strong className="text-emerald-400 font-bold">+${retablosFin.netProfit.toLocaleString('es-CO')}</strong></span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* ESTADO DE PAGO INTELIGENTE Y AUTO-ABONO 1-TAP (SOLO FOTOGRAFÍA) */}
                       {(() => {
@@ -6098,6 +6322,56 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                             <span>{new Date(payment.createdAt).toLocaleString('es-CO')}</span>
                           </div>
                         </div>
+
+                        {/* DETALLE RETABLOS Y UTILIDAD EN EL PAGO */}
+                        {(() => {
+                          const retablosFin = calculateRetablosFinancials(payment, settings);
+                          const retablosText = payment.retablosSummary || formatRetablosSummary(payment);
+                          const paperText = payment.paperPhotosSummary || formatPaperPhotosSummary(payment);
+                          const hasRetablos = (payment.retablosCount > 0) || retablosFin.count > 0 || !!retablosText;
+
+                          if (!hasRetablos && !paperText) return null;
+
+                          return (
+                            <div className="mt-3 space-y-2 text-xs">
+                              {paperText && (
+                                <div className="p-2.5 rounded-xl bg-stone-950/80 border border-stone-800 flex items-center justify-between">
+                                  <span className="text-stone-400 flex items-center gap-1.5 font-medium">
+                                    <span>📸</span>
+                                    <span>Fotos en Papel:</span>
+                                  </span>
+                                  <span className="font-semibold text-stone-200">{paperText}</span>
+                                </div>
+                              )}
+
+                              {hasRetablos && (
+                                <div className="p-2.5 rounded-xl bg-amber-950/20 border border-amber-500/30 space-y-1 text-xs">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                                      <span>🪵</span>
+                                      <span>Cuadros en Retablo ({payment.retablosCount || retablosFin.count || 1}):</span>
+                                    </span>
+                                    {retablosFin.netProfit > 0 && (
+                                      <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/70 px-1.5 py-0.5 rounded-full border border-emerald-500/30">
+                                        +${retablosFin.netProfit.toLocaleString('es-CO')} ganancia
+                                      </span>
+                                    )}
+                                  </div>
+                                  {retablosText && (
+                                    <p className="text-[11px] text-stone-300 font-medium">{retablosText}</p>
+                                  )}
+                                  {retablosFin.totalSelling > 0 && (
+                                    <div className="flex items-center justify-between text-[10px] font-mono text-stone-400 pt-1 border-t border-amber-500/20">
+                                      <span>Venta: <strong className="text-amber-300">${retablosFin.totalSelling.toLocaleString('es-CO')}</strong></span>
+                                      <span>Costo taller: <strong className="text-rose-300">${retablosFin.totalCost.toLocaleString('es-CO')}</strong></span>
+                                      <span>Utilidad: <strong className="text-emerald-400 font-bold">+${retablosFin.netProfit.toLocaleString('es-CO')}</strong></span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {payment.voucherUrl && (
                           <div className="mt-3">
@@ -8054,146 +8328,410 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 {/* 20x30 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-stone-300 uppercase">
-                      20x30 cm ($ COP)
-                    </label>
-                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Retablo HD
-                    </span>
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black font-mono text-white">20x30 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        Retablo HD
+                      </span>
+                    </div>
+                    {(() => {
+                      const p = Number(editablePrintedPhoto20x30Price) || 0;
+                      const c = Number(editableRetabloCost20x30) || 0;
+                      const prof = p - c;
+                      const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
+                      return (
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {pct}% utilidad
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      required
-                      min={0}
-                      step={1000}
-                      value={editablePrintedPhoto20x30Price}
-                      onChange={(e) => setEditablePrintedPhoto20x30Price(e.target.value)}
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+                        Costo Taller:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editableRetabloCost20x30}
+                          onChange={(e) => setEditableRetabloCost20x30(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
+                        Precio Cliente:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editablePrintedPhoto20x30Price}
+                          onChange={(e) => setEditablePrintedPhoto20x30Price(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +${(Math.max(0, (Number(editablePrintedPhoto20x30Price) || 0) - (Number(editableRetabloCost20x30) || 0))).toLocaleString('es-CO')} COP
+                    </span>
                   </div>
                 </div>
 
                 {/* 30x45 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-stone-300 uppercase">
-                      30x45 cm ($ COP)
-                    </label>
-                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Retablo Mediano
-                    </span>
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black font-mono text-white">30x45 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        Retablo Mediano
+                      </span>
+                    </div>
+                    {(() => {
+                      const p = Number(editablePrintedPhoto30x45Price) || 0;
+                      const c = Number(editableRetabloCost30x45) || 0;
+                      const prof = p - c;
+                      const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
+                      return (
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {pct}% utilidad
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      required
-                      min={0}
-                      step={1000}
-                      value={editablePrintedPhoto30x45Price}
-                      onChange={(e) => setEditablePrintedPhoto30x45Price(e.target.value)}
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+                        Costo Taller:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editableRetabloCost30x45}
+                          onChange={(e) => setEditableRetabloCost30x45(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
+                        Precio Cliente:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editablePrintedPhoto30x45Price}
+                          onChange={(e) => setEditablePrintedPhoto30x45Price(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +${(Math.max(0, (Number(editablePrintedPhoto30x45Price) || 0) - (Number(editableRetabloCost30x45) || 0))).toLocaleString('es-CO')} COP
+                    </span>
                   </div>
                 </div>
 
                 {/* 40x50 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-stone-300 uppercase">
-                      40x50 cm ($ COP)
-                    </label>
-                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Retablo Galería
-                    </span>
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black font-mono text-white">40x50 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        Retablo Galería
+                      </span>
+                    </div>
+                    {(() => {
+                      const p = Number(editablePrintedPhoto40x50Price) || 0;
+                      const c = Number(editableRetabloCost40x50) || 0;
+                      const prof = p - c;
+                      const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
+                      return (
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {pct}% utilidad
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      required
-                      min={0}
-                      step={1000}
-                      value={editablePrintedPhoto40x50Price}
-                      onChange={(e) => setEditablePrintedPhoto40x50Price(e.target.value)}
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+                        Costo Taller:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editableRetabloCost40x50}
+                          onChange={(e) => setEditableRetabloCost40x50(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
+                        Precio Cliente:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editablePrintedPhoto40x50Price}
+                          onChange={(e) => setEditablePrintedPhoto40x50Price(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +${(Math.max(0, (Number(editablePrintedPhoto40x50Price) || 0) - (Number(editableRetabloCost40x50) || 0))).toLocaleString('es-CO')} COP
+                    </span>
                   </div>
                 </div>
 
                 {/* 50x70 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-stone-300 uppercase">
-                      50x70 cm ($ COP)
-                    </label>
-                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Retablo Gran Formato
-                    </span>
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black font-mono text-white">50x70 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        Retablo Gran Formato
+                      </span>
+                    </div>
+                    {(() => {
+                      const p = Number(editablePrintedPhoto50x70Price) || 0;
+                      const c = Number(editableRetabloCost50x70) || 0;
+                      const prof = p - c;
+                      const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
+                      return (
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {pct}% utilidad
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      required
-                      min={0}
-                      step={1000}
-                      value={editablePrintedPhoto50x70Price}
-                      onChange={(e) => setEditablePrintedPhoto50x70Price(e.target.value)}
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+                        Costo Taller:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editableRetabloCost50x70}
+                          onChange={(e) => setEditableRetabloCost50x70(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
+                        Precio Cliente:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editablePrintedPhoto50x70Price}
+                          onChange={(e) => setEditablePrintedPhoto50x70Price(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +${(Math.max(0, (Number(editablePrintedPhoto50x70Price) || 0) - (Number(editableRetabloCost50x70) || 0))).toLocaleString('es-CO')} COP
+                    </span>
                   </div>
                 </div>
 
                 {/* 70x50 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-stone-300 uppercase">
-                      70x50 cm ($ COP)
-                    </label>
-                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Retablo Panorámico
-                    </span>
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black font-mono text-white">70x50 cm</span>
+                      <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        Retablo Panorámico
+                      </span>
+                    </div>
+                    {(() => {
+                      const p = Number(editablePrintedPhoto70x50Price) || 0;
+                      const c = Number(editableRetabloCost70x50) || 0;
+                      const prof = p - c;
+                      const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
+                      return (
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {pct}% utilidad
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      required
-                      min={0}
-                      step={1000}
-                      value={editablePrintedPhoto70x50Price}
-                      onChange={(e) => setEditablePrintedPhoto70x50Price(e.target.value)}
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+                        Costo Taller:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editableRetabloCost70x50}
+                          onChange={(e) => setEditableRetabloCost70x50(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
+                        Precio Cliente:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editablePrintedPhoto70x50Price}
+                          onChange={(e) => setEditablePrintedPhoto70x50Price(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +${(Math.max(0, (Number(editablePrintedPhoto70x50Price) || 0) - (Number(editableRetabloCost70x50) || 0))).toLocaleString('es-CO')} COP
+                    </span>
                   </div>
                 </div>
 
                 {/* 70x100 */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-stone-300 uppercase">
-                      70x100 cm ($ COP)
-                    </label>
-                    <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded">
-                      Retablo Gigante (1m)
-                    </span>
+                <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-black font-mono text-white">70x100 cm</span>
+                      <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded">
+                        Retablo Gigante (1m)
+                      </span>
+                    </div>
+                    {(() => {
+                      const p = Number(editablePrintedPhoto70x100Price) || 0;
+                      const c = Number(editableRetabloCost70x100) || 0;
+                      const prof = p - c;
+                      const pct = p > 0 ? Math.round((prof / p) * 100) : 0;
+                      return (
+                        <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {pct}% utilidad
+                        </span>
+                      );
+                    })()}
                   </div>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
-                    <input
-                      type="number"
-                      required
-                      min={0}
-                      step={1000}
-                      value={editablePrintedPhoto70x100Price}
-                      onChange={(e) => setEditablePrintedPhoto70x100Price(e.target.value)}
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+                        Costo Taller:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editableRetabloCost70x100}
+                          onChange={(e) => setEditableRetabloCost70x100(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-rose-300 focus:outline-none focus:border-rose-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-stone-300 uppercase block mb-1">
+                        Precio Cliente:
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-500 font-bold">$</span>
+                        <input
+                          type="number"
+                          required
+                          min={0}
+                          step={1000}
+                          value={editablePrintedPhoto70x100Price}
+                          onChange={(e) => setEditablePrintedPhoto70x100Price(e.target.value)}
+                          className="w-full bg-stone-900 border border-stone-700 rounded-xl pl-6 pr-2 py-2 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-850 flex items-center justify-between text-xs">
+                    <span className="text-[11px] text-stone-400">Tu Ganancia Neta:</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      +${(Math.max(0, (Number(editablePrintedPhoto70x100Price) || 0) - (Number(editableRetabloCost70x100) || 0))).toLocaleString('es-CO')} COP
+                    </span>
                   </div>
                 </div>
               </div>

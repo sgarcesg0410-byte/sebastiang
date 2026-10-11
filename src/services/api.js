@@ -231,6 +231,7 @@ export const DEFAULT_RETABLO_SIZES = [
     id: '20x30',
     dimensions: '20x30 cm',
     label: '20x30 cm',
+    cost: 15000,
     price: 30000,
     category: 'retablo',
     type: 'Cuadro en Retablo',
@@ -241,6 +242,7 @@ export const DEFAULT_RETABLO_SIZES = [
     id: '30x45',
     dimensions: '30x45 cm',
     label: '30x45 cm',
+    cost: 30000,
     price: 60000,
     category: 'retablo',
     type: 'Cuadro en Retablo',
@@ -251,6 +253,7 @@ export const DEFAULT_RETABLO_SIZES = [
     id: '40x50',
     dimensions: '40x50 cm',
     label: '40x50 cm',
+    cost: 55000,
     price: 85000,
     category: 'retablo',
     type: 'Cuadro en Retablo',
@@ -261,6 +264,7 @@ export const DEFAULT_RETABLO_SIZES = [
     id: '50x70',
     dimensions: '50x70 cm',
     label: '50x70 cm',
+    cost: 80000,
     price: 110000,
     category: 'retablo',
     type: 'Cuadro en Retablo',
@@ -271,6 +275,7 @@ export const DEFAULT_RETABLO_SIZES = [
     id: '70x50',
     dimensions: '70x50 cm',
     label: '70x50 cm',
+    cost: 80000,
     price: 120000,
     category: 'retablo',
     type: 'Cuadro en Retablo Panorámico',
@@ -281,6 +286,7 @@ export const DEFAULT_RETABLO_SIZES = [
     id: '70x100',
     dimensions: '70x100 cm',
     label: '70x100 cm',
+    cost: 150000,
     price: 200000,
     category: 'retablo',
     type: 'Cuadro en Retablo Gigante (1m)',
@@ -288,6 +294,15 @@ export const DEFAULT_RETABLO_SIZES = [
     tag: 'Retablo Gigante (1m)'
   }
 ];
+
+export const DEFAULT_RETABLO_COSTS = {
+  '20x30': 15000,
+  '30x45': 30000,
+  '40x50': 55000,
+  '50x70': 80000,
+  '70x50': 80000,
+  '70x100': 150000
+};
 
 export const DEFAULT_PRINT_SIZES = [...DEFAULT_PAPER_PRINT_SIZES, ...DEFAULT_RETABLO_SIZES];
 
@@ -303,14 +318,73 @@ export function getPaperPrintSizes(settings = {}) {
 export function getRetabloSizes(settings = {}) {
   return DEFAULT_RETABLO_SIZES.map(item => {
     let p = item.price;
-    if (item.id === '20x30' && settings.printedPhoto20x30Price) p = Number(settings.printedPhoto20x30Price);
-    if (item.id === '30x45' && settings.printedPhoto30x45Price) p = Number(settings.printedPhoto30x45Price);
-    if (item.id === '40x50' && settings.printedPhoto40x50Price) p = Number(settings.printedPhoto40x50Price);
-    if (item.id === '50x70' && settings.printedPhoto50x70Price) p = Number(settings.printedPhoto50x70Price);
-    if (item.id === '70x50' && settings.printedPhoto70x50Price) p = Number(settings.printedPhoto70x50Price);
-    if (item.id === '70x100' && settings.printedPhoto70x100Price) p = Number(settings.printedPhoto70x100Price);
-    return { ...item, price: p };
+    let c = item.cost;
+    if (item.id === '20x30') {
+      if (settings.printedPhoto20x30Price) p = Number(settings.printedPhoto20x30Price);
+      if (settings.retabloCost20x30 !== undefined && settings.retabloCost20x30 !== null) c = Number(settings.retabloCost20x30);
+    }
+    if (item.id === '30x45') {
+      if (settings.printedPhoto30x45Price) p = Number(settings.printedPhoto30x45Price);
+      if (settings.retabloCost30x45 !== undefined && settings.retabloCost30x45 !== null) c = Number(settings.retabloCost30x45);
+    }
+    if (item.id === '40x50') {
+      if (settings.printedPhoto40x50Price) p = Number(settings.printedPhoto40x50Price);
+      if (settings.retabloCost40x50 !== undefined && settings.retabloCost40x50 !== null) c = Number(settings.retabloCost40x50);
+    }
+    if (item.id === '50x70') {
+      if (settings.printedPhoto50x70Price) p = Number(settings.printedPhoto50x70Price);
+      if (settings.retabloCost50x70 !== undefined && settings.retabloCost50x70 !== null) c = Number(settings.retabloCost50x70);
+    }
+    if (item.id === '70x50') {
+      if (settings.printedPhoto70x50Price) p = Number(settings.printedPhoto70x50Price);
+      if (settings.retabloCost70x50 !== undefined && settings.retabloCost70x50 !== null) c = Number(settings.retabloCost70x50);
+    }
+    if (item.id === '70x100') {
+      if (settings.printedPhoto70x100Price) p = Number(settings.printedPhoto70x100Price);
+      if (settings.retabloCost70x100 !== undefined && settings.retabloCost70x100 !== null) c = Number(settings.retabloCost70x100);
+    }
+    const profit = Math.max(0, p - c);
+    const marginPercent = p > 0 ? Math.round((profit / p) * 100) : 0;
+    return { ...item, price: p, cost: c, profit, marginPercent };
   });
+}
+
+export function calculateRetablosFinancials(bookingOrSizes, settings = {}) {
+  const catalog = getRetabloSizes(settings);
+  if (!bookingOrSizes) return { totalSelling: 0, totalCost: 0, netProfit: 0, count: 0, items: [] };
+
+  const sizes = bookingOrSizes.retabloSizes || bookingOrSizes.printedSizes || (typeof bookingOrSizes === 'object' && !bookingOrSizes.packageName ? bookingOrSizes : {});
+  let totalSelling = 0;
+  let totalCost = 0;
+  let count = 0;
+  const items = [];
+
+  for (const item of catalog) {
+    const q = Number(sizes[item.id] || 0);
+    if (q > 0) {
+      count += q;
+      const sellingSubtotal = q * item.price;
+      const costSubtotal = q * item.cost;
+      const profitSubtotal = sellingSubtotal - costSubtotal;
+      totalSelling += sellingSubtotal;
+      totalCost += costSubtotal;
+      items.push({
+        ...item,
+        quantity: q,
+        sellingSubtotal,
+        costSubtotal,
+        profitSubtotal
+      });
+    }
+  }
+
+  return {
+    totalSelling,
+    totalCost,
+    netProfit: totalSelling - totalCost,
+    count,
+    items
+  };
 }
 
 export function getPrintSizes(settings = {}) {
@@ -379,6 +453,12 @@ export const DEFAULT_SETTINGS = {
   printedPhoto50x70Price: 110000,
   printedPhoto70x50Price: 120000,
   printedPhoto70x100Price: 200000,
+  retabloCost20x30: 15000,
+  retabloCost30x45: 30000,
+  retabloCost40x50: 55000,
+  retabloCost50x70: 80000,
+  retabloCost70x50: 80000,
+  retabloCost70x100: 150000,
   printSizes: DEFAULT_PRINT_SIZES
 };
 

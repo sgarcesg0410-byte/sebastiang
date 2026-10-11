@@ -162,7 +162,19 @@ function getDB() {
       watermarkLogoUrl: "/app-icon.png",
       adminPin: "0493",
       printedPhotoPrice: 7000,
-      printedPhoto15x20Price: 8000
+      printedPhoto15x20Price: 8000,
+      printedPhoto20x30Price: 30000,
+      printedPhoto30x45Price: 60000,
+      printedPhoto40x50Price: 85000,
+      printedPhoto50x70Price: 110000,
+      printedPhoto70x50Price: 120000,
+      printedPhoto70x100Price: 200000,
+      retabloCost20x30: 15000,
+      retabloCost30x45: 30000,
+      retabloCost40x50: 55000,
+      retabloCost50x70: 80000,
+      retabloCost70x50: 80000,
+      retabloCost70x100: 150000
     },
     packages: [
       {
