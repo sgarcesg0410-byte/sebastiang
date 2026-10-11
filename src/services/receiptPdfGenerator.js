@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import { LOGO_WATERMARK_APP, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
-import { formatPrintedPhotosSummary } from './api';
+import { formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from './api';
 
 /**
  * Formatea fechas a formato legible colombiano (ej: Sábado, 3 de octubre de 2026 - 3:10 p. m.)
@@ -292,33 +292,53 @@ export async function generateLuxuryReceiptPdf({
   currentY += 13;
   pdf.line(margin, currentY, pageWidth - margin, currentY);
 
-  // Fila Opcional: Fotos impresas de regalo / paquete / cuadros y ampliaciones
-  let printedText = booking.printedPhotosSummary || formatPrintedPhotosSummary(booking);
-  if (!printedText) {
-    const c10 = Number(booking.printedPhotos10x15Count || (booking.printedPhotosCount && !booking.printedPhotos15x20Count ? booking.printedPhotosCount : 0));
-    const c15 = Number(booking.printedPhotos15x20Count || 0);
-    printedText = (c10 > 0 && c15 > 0)
-      ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
-      : c15 > 0
-        ? `+ ${c15} Fotos impresas tamaño (15x20)`
-        : c10 > 0
-          ? `+ ${c10} Fotos impresas tamaño (10x15)`
-          : Number(booking.printedPhotosCount) > 0
-            ? `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico profesional`
-            : '';
-  }
+  // Filas Opcionales Independientes: Fotos impresas en papel y Cuadros en retablos
+  const paperText = booking.paperPhotosSummary || formatPaperPhotosSummary(booking);
+  const retabloText = booking.retablosSummary || formatRetablosSummary(booking);
 
-  if (printedText) {
+  if (paperText) {
     currentY += 1.5;
     pdf.setFont('helvetica', 'normal');
     pdf.setFontSize(8.5);
     pdf.setTextColor(71, 85, 105);
-    pdf.text(printedText, margin + 4, currentY + 4.5);
+    pdf.text(`Fotos Impresas (Papel): ${paperText}`, margin + 4, currentY + 4.5);
     pdf.setFont('helvetica', 'bold');
     pdf.setTextColor(4, 120, 87);
     pdf.text('Incluido', pageWidth - margin - 4, currentY + 4.5, { align: 'right' });
     currentY += 8;
     pdf.line(margin, currentY, pageWidth - margin, currentY);
+  }
+
+  if (retabloText) {
+    currentY += 1.5;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`Cuadros en Retablo (Madera): ${retabloText}`, margin + 4, currentY + 4.5);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(4, 120, 87);
+    pdf.text('Incluido', pageWidth - margin - 4, currentY + 4.5, { align: 'right' });
+    currentY += 8;
+    pdf.line(margin, currentY, pageWidth - margin, currentY);
+  }
+
+  if (!paperText && !retabloText) {
+    let printedText = booking.printedPhotosSummary || formatPrintedPhotosSummary(booking);
+    if (!printedText && Number(booking.printedPhotosCount) > 0) {
+      printedText = `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico profesional`;
+    }
+    if (printedText) {
+      currentY += 1.5;
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(printedText, margin + 4, currentY + 4.5);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(4, 120, 87);
+      pdf.text('Incluido', pageWidth - margin - 4, currentY + 4.5, { align: 'right' });
+      currentY += 8;
+      pdf.line(margin, currentY, pageWidth - margin, currentY);
+    }
   }
 
   // ===== SECCIÓN 3: LEDGER FINANCIERO =====

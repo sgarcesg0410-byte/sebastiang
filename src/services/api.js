@@ -203,15 +203,15 @@ export function addDeletedCatalogId(id) {
   } catch (e) {}
 }
 
-export const DEFAULT_PRINT_SIZES = [
+export const DEFAULT_PAPER_PRINT_SIZES = [
   {
     id: '10x15',
     dimensions: '10x15 cm',
     label: '10x15 cm',
     price: 7000,
-    category: 'foto',
-    type: 'Foto Impresa',
-    desc: 'Papel fotográfico profesional de laboratorio • Formato estándar de bolsillo o álbum',
+    category: 'foto_papel',
+    type: 'Foto Impresa en Papel',
+    desc: 'Papel fotográfico profesional de laboratorio • Formato estándar para álbum o bolsillo',
     tag: 'Estándar'
   },
   {
@@ -219,80 +219,90 @@ export const DEFAULT_PRINT_SIZES = [
     dimensions: '15x20 cm',
     label: '15x20 cm',
     price: 8000,
-    category: 'foto',
-    type: 'Foto Impresa',
-    desc: 'Papel fotográfico profesional • Formato ideal para portarretratos de mesa',
+    category: 'foto_papel',
+    type: 'Foto Impresa en Papel',
+    desc: 'Papel fotográfico profesional de laboratorio • Formato ideal para portarretratos de mesa',
     tag: 'Portarretrato'
-  },
+  }
+];
+
+export const DEFAULT_RETABLO_SIZES = [
   {
     id: '20x30',
     dimensions: '20x30 cm',
     label: '20x30 cm',
     price: 30000,
-    category: 'ampliacion',
-    type: 'Ampliación HD',
-    desc: 'Ampliación tamaño carta / A4 de alta definición para enmarcar',
-    tag: 'Ampliación'
+    category: 'retablo',
+    type: 'Cuadro en Retablo',
+    desc: 'Cuadro en retablo de madera • Acabado laminado y bordes pulidos',
+    tag: 'Retablo HD'
   },
   {
     id: '30x45',
     dimensions: '30x45 cm',
     label: '30x45 cm',
     price: 60000,
-    category: 'cuadro',
-    type: 'Cuadro Mediano',
-    desc: 'Medida perfecta para decoración en salas, estudios o pasillos',
-    tag: 'Cuadro'
+    category: 'retablo',
+    type: 'Cuadro en Retablo',
+    desc: 'Cuadro en retablo de madera • Medida ideal para salas o dormitorios',
+    tag: 'Retablo Mediano'
   },
   {
     id: '40x50',
     dimensions: '40x50 cm',
     label: '40x50 cm',
     price: 85000,
-    category: 'cuadro',
-    type: 'Cuadro Galería',
-    desc: 'Formato de galería con nitidez y presencia cinematográfica',
-    tag: 'Galería'
+    category: 'retablo',
+    type: 'Cuadro en Retablo',
+    desc: 'Cuadro en retablo de madera • Formato de galería con alta presencia decorativa',
+    tag: 'Retablo Galería'
   },
   {
     id: '50x70',
     dimensions: '50x70 cm',
     label: '50x70 cm',
     price: 110000,
-    category: 'gran_formato',
-    type: 'Gran Formato',
-    desc: 'Gran formato vertical de alto impacto visual y elegancia',
-    tag: 'Gran Formato'
+    category: 'retablo',
+    type: 'Cuadro en Retablo',
+    desc: 'Cuadro en retablo de gran formato vertical • Alto impacto visual',
+    tag: 'Retablo Gran Formato'
   },
   {
     id: '70x50',
     dimensions: '70x50 cm',
     label: '70x50 cm',
     price: 120000,
-    category: 'gran_formato',
-    type: 'Panorámico / Retablo',
-    desc: 'Gran formato horizontal / acabado retablo de lujo para sala principal',
-    tag: 'Panorámico'
+    category: 'retablo',
+    type: 'Cuadro en Retablo Panorámico',
+    desc: 'Cuadro en retablo horizontal panorámico de lujo para sala principal',
+    tag: 'Retablo Panorámico'
   },
   {
     id: '70x100',
     dimensions: '70x100 cm',
     label: '70x100 cm',
     price: 200000,
-    category: 'premium',
-    type: 'Cuadro Premium (1 metro)',
-    desc: 'Cuadro / póster gigante de 1 metro • Máximo lujo fotográfico',
-    tag: 'Póster Gigante (1m)'
+    category: 'retablo',
+    type: 'Cuadro en Retablo Gigante (1m)',
+    desc: 'Cuadro en retablo gigante de 1 metro • Máximo lujo fotográfico',
+    tag: 'Retablo Gigante (1m)'
   }
 ];
 
-export function getPrintSizes(settings = {}) {
-  const custom = settings?.printSizes;
-  if (Array.isArray(custom) && custom.length > 0) return custom;
-  return DEFAULT_PRINT_SIZES.map(item => {
+export const DEFAULT_PRINT_SIZES = [...DEFAULT_PAPER_PRINT_SIZES, ...DEFAULT_RETABLO_SIZES];
+
+export function getPaperPrintSizes(settings = {}) {
+  return DEFAULT_PAPER_PRINT_SIZES.map(item => {
     let p = item.price;
     if (item.id === '10x15' && settings.printedPhotoPrice) p = Number(settings.printedPhotoPrice);
     if (item.id === '15x20' && settings.printedPhoto15x20Price) p = Number(settings.printedPhoto15x20Price);
+    return { ...item, price: p };
+  });
+}
+
+export function getRetabloSizes(settings = {}) {
+  return DEFAULT_RETABLO_SIZES.map(item => {
+    let p = item.price;
     if (item.id === '20x30' && settings.printedPhoto20x30Price) p = Number(settings.printedPhoto20x30Price);
     if (item.id === '30x45' && settings.printedPhoto30x45Price) p = Number(settings.printedPhoto30x45Price);
     if (item.id === '40x50' && settings.printedPhoto40x50Price) p = Number(settings.printedPhoto40x50Price);
@@ -303,31 +313,51 @@ export function getPrintSizes(settings = {}) {
   });
 }
 
-export function formatPrintedPhotosSummary(bookingOrSizes, sizesCatalog = DEFAULT_PRINT_SIZES) {
+export function getPrintSizes(settings = {}) {
+  const paper = getPaperPrintSizes(settings);
+  const retablos = getRetabloSizes(settings);
+  return [...paper, ...retablos];
+}
+
+export function formatPaperPhotosSummary(bookingOrSizes, catalog = DEFAULT_PAPER_PRINT_SIZES) {
   if (!bookingOrSizes) return '';
   const sizes = bookingOrSizes.printedSizes || (typeof bookingOrSizes === 'object' && !bookingOrSizes.packageName ? bookingOrSizes : {});
   const parts = [];
 
-  for (const [id, qty] of Object.entries(sizes)) {
-    const q = Number(qty);
+  const c10 = Number(sizes['10x15'] ?? bookingOrSizes.printedPhotos10x15Count ?? (bookingOrSizes.printedPhotosCount && !bookingOrSizes.printedPhotos15x20Count ? bookingOrSizes.printedPhotosCount : 0));
+  const c15 = Number(sizes['15x20'] ?? bookingOrSizes.printedPhotos15x20Count ?? 0);
+
+  if (c10 > 0 && c15 > 0) parts.push(`+ ${c10} Fotos (10x15) y + ${c15} Fotos (15x20)`);
+  else if (c10 > 0) parts.push(`+ ${c10} Fotos (10x15)`);
+  else if (c15 > 0) parts.push(`+ ${c15} Fotos (15x20)`);
+
+  return parts.join(', ');
+}
+
+export function formatRetablosSummary(bookingOrSizes, catalog = DEFAULT_RETABLO_SIZES) {
+  if (!bookingOrSizes) return '';
+  const sizes = bookingOrSizes.retabloSizes || bookingOrSizes.printedSizes || (typeof bookingOrSizes === 'object' && !bookingOrSizes.packageName ? bookingOrSizes : {});
+  const parts = [];
+
+  for (const item of catalog) {
+    const q = Number(sizes[item.id] || 0);
     if (q > 0) {
-      const match = sizesCatalog.find(s => s.id === id);
-      const name = match ? match.dimensions : id;
-      const isLarge = match?.category === 'cuadro' || match?.category === 'gran_formato' || match?.category === 'premium';
-      parts.push(`+ ${q} ${isLarge ? 'Cuadro(s)' : 'Foto(s)'} ${name}`);
+      parts.push(`+ ${q} Cuadro(s) en Retablo ${item.dimensions}`);
     }
   }
 
-  if (parts.length === 0 && typeof bookingOrSizes === 'object') {
-    const c10 = Number(bookingOrSizes.printedPhotos10x15Count || (bookingOrSizes.printedPhotosCount && !bookingOrSizes.printedPhotos15x20Count ? bookingOrSizes.printedPhotosCount : 0));
-    const c15 = Number(bookingOrSizes.printedPhotos15x20Count || 0);
-    if (c10 > 0 && c15 > 0) parts.push(`+ ${c10} Fotos (10x15) y + ${c15} Fotos (15x20)`);
-    else if (c10 > 0) parts.push(`+ ${c10} Fotos (10x15)`);
-    else if (c15 > 0) parts.push(`+ ${c15} Fotos (15x20)`);
-    else if (Number(bookingOrSizes.printedPhotosCount) > 0) parts.push(`+ ${bookingOrSizes.printedPhotosCount} Fotos impresas`);
-  }
-
   return parts.join(', ');
+}
+
+export function formatPrintedPhotosSummary(bookingOrSizes, sizesCatalog = DEFAULT_PRINT_SIZES) {
+  if (!bookingOrSizes) return '';
+  const paper = formatPaperPhotosSummary(bookingOrSizes);
+  const retablos = formatRetablosSummary(bookingOrSizes);
+  if (paper && retablos) return `${paper} • ${retablos}`;
+  if (retablos) return retablos;
+  if (paper) return paper;
+  if (Number(bookingOrSizes.printedPhotosCount) > 0) return `+ ${bookingOrSizes.printedPhotosCount} Fotos impresas`;
+  return '';
 }
 
 export const DEFAULT_SETTINGS = {
@@ -1201,9 +1231,13 @@ export async function createBooking(data) {
     const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
     const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
     let printedDetails = '';
-    const summary = formatPrintedPhotosSummary(newBooking);
-    if (summary) {
-      printedDetails = `🖼️ *Fotos Impresas / Cuadros:* ${summary}\n`;
+    const paperSummary = formatPaperPhotosSummary(newBooking);
+    const retabloSummary = formatRetablosSummary(newBooking);
+    if (paperSummary) {
+      printedDetails += `🖼️ *Fotos Impresas (Papel):* ${paperSummary}\n`;
+    }
+    if (retabloSummary) {
+      printedDetails += `🪵 *Cuadros en Retablo:* ${retabloSummary}\n`;
     }
 
     const msg = encodeURIComponent(

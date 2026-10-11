@@ -27,7 +27,7 @@ import {
   Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews, getPrintSizes, formatPrintedPhotosSummary } from '../services/api';
+import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 import { NequiLogo, DaviPlataLogo, DaleLogo } from './PaymentLogos';
 
@@ -242,7 +242,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     return 75000;
   };
 
-  // Catálogo completo de fotos y cuadros
+  // Catálogos independientes de fotos en papel y cuadros en retablo
+  const paperSizes = getPaperPrintSizes(galleryData?.watermarkSettings || {});
+  const retabloSizes = getRetabloSizes(galleryData?.watermarkSettings || {});
   const printSizesCatalog = getPrintSizes(galleryData?.watermarkSettings || {});
 
   const handleUpdatePrintQty = (sizeId, delta) => {
@@ -259,32 +261,37 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     });
   };
 
-  const printedPhotosTotal = printSizesCatalog.reduce((sum, item) => {
+  const paperPhotosTotal = paperSizes.reduce((sum, item) => {
     let qty = 0;
-    if (printedSizes[item.id] !== undefined) {
-      qty = Number(printedSizes[item.id]) || 0;
-    } else if (item.id === '10x15') {
-      qty = printedPhotosCount;
-    } else if (item.id === '15x20') {
-      qty = printedPhotos15x20Count;
-    }
+    if (printedSizes[item.id] !== undefined) qty = Number(printedSizes[item.id]) || 0;
+    else if (item.id === '10x15') qty = printedPhotosCount;
+    else if (item.id === '15x20') qty = printedPhotos15x20Count;
     return sum + (qty * item.price);
   }, 0);
 
-  const totalPrintedCount = printSizesCatalog.reduce((sum, item) => {
+  const paperPhotosCount = paperSizes.reduce((sum, item) => {
     let qty = 0;
-    if (printedSizes[item.id] !== undefined) {
-      qty = Number(printedSizes[item.id]) || 0;
-    } else if (item.id === '10x15') {
-      qty = printedPhotosCount;
-    } else if (item.id === '15x20') {
-      qty = printedPhotos15x20Count;
-    }
+    if (printedSizes[item.id] !== undefined) qty = Number(printedSizes[item.id]) || 0;
+    else if (item.id === '10x15') qty = printedPhotosCount;
+    else if (item.id === '15x20') qty = printedPhotos15x20Count;
     return sum + qty;
   }, 0);
 
-  const size10x15 = printSizesCatalog.find(s => s.id === '10x15');
-  const size15x20 = printSizesCatalog.find(s => s.id === '15x20');
+  const retablosTotal = retabloSizes.reduce((sum, item) => {
+    const qty = Number(printedSizes[item.id] || 0);
+    return sum + (qty * item.price);
+  }, 0);
+
+  const retablosCount = retabloSizes.reduce((sum, item) => {
+    const qty = Number(printedSizes[item.id] || 0);
+    return sum + qty;
+  }, 0);
+
+  const totalPrintedCount = paperPhotosCount + retablosCount;
+  const printedPhotosTotal = paperPhotosTotal + retablosTotal;
+
+  const size10x15 = paperSizes.find(s => s.id === '10x15');
+  const size15x20 = paperSizes.find(s => s.id === '15x20');
   const printedPrice = size10x15?.price || 7000;
   const printed15x20Price = size15x20?.price || 8000;
 
@@ -324,10 +331,13 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           method: selectedWallet,
           reference: paymentReference,
           extraPhotosCount: extraPhotos,
-          printedPhotosCount: totalPrintedCount,
+          printedPhotosCount: paperPhotosCount,
           printedPhotos10x15Count: printedSizes['10x15'] ?? printedPhotosCount,
           printedPhotos15x20Count: printedSizes['15x20'] ?? printedPhotos15x20Count,
+          retablosCount: retablosCount,
           printedSizes: printedSizes,
+          paperPhotosSummary: formatPaperPhotosSummary(printedSizes, paperSizes),
+          retablosSummary: formatRetablosSummary(printedSizes, retabloSizes),
           printedPhotosSummary: formatPrintedPhotosSummary(printedSizes, printSizesCatalog)
         });
       } catch (payErr) {
@@ -354,12 +364,14 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           daviplata: 'DaviPlata (Llave @PLATA3244725167)',
           dale: 'Dale! (Llave @SGG04)'
         };
-        const printedSummaryText = formatPrintedPhotosSummary(printedSizes, printSizesCatalog);
+        const paperSummaryText = formatPaperPhotosSummary(printedSizes, paperSizes);
+        const retabloSummaryText = formatRetablosSummary(printedSizes, retabloSizes);
         const payText = `\n\n💳 *DETALLE DE PAGO / TRANSFERENCIA:*` +
           `\n💰 *Total Sesión:* $${formatPrice(totalAmount)} COP` +
           `\n📦 *Valor Base Paquete:* $${formatPrice(sessionBasePrice)} COP` +
           (extraPhotos > 0 ? `\n📸 *Fotos Extra:* +${extraPhotos} ($${formatPrice(extraPhotosTotal)} COP)` : '') +
-          (printedSummaryText ? `\n🖼️ *Fotos Impresas / Cuadros:* ${printedSummaryText} ($${formatPrice(printedPhotosTotal)} COP)` : '') +
+          (paperSummaryText ? `\n🖼️ *Fotos Impresas (Papel):* ${paperSummaryText} ($${formatPrice(paperPhotosTotal)} COP)` : '') +
+          (retabloSummaryText ? `\n🪵 *Cuadros en Retablo:* ${retabloSummaryText} ($${formatPrice(retablosTotal)} COP)` : '') +
           `\n🏦 *Método de Pago Elegido:* ${walletLabels[selectedWallet] || selectedWallet}` +
           (paymentReference ? `\n🔢 *Referencia:* ${paymentReference}` : '') +
           `\n\n_Por favor verifica y confirma el recibido de mi sesión._`;
@@ -1023,32 +1035,35 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     </div>
                   )}
 
-                  {/* Selector opcional de fotos impresas y cuadros decorativos */}
+                  {/* SECCIÓN INDEPENDIENTE 1: FOTOS IMPRESAS EN PAPEL FOTOGRÁFICO */}
                   <div className="pt-2 border-t border-stone-800 space-y-2">
-                    <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider flex items-center gap-1.5">
                         <Printer className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Impresiones y Cuadros Decorativos</span>
+                        <span>Fotos Impresas (Papel Fotográfico)</span>
                       </span>
-                      {totalPrintedCount > 0 && (
+                      {paperPhotosCount > 0 && (
                         <span className="text-amber-400 font-mono text-[10px] font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">
-                          {totalPrintedCount} seleccionada(s)
+                          {paperPhotosCount} foto(s) • +${formatPrice(paperPhotosTotal)}
                         </span>
                       )}
-                    </span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 leading-tight">
+                      Copias profesionales de laboratorio para álbum familiar o marcos estándar.
+                    </p>
 
                     {/* Opción 10x15 */}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-stone-900 border border-stone-800/80">
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 10x15</span>
+                          <span className="font-semibold text-xs text-stone-200 block">Tamaño 10x15</span>
                           <span className="bg-stone-800 text-stone-300 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
                             Estándar
                           </span>
                         </div>
                         <span className="text-[10px] text-stone-400">Papel profesional (${formatPrice(printedPrice)} c/u)</span>
                       </div>
-                      <div className="flex items-center gap-2 bg-stone-900 border border-stone-700 rounded-xl px-2 py-1">
+                      <div className="flex items-center gap-2 bg-stone-950 border border-stone-700 rounded-xl px-2 py-1">
                         <button
                           type="button"
                           onClick={() => handleUpdatePrintQty('10x15', -1)}
@@ -1070,17 +1085,17 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     </div>
 
                     {/* Opción 15x20 */}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-stone-900 border border-stone-800/80">
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 15x20</span>
+                          <span className="font-semibold text-xs text-stone-200 block">Tamaño 15x20</span>
                           <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
                             Portarretrato
                           </span>
                         </div>
                         <span className="text-[10px] text-stone-400">Tamaño ampliado (${formatPrice(printed15x20Price)} c/u)</span>
                       </div>
-                      <div className="flex items-center gap-2 bg-stone-900 border border-amber-500/30 rounded-xl px-2 py-1">
+                      <div className="flex items-center gap-2 bg-stone-950 border border-amber-500/30 rounded-xl px-2 py-1">
                         <button
                           type="button"
                           onClick={() => handleUpdatePrintQty('15x20', -1)}
@@ -1100,29 +1115,46 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                         </button>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Botón desplegable para cuadros y ampliaciones (20x30, 30x45, 40x50, 50x70, 70x50, 70x100) */}
+                  {/* SECCIÓN INDEPENDIENTE 2: CUADROS EN RETABLOS */}
+                  <div className="pt-3 border-t border-amber-500/20 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Cuadros en Retablos (Madera & Colgar)</span>
+                      </span>
+                      {retablosCount > 0 && (
+                        <span className="text-amber-300 font-mono text-[10px] font-bold bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/40">
+                          {retablosCount} retablo(s) • +${formatPrice(retablosTotal)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-stone-400 leading-tight">
+                      Retablos de madera con laminado mate UV protector, listos para fijar en pared o sala.
+                    </p>
+
+                    {/* Botón desplegable para cuadros en retablo */}
                     <button
                       type="button"
                       onClick={() => setShowAllPrintSizes(!showAllPrintSizes)}
-                      className="w-full flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/15 transition-all text-xs font-semibold cursor-pointer"
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/40 text-amber-300 hover:bg-amber-500/20 transition-all text-xs font-semibold cursor-pointer"
                     >
                       <div className="flex items-center gap-2">
-                        <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Ver Cuadros y Ampliaciones para Sala</span>
                         <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.2 rounded uppercase">
                           6 Medidas
                         </span>
+                        <span>{showAllPrintSizes ? 'Ocultar catálogo de retablos' : 'Elegir medidas de retablos (20x30 a 70x100)'}</span>
                       </div>
                       <div className="flex items-center gap-1 text-[11px] font-bold">
-                        <span>{showAllPrintSizes ? 'Ocultar' : 'Elegir'}</span>
+                        <span>{showAllPrintSizes ? 'Cerrar' : 'Elegir'}</span>
                         {showAllPrintSizes ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       </div>
                     </button>
 
                     {showAllPrintSizes && (
-                      <div className="space-y-2 pt-1">
-                        {printSizesCatalog.filter(s => s.id !== '10x15' && s.id !== '15x20').map(item => {
+                      <div className="space-y-2 pt-1 animate-fadeIn">
+                        {retabloSizes.map(item => {
                           const count = Number(printedSizes[item.id] || 0);
                           return (
                             <div
@@ -1170,10 +1202,18 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     )}
                   </div>
 
-                  {totalPrintedCount > 0 && (
+                  {/* DESGLOSE INDEPENDIENTE DE CONCEPTOS */}
+                  {paperPhotosCount > 0 && (
                     <div className="flex justify-between text-stone-300 text-xs">
-                      <span className="text-stone-400">Total fotos y cuadros ({totalPrintedCount}):</span>
-                      <span className="font-bold font-mono text-amber-400">+${formatPrice(printedPhotosTotal)} COP</span>
+                      <span className="text-stone-400">Fotos impresas en papel ({paperPhotosCount}):</span>
+                      <span className="font-bold font-mono text-stone-200">+${formatPrice(paperPhotosTotal)} COP</span>
+                    </div>
+                  )}
+
+                  {retablosCount > 0 && (
+                    <div className="flex justify-between text-amber-300 text-xs">
+                      <span className="text-amber-400">Cuadros en retablo ({retablosCount}):</span>
+                      <span className="font-bold font-mono text-amber-300">+${formatPrice(retablosTotal)} COP</span>
                     </div>
                   )}
 

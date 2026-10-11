@@ -135,6 +135,8 @@ import {
   getVipClients,
   saveVipClient,
   formatPrintedPhotosSummary,
+  formatPaperPhotosSummary,
+  formatRetablosSummary,
   getPrintSizes
 } from '../services/api';
 import { supabase } from '../services/supabase';
@@ -2650,26 +2652,44 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>$${total.toLocaleString('es-CO')} COP</span>
             </div>
             ${(() => {
-              let txt = receiptBooking.printedPhotosSummary || formatPrintedPhotosSummary(receiptBooking);
-              if (!txt) {
-                const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
-                const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
-                txt = (c10 > 0 && c15 > 0)
-                  ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
-                  : c15 > 0
-                    ? `+ ${c15} Fotos impresas (15x20)`
-                    : c10 > 0
-                      ? `+ ${c10} Fotos impresas (10x15)`
-                      : Number(receiptBooking.printedPhotosCount) > 0
-                        ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
-                        : '';
+              const paperText = receiptBooking.paperPhotosSummary || formatPaperPhotosSummary(receiptBooking);
+              const retabloText = receiptBooking.retablosSummary || formatRetablosSummary(receiptBooking);
+              let rows = '';
+
+              if (paperText) {
+                rows += `
+                  <div class="table-row" style="color: #64748b; font-size: 11px;">
+                    <span>Fotos Impresas (Papel): ${paperText}</span>
+                    <span>Incluido</span>
+                  </div>
+                `;
               }
-              return txt ? `
-                <div class="table-row" style="color: #64748b; font-size: 11px;">
-                  <span>${txt}</span>
-                  <span>Incluido</span>
-                </div>
-              ` : '';
+
+              if (retabloText) {
+                rows += `
+                  <div class="table-row" style="color: #b45309; font-size: 11px; font-weight: 600;">
+                    <span>Cuadros en Retablo (Madera): ${retabloText}</span>
+                    <span>Incluido</span>
+                  </div>
+                `;
+              }
+
+              if (!paperText && !retabloText) {
+                let txt = receiptBooking.printedPhotosSummary || formatPrintedPhotosSummary(receiptBooking);
+                if (!txt && Number(receiptBooking.printedPhotosCount) > 0) {
+                  txt = `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`;
+                }
+                if (txt) {
+                  rows += `
+                    <div class="table-row" style="color: #64748b; font-size: 11px;">
+                      <span>${txt}</span>
+                      <span>Incluido</span>
+                    </div>
+                  `;
+                }
+              }
+
+              return rows;
             })()}
             <div class="table-row total">
               <span>TOTAL PACTADO:</span>
@@ -8018,17 +8038,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
-            {/* Medidas de Cuadros y Ampliaciones */}
-            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-6">
+            {/* Catálogo de Cuadros en Retablos (Madera) */}
+            <div className="bg-stone-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-6">
               <div>
                 <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-                  Ampliaciones y Cuadros Decorativos
+                  🪵 Cuadros en Retablos de Madera
                 </span>
                 <h3 className="text-xl font-serif font-bold text-white mt-1">
-                  Tarifas de Impresiones en Gran Formato y Retablos
+                  Tarifas de Cuadros en Retablos (Listos para Colgar)
                 </h3>
                 <p className="text-xs text-stone-400 mt-1">
-                  Configura los precios de las ampliaciones HD y cuadros que los clientes pueden ordenar al agendar o seleccionar sus fotos.
+                  Configura los precios de las 6 medidas de cuadros en retablos de madera con película protectora UV que los clientes pueden solicitar de manera independiente a las fotos impresas en papel.
                 </p>
               </div>
 
@@ -8040,7 +8060,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       20x30 cm ($ COP)
                     </label>
                     <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Ampliación HD
+                      Retablo HD
                     </span>
                   </div>
                   <div className="relative">
@@ -8064,7 +8084,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       30x45 cm ($ COP)
                     </label>
                     <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Cuadro Mediano
+                      Retablo Mediano
                     </span>
                   </div>
                   <div className="relative">
@@ -8088,7 +8108,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       40x50 cm ($ COP)
                     </label>
                     <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Cuadro Galería
+                      Retablo Galería
                     </span>
                   </div>
                   <div className="relative">
@@ -8112,7 +8132,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       50x70 cm ($ COP)
                     </label>
                     <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Gran Formato
+                      Retablo Gran Formato
                     </span>
                   </div>
                   <div className="relative">
@@ -8136,7 +8156,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       70x50 cm ($ COP)
                     </label>
                     <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                      Panorámico / Retablo
+                      Retablo Panorámico
                     </span>
                   </div>
                   <div className="relative">
@@ -8160,7 +8180,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       70x100 cm ($ COP)
                     </label>
                     <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded">
-                      Póster Gigante (1m)
+                      Retablo Gigante (1m)
                     </span>
                   </div>
                   <div className="relative">
@@ -10344,26 +10364,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <span className="font-mono font-semibold">${Number(receiptBooking.totalPrice || 0).toLocaleString('es-CO')} COP</span>
                   </div>
                   {(() => {
-                    let txt = receiptBooking.printedPhotosSummary || formatPrintedPhotosSummary(receiptBooking);
-                    if (!txt) {
-                      const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
-                      const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
-                      txt = (c10 > 0 && c15 > 0)
-                        ? `+ ${c10} Fotos impresas 10x15 y + ${c15} Fotos impresas 15x20`
-                        : c15 > 0
-                          ? `+ ${c15} Fotos impresas 15x20`
-                          : c10 > 0
-                            ? `+ ${c10} Fotos impresas 10x15`
-                            : Number(receiptBooking.printedPhotosCount) > 0
-                              ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
-                              : '';
-                    }
-                    if (!txt) return null;
+                    const paperText = receiptBooking.paperPhotosSummary || formatPaperPhotosSummary(receiptBooking);
+                    const retabloText = receiptBooking.retablosSummary || formatRetablosSummary(receiptBooking);
+
                     return (
-                      <div className="flex justify-between text-stone-400 text-[11px]">
-                        <span>{txt}</span>
-                        <span>Incluido</span>
-                      </div>
+                      <>
+                        {paperText && (
+                          <div className="flex justify-between text-stone-400 text-[11px]">
+                            <span>Fotos Impresas (Papel): {paperText}</span>
+                            <span>Incluido</span>
+                          </div>
+                        )}
+                        {retabloText && (
+                          <div className="flex justify-between text-amber-300 font-medium text-[11px]">
+                            <span>Cuadros en Retablo (Madera): {retabloText}</span>
+                            <span>Incluido</span>
+                          </div>
+                        )}
+                        {!paperText && !retabloText && (() => {
+                          let txt = receiptBooking.printedPhotosSummary || formatPrintedPhotosSummary(receiptBooking);
+                          if (!txt && Number(receiptBooking.printedPhotosCount) > 0) {
+                            txt = `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`;
+                          }
+                          if (!txt) return null;
+                          return (
+                            <div className="flex justify-between text-stone-400 text-[11px]">
+                              <span>{txt}</span>
+                              <span>Incluido</span>
+                            </div>
+                          );
+                        })()}
+                      </>
                     );
                   })()}
                   {(() => {

@@ -1,13 +1,14 @@
 import React from 'react';
 import { Check, Image, Star, ArrowRight, Sparkles, Printer, Heart, ShieldCheck, UserCheck, Zap, Maximize2 } from 'lucide-react';
-import { getPrintSizes } from '../services/api';
+import { getPaperPrintSizes, getRetabloSizes } from '../services/api';
 
 export default function PackagesSection({ packages = [], onSelectPackage, settings = {} }) {
   const formatPrice = (price) => {
     return Number(price).toLocaleString('es-CO');
   };
 
-  const printSizes = getPrintSizes(settings);
+  const paperSizes = getPaperPrintSizes(settings);
+  const retabloSizes = getRetabloSizes(settings);
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -150,42 +151,42 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
         })}
       </div>
 
-      {/* CATÁLOGO DE MEDIDAS & PRECIOS: FOTOS IMPRESAS, AMPLIACIONES & CUADROS */}
+      {/* SECCIÓN INDEPENDIENTE 1: FOTOS IMPRESAS EN PAPEL FOTOGRÁFICO */}
       <div className="mt-14 space-y-6">
         <div className="text-center max-w-2xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[11px] font-bold uppercase tracking-widest mb-3">
             <Printer className="w-3.5 h-3.5 text-amber-400" />
-            <span>Laboratorio & Cuadros Decorativos</span>
+            <span>Papel Fotográfico de Laboratorio</span>
           </div>
           <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white">
-            Medidas y Precios de Fotos Impresas & Cuadros
+            Fotos Impresas (Papel Fotográfico)
           </h3>
           <p className="text-xs sm:text-sm text-stone-300 mt-2">
-            Papel fotográfico profesional de laboratorio con máxima fidelidad de color y protección UV. Elige tus medidas para portarretratos, salas o cuadros de gran formato.
+            Copias impresas en papel profesional de alta resolución con acabado de laboratorio y protección contra decoloración. Perfectas para álbumes familiares o portarretratos de mesa.
           </p>
         </div>
 
-        {/* GRID DE LAS 8 MEDIDAS */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {printSizes.map((item) => (
+        {/* GRID DE FOTOS EN PAPEL (10x15 y 15x20) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 max-w-2xl mx-auto gap-4">
+          {paperSizes.map((item) => (
             <div
               key={item.id}
               onClick={() => onSelectPackage(packages[0] || null)}
-              className="group relative bg-stone-900/90 hover:bg-stone-900 border border-stone-800 hover:border-amber-400/80 rounded-2xl p-4 sm:p-5 flex flex-col justify-between shadow-lg hover:shadow-xl hover:shadow-amber-500/15 hover:-translate-y-1.5 transition-all duration-300 cursor-pointer"
+              className="group relative bg-stone-900/90 hover:bg-stone-900 border border-stone-800 hover:border-amber-400/80 rounded-2xl p-5 flex flex-col justify-between shadow-lg hover:shadow-xl hover:shadow-amber-500/15 hover:-translate-y-1.5 transition-all duration-300 cursor-pointer"
             >
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 group-hover:bg-amber-400 group-hover:text-stone-950 transition-colors">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-stone-800 text-stone-200 border border-stone-700 group-hover:bg-amber-400 group-hover:text-stone-950 transition-colors">
                     {item.tag}
                   </span>
-                  <Maximize2 className="w-4 h-4 text-stone-500 group-hover:text-amber-400 transition-colors" />
+                  <Printer className="w-4 h-4 text-stone-500 group-hover:text-amber-400 transition-colors" />
                 </div>
 
                 <div className="space-y-1 mb-3">
-                  <h4 className="text-lg sm:text-xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
+                  <h4 className="text-xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
                     {item.dimensions}
                   </h4>
-                  <p className="text-[11px] text-stone-400 leading-snug line-clamp-2">
+                  <p className="text-xs text-stone-400 leading-snug">
                     {item.desc}
                   </p>
                 </div>
@@ -193,12 +194,12 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
 
               <div className="pt-3 border-t border-stone-800/80 flex items-baseline justify-between">
                 <div>
-                  <span className="text-xl sm:text-2xl font-black font-mono text-amber-400 group-hover:text-amber-300 transition-colors">
+                  <span className="text-2xl font-black font-mono text-amber-400 group-hover:text-amber-300 transition-colors">
                     ${formatPrice(item.price)}
                   </span>
-                  <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / unidad</span>
+                  <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / Foto en papel</span>
                 </div>
-                <span className="text-[11px] font-bold text-amber-400/90 group-hover:text-amber-300 flex items-center gap-1">
+                <span className="text-xs font-bold text-amber-400/90 group-hover:text-amber-300 flex items-center gap-1">
                   <span>Pedir</span>
                   <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
                 </span>
@@ -206,8 +207,66 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
             </div>
           ))}
         </div>
+      </div>
 
-        {/* BANNER INFORMATIVO */}
+      {/* SECCIÓN INDEPENDIENTE 2: CUADROS EN RETABLOS */}
+      <div className="mt-16 space-y-6">
+        <div className="text-center max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-gradient-to-r from-amber-500/20 via-amber-400/30 to-amber-500/20 border border-amber-500/50 text-amber-300 text-[11px] font-bold uppercase tracking-widest mb-3 shadow-md shadow-amber-500/10">
+            <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+            <span>Madera de Lujo • Listos para Colgar</span>
+          </div>
+          <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white">
+            Cuadros en Retablos
+          </h3>
+          <p className="text-xs sm:text-sm text-stone-300 mt-2">
+            Elaborados sobre retablo de madera de alta resistencia, cantos pulidos y película protectora UV. Listos para colgar y transformar las paredes de tu sala, pasillo o dormitorio.
+          </p>
+        </div>
+
+        {/* GRID DE LAS 6 MEDIDAS DE RETABLOS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {retabloSizes.map((item) => (
+            <div
+              key={item.id}
+              onClick={() => onSelectPackage(packages[0] || null)}
+              className="group relative bg-stone-900/90 hover:bg-stone-900 border border-amber-500/20 hover:border-amber-400/80 rounded-2xl p-5 flex flex-col justify-between shadow-lg hover:shadow-xl hover:shadow-amber-500/15 hover:-translate-y-1.5 transition-all duration-300 cursor-pointer"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 group-hover:bg-amber-400 group-hover:text-stone-950 transition-colors">
+                    {item.tag}
+                  </span>
+                  <Maximize2 className="w-4 h-4 text-amber-500/60 group-hover:text-amber-400 transition-colors" />
+                </div>
+
+                <div className="space-y-1 mb-3">
+                  <h4 className="text-xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
+                    {item.dimensions}
+                  </h4>
+                  <p className="text-xs text-stone-400 leading-snug">
+                    {item.desc}
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-stone-800/80 flex items-baseline justify-between">
+                <div>
+                  <span className="text-2xl font-black font-mono text-amber-400 group-hover:text-amber-300 transition-colors">
+                    ${formatPrice(item.price)}
+                  </span>
+                  <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / Cuadro en retablo</span>
+                </div>
+                <span className="text-xs font-bold text-amber-400/90 group-hover:text-amber-300 flex items-center gap-1">
+                  <span>Pedir Retablo</span>
+                  <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* BANNER INFORMATIVO DE RETABLOS */}
         <div className="p-4 sm:p-5 rounded-2xl bg-stone-950/80 border border-stone-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-stone-300">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
@@ -215,10 +274,10 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
             </div>
             <div>
               <p className="font-semibold text-stone-200">
-                ¿Deseas pedir tus fotos en alguna de estas medidas?
+                ¿Deseas pedir cuadros en retablo con tus fotos?
               </p>
               <p className="text-stone-400 text-[11px]">
-                Puedes seleccionarlas directamente al reservar tu sesión o encargarlas con tus fotos favoritas desde tu galería privada.
+                Puedes elegirlos al agendar tu sesión o solicitarlos desde tu galería privada cuando te entregue las fotos seleccionadas.
               </p>
             </div>
           </div>
@@ -227,7 +286,7 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
             onClick={() => onSelectPackage(packages[0] || null)}
             className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-xs uppercase tracking-wider shrink-0 hover:from-amber-300 hover:to-amber-400 transition-all shadow-md active:scale-95 cursor-pointer"
           >
-            Agendar con Medidas
+            Agendar con Retablos
           </button>
         </div>
       </div>

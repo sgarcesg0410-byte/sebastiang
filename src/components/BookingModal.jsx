@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, ArrowRight, ChevronLeft, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { createBooking, checkClientLoyalty, formatTo12Hour, getPrintSizes, formatPrintedPhotosSummary } from '../services/api';
+import { createBooking, checkClientLoyalty, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
 import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', settings = {} }) {
@@ -9,9 +9,11 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
   const scrollRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
+  const paperSizes = getPaperPrintSizes(settings);
+  const retabloSizes = getRetabloSizes(settings);
   const printSizesCatalog = getPrintSizes(settings);
-  const size10x15 = printSizesCatalog.find(s => s.id === '10x15');
-  const size15x20 = printSizesCatalog.find(s => s.id === '15x20');
+  const size10x15 = paperSizes.find(s => s.id === '10x15');
+  const size15x20 = paperSizes.find(s => s.id === '15x20');
   const printedPhotoPrice = size10x15?.price || 7000;
   const printedPhoto15x20Price = size15x20?.price || 8000;
 
@@ -134,8 +136,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   // Descuento de fidelización del 15% para clientes recurrentes
   const loyaltyDiscount = loyalInfo.isLoyal ? Math.round(baseOrSurchargedPrice * 0.15) : 0;
 
-  // Cálculo de fotos impresas y cuadros sobre todo el catálogo de medidas
-  const printedPhotosTotal = printSizesCatalog.reduce((sum, item) => {
+  // Cálculos independientes de fotos impresas en papel y cuadros en retablo
+  const paperPhotosTotal = paperSizes.reduce((sum, item) => {
     let qty = 0;
     if (formData.printedSizes && formData.printedSizes[item.id] !== undefined) {
       qty = Number(formData.printedSizes[item.id]) || 0;
@@ -147,7 +149,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     return sum + (qty * item.price);
   }, 0);
 
-  const totalPrintedCount = printSizesCatalog.reduce((sum, item) => {
+  const paperPhotosCount = paperSizes.reduce((sum, item) => {
     let qty = 0;
     if (formData.printedSizes && formData.printedSizes[item.id] !== undefined) {
       qty = Number(formData.printedSizes[item.id]) || 0;
@@ -159,6 +161,18 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     return sum + qty;
   }, 0);
 
+  const retablosTotal = retabloSizes.reduce((sum, item) => {
+    const qty = Number(formData.printedSizes?.[item.id] || 0);
+    return sum + (qty * item.price);
+  }, 0);
+
+  const retablosCount = retabloSizes.reduce((sum, item) => {
+    const qty = Number(formData.printedSizes?.[item.id] || 0);
+    return sum + qty;
+  }, 0);
+
+  const totalPrintedCount = paperPhotosCount + retablosCount;
+  const printedPhotosTotal = paperPhotosTotal + retablosTotal;
   const calculatedPrice = (baseOrSurchargedPrice - loyaltyDiscount) + printedPhotosTotal;
 
   const handleUpdatePrintQty = (sizeId, delta) => {
@@ -253,11 +267,13 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         locationType: formData.locationType,
         specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'San Antero (Playa / Sector)' : 'Locación Especial / Fuera'),
         dateTime: formattedDateTime,
-        description: formData.description.trim(),
-        printedPhotosCount: totalPrintedCount,
+        printedPhotosCount: paperPhotosCount,
         printedPhotos10x15Count: Number(formData.printedSizes?.['10x15'] ?? formData.printedPhotosCount ?? 0),
         printedPhotos15x20Count: Number(formData.printedSizes?.['15x20'] ?? formData.printedPhotos15x20Count ?? 0),
+        retablosCount: retablosCount,
         printedSizes: formData.printedSizes || {},
+        paperPhotosSummary: formatPaperPhotosSummary(formData.printedSizes, paperSizes),
+        retablosSummary: formatRetablosSummary(formData.printedSizes, retabloSizes),
         printedPhotosSummary: formatPrintedPhotosSummary(formData.printedSizes, printSizesCatalog)
       };
 
@@ -810,19 +826,22 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     </div>
                   )}
 
-                  {/* FOTOS IMPRESAS Y CUADROS OPCIONALES */}
-                  <div className="space-y-2">
-                    <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
+                  {/* SECCIÓN INDEPENDIENTE 1: FOTOS IMPRESAS EN PAPEL FOTOGRÁFICO */}
+                  <div className="space-y-2 pt-1 border-t border-stone-800/80">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider flex items-center gap-1.5">
                         <Printer className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Fotos Impresas y Cuadros Decorativos (Opcional)</span>
+                        <span>Fotos Impresas (Papel Fotográfico) (Opcional)</span>
                       </span>
-                      {totalPrintedCount > 0 && (
+                      {paperPhotosCount > 0 && (
                         <span className="text-amber-400 font-mono text-[10px] font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">
-                          {totalPrintedCount} seleccionada(s)
+                          {paperPhotosCount} foto(s) • +${formatPrice(paperPhotosTotal)}
                         </span>
                       )}
-                    </span>
+                    </div>
+                    <p className="text-[10px] text-stone-400 leading-tight">
+                      Copias en papel fotográfico profesional de laboratorio para álbum familiar o portarretratos.
+                    </p>
 
                     {/* Opción Estándar 10x15 */}
                     <div className="p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between hover:border-stone-700 transition-colors">
@@ -835,7 +854,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                             Estándar
                           </span>
                         </div>
-                        <span className="text-[10px] text-stone-400">Papel fotográfico profesional de laboratorio</span>
+                        <span className="text-[10px] text-stone-400">Papel de laboratorio para álbum</span>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -860,7 +879,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     </div>
 
                     {/* Opción Portarretrato 15x20 */}
-                    <div className="p-2.5 rounded-xl bg-stone-950 border border-amber-500/30 flex items-center justify-between hover:border-amber-400/50 transition-colors">
+                    <div className="p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between hover:border-stone-700 transition-colors">
                       <div>
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs text-stone-200 font-semibold block">
@@ -870,7 +889,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                             Portarretrato
                           </span>
                         </div>
-                        <span className="text-[10px] text-stone-400">Formato ampliado para portarretratos de mesa</span>
+                        <span className="text-[10px] text-stone-400">Formato ampliado para mesa de noche</span>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -893,29 +912,46 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                         </button>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Botón desplegable para cuadros y ampliaciones (20x30, 30x45, 40x50, 50x70, 70x50, 70x100) */}
+                  {/* SECCIÓN INDEPENDIENTE 2: CUADROS EN RETABLOS */}
+                  <div className="space-y-2 pt-3 border-t border-amber-500/20">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Cuadros en Retablos (Opcional)</span>
+                      </span>
+                      {retablosCount > 0 && (
+                        <span className="text-amber-300 font-mono text-[10px] font-bold bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/40">
+                          {retablosCount} retablo(s) • +${formatPrice(retablosTotal)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-stone-400 leading-tight">
+                      Retablos de madera sólida con cantos pulidos y película protectora UV, listos para colgar.
+                    </p>
+
+                    {/* Botón desplegable para cuadros en retablo */}
                     <button
                       type="button"
                       onClick={() => setShowAllPrintSizes(!showAllPrintSizes)}
-                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 text-amber-300 hover:bg-amber-500/15 transition-all text-xs font-semibold cursor-pointer active:scale-98"
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/40 text-amber-300 hover:bg-amber-500/20 transition-all text-xs font-semibold cursor-pointer active:scale-98"
                     >
                       <div className="flex items-center gap-2">
-                        <Maximize2 className="w-4 h-4 text-amber-400" />
-                        <span>Ver Cuadros y Ampliaciones para Sala</span>
                         <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
                           6 Medidas
                         </span>
+                        <span>{showAllPrintSizes ? 'Ocultar catálogo de retablos' : 'Elegir medidas de retablos (20x30 a 70x100)'}</span>
                       </div>
                       <div className="flex items-center gap-1 text-[11px] font-bold">
-                        <span>{showAllPrintSizes ? 'Ocultar' : 'Elegir medidas'}</span>
+                        <span>{showAllPrintSizes ? 'Cerrar' : 'Ver'}</span>
                         {showAllPrintSizes ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                       </div>
                     </button>
 
                     {showAllPrintSizes && (
                       <div className="space-y-2 pt-1 animate-fadeIn">
-                        {printSizesCatalog.filter(s => s.id !== '10x15' && s.id !== '15x20').map(item => {
+                        {retabloSizes.map(item => {
                           const count = Number(formData.printedSizes?.[item.id] || 0);
                           return (
                             <div
@@ -961,17 +997,6 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                         })}
                       </div>
                     )}
-
-                    {totalPrintedCount > 0 && (
-                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs">
-                        <span className="text-amber-200 font-medium">
-                          Total fotos y cuadros ({totalPrintedCount} unid.):
-                        </span>
-                        <span className="font-bold text-amber-400 font-mono">
-                          +${formatPrice(printedPhotosTotal)} COP
-                        </span>
-                      </div>
-                    )}
                   </div>
 
                   {/* NOTAS O DESCRIPCIÓN */}
@@ -996,9 +1021,19 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                       <span className="text-[10px] text-stone-400 uppercase tracking-wider block">
                         Total de tu Sesión:
                       </span>
-                      <span className="text-xs text-stone-200 font-bold">
+                      <span className="text-xs text-stone-200 font-bold block">
                         {currentPackage?.name} (+2 Fotos Gratis)
                       </span>
+                      {paperPhotosCount > 0 && (
+                        <span className="text-[11px] text-amber-300 font-medium block">
+                          + {paperPhotosCount} foto(s) en papel (+${formatPrice(paperPhotosTotal)})
+                        </span>
+                      )}
+                      {retablosCount > 0 && (
+                        <span className="text-[11px] text-amber-400 font-medium block">
+                          + {retablosCount} cuadro(s) en retablo (+${formatPrice(retablosTotal)})
+                        </span>
+                      )}
                       {loyaltyDiscount > 0 && (
                         <span className="text-[11px] text-emerald-400 font-semibold block mt-0.5">
                           👑 Descuento VIP Aplicado (-15%)

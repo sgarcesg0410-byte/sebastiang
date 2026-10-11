@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Download, MessageCircle, ArrowLeft, CheckCircle2, ShieldCheck, Printer } from 'lucide-react';
-import { getAdminBookings, formatDateTime12Hour } from '../services/api';
+import { getAdminBookings, formatDateTime12Hour, formatPaperPhotosSummary, formatRetablosSummary, formatPrintedPhotosSummary } from '../services/api';
 import { LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 import { generateLuxuryReceiptPdf } from '../services/receiptPdfGenerator';
 
@@ -227,23 +227,37 @@ export default function PublicReceiptView({ bookingId, onBack }) {
                 <span className="font-mono font-semibold">${total.toLocaleString('es-CO')} COP</span>
               </div>
               {(() => {
-                const c10 = Number(booking.printedPhotos10x15Count || (booking.printedPhotosCount && !booking.printedPhotos15x20Count ? booking.printedPhotosCount : 0));
-                const c15 = Number(booking.printedPhotos15x20Count || 0);
-                const txt = (c10 > 0 && c15 > 0)
-                  ? `+ ${c10} Fotos impresas 10x15 y + ${c15} Fotos impresas 15x20`
-                  : c15 > 0
-                    ? `+ ${c15} Fotos impresas 15x20`
-                    : c10 > 0
-                      ? `+ ${c10} Fotos impresas 10x15`
-                      : Number(booking.printedPhotosCount) > 0
-                        ? `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico`
-                        : '';
-                if (!txt) return null;
+                const paperText = booking.paperPhotosSummary || formatPaperPhotosSummary(booking);
+                const retabloText = booking.retablosSummary || formatRetablosSummary(booking);
+
                 return (
-                  <div className="flex justify-between text-stone-400 text-[11px]">
-                    <span>{txt}</span>
-                    <span>Incluido</span>
-                  </div>
+                  <>
+                    {paperText && (
+                      <div className="flex justify-between text-stone-400 text-[11px]">
+                        <span>Fotos Impresas (Papel): {paperText}</span>
+                        <span>Incluido</span>
+                      </div>
+                    )}
+                    {retabloText && (
+                      <div className="flex justify-between text-amber-300 font-medium text-[11px]">
+                        <span>Cuadros en Retablo (Madera): {retabloText}</span>
+                        <span>Incluido</span>
+                      </div>
+                    )}
+                    {!paperText && !retabloText && (() => {
+                      let txt = booking.printedPhotosSummary || formatPrintedPhotosSummary(booking);
+                      if (!txt && Number(booking.printedPhotosCount) > 0) {
+                        txt = `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico`;
+                      }
+                      if (!txt) return null;
+                      return (
+                        <div className="flex justify-between text-stone-400 text-[11px]">
+                          <span>{txt}</span>
+                          <span>Incluido</span>
+                        </div>
+                      );
+                    })()}
+                  </>
                 );
               })()}
               <div className="border-t border-stone-800 pt-2 flex justify-between text-stone-200">
