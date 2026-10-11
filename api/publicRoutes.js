@@ -240,8 +240,8 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
   app.get('/api/public/receipt/:token', publicLimiter, async (req, res) => {
     const rawToken = req.params.token;
     let bookingId = verifyReceiptToken(rawToken);
-    if (!bookingId && typeof rawToken === 'string' && rawToken.startsWith('book-')) {
-      bookingId = rawToken;
+    if (!bookingId && typeof rawToken === 'string' && rawToken.trim()) {
+      bookingId = rawToken.trim();
     }
     if (!bookingId) {
       return res.status(404).json({ error: 'Comprobante no encontrado o enlace inválido.' });

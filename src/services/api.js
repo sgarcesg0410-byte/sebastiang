@@ -1408,7 +1408,34 @@ export async function getGalleryByToken(token) {
     };
   }
 
-  // 3. Consultar en la nube (Supabase) para que el cliente la abra desde cualquier celular o red
+  // 3. Consultar a través de la API segura del servidor (usa service_role y protege fotos)
+  try {
+    const res = await fetch(`${API_BASE}/gallery/${encodeURIComponent(token)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && (data.token === token || data.id === token)) {
+        saveLocalSession(data);
+        const now = Date.now();
+        const expiresTime = new Date(data.expiresAt).getTime();
+        return {
+          ...data,
+          isExpired: now > expiresTime,
+          isSubmitted: data.status === 'submitted' || data.status === 'delivered',
+          isDelivered: data.status === 'delivered',
+          timeRemainingMs: Math.max(0, expiresTime - now),
+          watermarkSettings: {
+            watermarkText: DEFAULT_SETTINGS.watermarkText,
+            watermarkSubtext: DEFAULT_SETTINGS.watermarkSubtext,
+            watermarkLogoUrl: DEFAULT_SETTINGS.watermarkLogoUrl
+          }
+        };
+      }
+    }
+  } catch (errApi) {
+    console.warn('Consultando galería por API:', errApi);
+  }
+
+  // 3b. Fallback directo a Supabase
   try {
     const { data: supaData, error: supaErr } = await supabase
       .from('catalog')
@@ -2145,6 +2172,16 @@ export async function getVipClients() {
     idbList = await idbGetVipClients();
   } catch (e) {}
 
+  let serverList = [];
+  try {
+    const res = await fetch(`${API_BASE}/admin/vip`);
+    if (res.ok) {
+      serverList = await res.json();
+    }
+  } catch (err) {
+    console.warn('Consultando VIPs del servidor:', err);
+  }
+
   let cloudList = [];
   try {
     const { data } = await supabase
@@ -2165,7 +2202,7 @@ export async function getVipClients() {
   } catch (e) {}
 
   const map = new Map();
-  const all = [...cloudList, ...idbList, ...localList];
+  const all = [...(Array.isArray(serverList) ? serverList : []), ...cloudList, ...idbList, ...localList];
   for (const c of all) {
     if (!c) continue;
     const phoneKey = (c.phone || c.clientWhatsApp || '').replace(/\D/g, '');
