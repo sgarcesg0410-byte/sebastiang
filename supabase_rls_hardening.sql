@@ -1,136 +1,157 @@
 -- ==============================================================================
--- ENDURECIMIENTO DE RLS EN SUPABASE — Sebastian G
+-- ETAPA A — CERRAR EL ACCESO ANÓNIMO A DATOS PRIVADOS
+-- Sebastian G Fotografía · pegar COMPLETO en Supabase → SQL Editor → Run
 -- ==============================================================================
--- La "RLS de Fase 1" NO cierra nada: dejó SELECT/UPDATE/DELETE USING (true) en
--- bookings, payments, sessions y system_config, y INSERT/UPDATE/DELETE con
--- WITH CHECK (true) en catalog. Es decir: cualquier anónimo con la clave pública
--- (que viaja en el navegador) puede leer reservas, pagos y sesiones, y borrar o
--- reescribir el catálogo y los pagos.
+-- Qué hace:
+--   1. Borra TODAS las políticas actuales de las 6 tablas (dinámicamente,
+--      porque los nombres varían entre versiones del esquema).
+--   2. Deja el catálogo público en SOLO LECTURA del portafolio y los testimonios,
+--      pero CONSERVA la escritura para que el panel siga subiendo fotos.
+--      → Las galerías privadas (fotos de clientes), los pagos, las reservas,
+--        los VIP y los secretos dejan de ser legibles con la clave pública.
+--   3. Deja reservas, pagos, sesiones y configuración SOLO para el servidor.
 --
--- ⚠️ ORDEN OBLIGATORIO — no ejecutes la ETAPA A sin cumplir el paso 0.
+-- Requisito previo (YA CUMPLIDO): SUPABASE_REST_KEY en Vercel = clave service_role.
 --
--- PASO 0 (imprescindible, si no el backend se queda sin acceso):
---   En Vercel y en el .env local, poner SUPABASE_REST_KEY = la clave
---   **service_role** del proyecto (Project Settings → API), NO la anon key.
---   Comprobación rápida: la clave debe decodificar a "role":"service_role".
---   El backend de /api/index.js usa esa clave y por eso puede saltarse RLS.
---   El frontend sigue usando la anon key (VITE_SUPABASE_ANON_KEY).
---
--- ETAPA A (segura hoy: solo quita LECTURAS que filtran datos personales)
---   El frontend no lee estas tablas directamente: lo hace a través de la API,
---   que ahora usa service_role. Sí puede seguir ESCRIBIENDO (ver ETAPA B).
---
--- ETAPA B (solo después de repuntar las ~36 escrituras directas del navegador)
---   Hoy el navegador escribe directo en Supabase (catalog, bookings, payments...).
---   Mientras eso siga así, hay que mantener esas políticas de escritura o el
---   panel deja de guardar. Cuando esas escrituras pasen por la API, ejecuta la
---   ETAPA B: elimina TODA política de escritura para anon y deja que solo
---   service_role escriba (service_role ignora RLS por diseño).
+-- Efectos funcionales esperados (todos con degradación elegante):
+--   · Galería del cliente: sigue funcionando (usa la API).
+--   · Testimonios: siguen (lectura permitida + API).
+--   · Panel: reservas y pagos siguen llegando por la API.
+--   · Pestaña VIP: puede aparecer vacía hasta crear su endpoint (Fase 2.2).
+--   · Subir fotos al portafolio y demás escrituras del panel: SIGUEN funcionando
+--     (se conservan las políticas de escritura hasta la Etapa B).
 -- ==============================================================================
 
+-- ------------------------------------------------------------------------------
+-- 1) BORRAR TODAS LAS POLÍTICAS ACTUALES DE LAS 6 TABLAS
+-- ------------------------------------------------------------------------------
+do $$
+declare p record;
+begin
+  for p in
+    select schemaname, tablename, policyname
+    from pg_policies
+    where schemaname = 'public'
+      and tablename in ('bookings','sessions','payments','catalog','system_config','reviews')
+  loop
+    execute format('drop policy if exists %I on %I.%I', p.policyname, p.schemaname, p.tablename);
+  end loop;
+end $$;
 
--- ##############################################################################
--- ETAPA A — APLICAR AHORA
--- ##############################################################################
+-- ------------------------------------------------------------------------------
+-- 2) RLS ACTIVO EN TODAS
+-- ------------------------------------------------------------------------------
+alter table public.bookings      enable row level security;
+alter table public.sessions      enable row level security;
+alter table public.payments      enable row level security;
+alter table public.catalog       enable row level security;
+alter table public.system_config enable row level security;
+alter table public.reviews       enable row level security;
 
--- Lecturas que exponían datos personales a cualquiera
-DROP POLICY IF EXISTS "Lectura de reservas del estudio"          ON public.bookings;
-DROP POLICY IF EXISTS "Lectura administrativa de pagos"          ON public.payments;
-DROP POLICY IF EXISTS "Lectura de sesiones por token o id"       ON public.sessions;
-DROP POLICY IF EXISTS "Lectura pública de configuración comercial" ON public.system_config;
+-- ------------------------------------------------------------------------------
+-- 3) CATÁLOGO — lectura pública SOLO de lo que debe ser público
+-- ------------------------------------------------------------------------------
+-- Permitido con la clave anónima:
+--   · el portafolio (fotos del sitio)
+--   · los testimonios (review_data)
+--   · los ajustes comerciales (system_settings: precios y textos que la web necesita)
+-- Bloqueado:
+--   · session_data  -> FOTOS PRIVADAS DE CLIENTES
+--   · booking_data  -> reservas con nombre, WhatsApp y correo
+--   · payment_data  -> pagos y abonos
+--   · vip_client    -> clientes VIP
+--   · system_*      -> hash del PIN, retos 2FA, saldos de billeteras
+create policy "catalog_public_read" on public.catalog
+for select
+to anon, authenticated
+using (
+      id = 'system_settings'
+   or category = 'review_data'
+   or (
+        not starts_with(id, 'system_')
+    and not starts_with(id, 'sess-')
+    and not starts_with(id, 'book-')
+    and not starts_with(id, 'pay-')
+    and not starts_with(id, 'rev-')
+    and not starts_with(id, 'vip-')
+    and right(coalesce(category, ''), 5) <> '_data'
+   )
+);
 
--- Se recrean permitiendo SOLO el rol de servicio (el backend).
--- `TO service_role` deja fuera a anon y a authenticated.
-CREATE POLICY "bookings_service_only" ON public.bookings
-  FOR SELECT TO service_role USING (true);
+-- Escritura del catálogo: se conserva para que el panel siga funcionando.
+-- (Se cerrará en la ETAPA B, cuando esas escrituras pasen por la API.)
+create policy "catalog_anon_insert" on public.catalog
+for insert to anon, authenticated with check (true);
 
-CREATE POLICY "payments_service_only" ON public.payments
-  FOR SELECT TO service_role USING (true);
+create policy "catalog_anon_update" on public.catalog
+for update to anon, authenticated using (true) with check (true);
 
-CREATE POLICY "sessions_service_only" ON public.sessions
-  FOR SELECT TO service_role USING (true);
+create policy "catalog_anon_delete" on public.catalog
+for delete to anon, authenticated using (true);
 
-CREATE POLICY "system_config_service_only" ON public.system_config
-  FOR SELECT TO service_role USING (true);
+-- ------------------------------------------------------------------------------
+-- 4) RESEÑAS — lectura pública (testimonios del sitio)
+-- ------------------------------------------------------------------------------
+create policy "reviews_public_read" on public.reviews
+for select to anon, authenticated using (true);
 
--- Comprobación 1: con la ANON key estas consultas deben devolver [] (no datos).
+-- ------------------------------------------------------------------------------
+-- 5) RESERVAS, PAGOS, SESIONES Y CONFIGURACIÓN — SOLO EL SERVIDOR
+-- ------------------------------------------------------------------------------
+-- No se crea ninguna política para anon: sin política, RLS deniega.
+-- El backend sigue funcionando porque usa service_role, que ignora RLS.
+-- Reservas y pagos entran ahora por POST /api/bookings y POST /api/payments.
+
+
+-- ==============================================================================
+-- VERIFICACIÓN — ejecuta esto después y mira los resultados
+-- ==============================================================================
+
+-- 6.1 ¿Qué políticas quedaron? Revisa que NO haya ninguna para anon en
+--     bookings, sessions, payments ni system_config.
+select tablename, policyname, roles, cmd
+from pg_policies
+where schemaname = 'public'
+order by tablename, cmd;
+
+-- 6.2 Inventario de lo que hay en la tabla pública del catálogo.
+--     (Las filas siguen existiendo: la política las OCULTA al público, no las borra.)
+select category, count(*) as filas
+from public.catalog
+group by category
+order by filas desc;
+
+-- ==============================================================================
+-- PRUEBA FINAL (desde fuera, sin sesión de Supabase)
+-- ==============================================================================
+-- Con la clave anónima, estas dos consultas deben devolver [] (lista vacía)
+-- y NO tus datos:
+--
+--   curl "https://maqqzcawbdhhfqxoabyq.supabase.co/rest/v1/catalog?select=*&category=eq.session_data&limit=1" ^
+--        -H "apikey: <TU_ANON_KEY>"
+--
 --   curl "https://maqqzcawbdhhfqxoabyq.supabase.co/rest/v1/bookings?select=*&limit=1" ^
---        -H "apikey: <ANON_KEY>"
---   curl "https://maqqzcawbdhhfqxoabyq.supabase.co/rest/v1/payments?select=*&limit=1" ^
---        -H "apikey: <ANON_KEY>"
---   curl "https://maqqzcawbdhhfqxoabyq.supabase.co/rest/v1/system_config?select=*&limit=1" ^
---        -H "apikey: <ANON_KEY>"
+--        -H "apikey: <TU_ANON_KEY>"
 --
--- Comprobación 2: el panel sigue funcionando (reservas, pagos y sesiones visibles).
--- Si el panel muestra 0 reservas, el paso 0 está mal: SUPABASE_REST_KEY sigue
--- siendo la anon key. Corrígelo antes de continuar.
+-- Y esto debe seguir devolviendo tus fotos del portafolio:
+--
+--   curl "https://maqqzcawbdhhfqxoabyq.supabase.co/rest/v1/catalog?select=id,title&limit=3" ^
+--        -H "apikey: <TU_ANON_KEY>"
 
 
--- ##############################################################################
--- ETAPA B — SOLO CUANDO LAS ESCRITURAS DEL NAVEGADOR PASEN POR LA API
--- ##############################################################################
--- Antes de ejecutarla, comprueba que en src/ no queda ninguna escritura directa:
+-- ==============================================================================
+-- ETAPA B — cuando TODAS las escrituras del navegador pasen por la API
+-- ==============================================================================
+-- Descomenta y ejecuta SOLO cuando esto devuelva 0 líneas:
 --   grep -rn "supabase.from" src/ | grep -E "\.(upsert|insert|update|delete)\("
--- Debe devolver 0 líneas (o solo lecturas). Entonces:
-
 /*
--- Catálogo: lectura pública del portafolio, escritura solo del servidor
-DROP POLICY IF EXISTS "Escritura administrativa en catálogo"     ON public.catalog;
-DROP POLICY IF EXISTS "Actualización administrativa en catálogo" ON public.catalog;
-DROP POLICY IF EXISTS "Eliminación administrativa en catálogo"   ON public.catalog;
+drop policy if exists "catalog_anon_insert" on public.catalog;
+drop policy if exists "catalog_anon_update" on public.catalog;
+drop policy if exists "catalog_anon_delete" on public.catalog;
 
-CREATE POLICY "catalog_write_service_only" ON public.catalog
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
+create policy "catalog_service_all" on public.catalog
+  for all to service_role using (true) with check (true);
 
--- Reservas: el cliente ya no inserta directo (lo hace POST /api/bookings)
-DROP POLICY IF EXISTS "Clientes pueden crear reservas"                   ON public.bookings;
-DROP POLICY IF EXISTS "Actualización de reservas por administración"     ON public.bookings;
-DROP POLICY IF EXISTS "Eliminación de reservas por administración"       ON public.bookings;
-
-CREATE POLICY "bookings_write_service_only" ON public.bookings
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- Sesiones y pagos: idem
-DROP POLICY IF EXISTS "Gestión administrativa de sesiones"          ON public.sessions;
-DROP POLICY IF EXISTS "Actualización administrativa de sesiones"    ON public.sessions;
-DROP POLICY IF EXISTS "Clientes pueden registrar pagos"             ON public.payments;
-
-CREATE POLICY "sessions_write_service_only" ON public.sessions
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
-
-CREATE POLICY "payments_write_service_only" ON public.payments
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- Reseñas: lectura pública, escritura y moderación solo del servidor
-DROP POLICY IF EXISTS "Clientes pueden enviar testimonios"               ON public.reviews;
-DROP POLICY IF EXISTS "Eliminación de testimonios por administración"    ON public.reviews;
-
-CREATE POLICY "reviews_write_service_only" ON public.reviews
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
-
--- system_config: nada de escritura anónima
-DROP POLICY IF EXISTS "Edición administrativa de configuración" ON public.system_config;
-
-CREATE POLICY "system_config_write_service_only" ON public.system_config
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
+create policy "reviews_service_all" on public.reviews
+  for all to service_role using (true) with check (true);
 */
-
-
--- ##############################################################################
--- AUDITORÍA — ejecuta esto para ver el estado real en cualquier momento
--- ##############################################################################
--- Debe mostrar, para cada tabla, políticas solo para {service_role} o lecturas
--- públicas acotadas. Si ves `anon` con cmd = ALL / INSERT / UPDATE / DELETE en
--- bookings, payments, sessions o system_config, la ETAPA A no se aplicó.
-
-SELECT tablename, policyname, roles, cmd, qual, with_check
-FROM pg_policies
-WHERE schemaname = 'public'
-ORDER BY tablename, cmd;
-
--- ¿Queda algún secreto dentro de la tabla pública del catálogo?
-SELECT id, category, left(url, 40) AS url_inicio
-FROM public.catalog
-WHERE id LIKE 'system_%'
-   OR category IN ('security_data', 'session_data', 'payment_data', 'vip_client')
-ORDER BY category, id;
