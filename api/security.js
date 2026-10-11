@@ -25,9 +25,14 @@ export function getAdminAuthSecret() {
   const usable = secret.length >= 32 && !FORBIDDEN_SECRETS.has(secret);
   if (usable) return secret;
 
-  // Fallback determinista seguro derivado de la clave de Supabase o semilla del servidor.
-  // Previene errores 503 si el usuario aún no configuró ADMIN_AUTH_SECRET en Vercel.
-  const seed = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_REST_KEY || 'sebastiang-studio-auth-secret-seed-2026';
+  // Respaldo SOLO con semillas que NO sean públicas. Nunca SUPABASE_REST_KEY:
+  // hoy contiene la clave anon, que viaja en el bundle del navegador.
+  const seed = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.ADMIN_PIN_SCRYPT || '';
+  if (!seed) {
+    // Sin semilla no se puede firmar ni verificar: se falla cerrado (401/503).
+    return null;
+  }
+  console.warn('[Seguridad] ADMIN_AUTH_SECRET no definido: la clave de sesion se deriva de una semilla de servidor. Definelo para desacoplarla.');
   return crypto.createHash('sha256').update(`admin-auth-seed:${seed}`).digest('hex');
 }
 
@@ -74,6 +79,11 @@ export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
 
   const configured = sha256Hash || process.env.ADMIN_PIN_HASH || '';
   if (!configured) return false;
+
+  // El PIN "0493" es publico (estuvo en el codigo y en el historial del repo).
+  // No se acepta NUNCA, ni aunque alguien lo deje como respaldo en el entorno.
+  if (isWeakConfiguredPin(configured)) return false;
+
   return secureCompare(hashSHA256(value), configured);
 }
 
