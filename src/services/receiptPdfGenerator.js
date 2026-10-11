@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import { LOGO_WATERMARK_APP, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
+import { formatPrintedPhotosSummary } from './api';
 
 /**
  * Formatea fechas a formato legible colombiano (ej: Sábado, 3 de octubre de 2026 - 3:10 p. m.)
@@ -291,18 +292,21 @@ export async function generateLuxuryReceiptPdf({
   currentY += 13;
   pdf.line(margin, currentY, pageWidth - margin, currentY);
 
-  // Fila Opcional: Fotos impresas de regalo / paquete
-  const c10 = Number(booking.printedPhotos10x15Count || (booking.printedPhotosCount && !booking.printedPhotos15x20Count ? booking.printedPhotosCount : 0));
-  const c15 = Number(booking.printedPhotos15x20Count || 0);
-  const printedText = (c10 > 0 && c15 > 0)
-    ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
-    : c15 > 0
-      ? `+ ${c15} Fotos impresas tamaño (15x20)`
-      : c10 > 0
-        ? `+ ${c10} Fotos impresas tamaño (10x15)`
-        : Number(booking.printedPhotosCount) > 0
-          ? `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico profesional`
-          : '';
+  // Fila Opcional: Fotos impresas de regalo / paquete / cuadros y ampliaciones
+  let printedText = booking.printedPhotosSummary || formatPrintedPhotosSummary(booking);
+  if (!printedText) {
+    const c10 = Number(booking.printedPhotos10x15Count || (booking.printedPhotosCount && !booking.printedPhotos15x20Count ? booking.printedPhotosCount : 0));
+    const c15 = Number(booking.printedPhotos15x20Count || 0);
+    printedText = (c10 > 0 && c15 > 0)
+      ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
+      : c15 > 0
+        ? `+ ${c15} Fotos impresas tamaño (15x20)`
+        : c10 > 0
+          ? `+ ${c10} Fotos impresas tamaño (10x15)`
+          : Number(booking.printedPhotosCount) > 0
+            ? `+ ${booking.printedPhotosCount} Fotos impresas en papel fotográfico profesional`
+            : '';
+  }
 
   if (printedText) {
     currentY += 1.5;

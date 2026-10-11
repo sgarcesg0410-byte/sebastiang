@@ -21,10 +21,13 @@ import {
   PackageCheck,
   DownloadCloud,
   Star,
-  ThumbsUp
+  ThumbsUp,
+  ChevronDown,
+  ChevronUp,
+  Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews } from '../services/api';
+import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews, getPrintSizes, formatPrintedPhotosSummary } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 import { NequiLogo, DaviPlataLogo, DaleLogo } from './PaymentLogos';
 
@@ -45,6 +48,8 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
   const [paymentReference, setPaymentReference] = useState('');
   const [printedPhotosCount, setPrintedPhotosCount] = useState(0);
   const [printedPhotos15x20Count, setPrintedPhotos15x20Count] = useState(0);
+  const [printedSizes, setPrintedSizes] = useState({});
+  const [showAllPrintSizes, setShowAllPrintSizes] = useState(false);
 
   // Estados de Calificación y Reseña de Satisfacción del Cliente
   const [reviewRating, setReviewRating] = useState(5);
@@ -237,19 +242,59 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     return 75000;
   };
 
+  // Catálogo completo de fotos y cuadros
+  const printSizesCatalog = getPrintSizes(galleryData?.watermarkSettings || {});
+
+  const handleUpdatePrintQty = (sizeId, delta) => {
+    setPrintedSizes(prev => {
+      const current = { ...prev };
+      if (current['10x15'] === undefined && printedPhotosCount) current['10x15'] = printedPhotosCount;
+      if (current['15x20'] === undefined && printedPhotos15x20Count) current['15x20'] = printedPhotos15x20Count;
+      const curVal = Number(current[sizeId] || 0);
+      const nextVal = Math.max(0, curVal + delta);
+      current[sizeId] = nextVal;
+      if (sizeId === '10x15') setPrintedPhotosCount(nextVal);
+      if (sizeId === '15x20') setPrintedPhotos15x20Count(nextVal);
+      return current;
+    });
+  };
+
+  const printedPhotosTotal = printSizesCatalog.reduce((sum, item) => {
+    let qty = 0;
+    if (printedSizes[item.id] !== undefined) {
+      qty = Number(printedSizes[item.id]) || 0;
+    } else if (item.id === '10x15') {
+      qty = printedPhotosCount;
+    } else if (item.id === '15x20') {
+      qty = printedPhotos15x20Count;
+    }
+    return sum + (qty * item.price);
+  }, 0);
+
+  const totalPrintedCount = printSizesCatalog.reduce((sum, item) => {
+    let qty = 0;
+    if (printedSizes[item.id] !== undefined) {
+      qty = Number(printedSizes[item.id]) || 0;
+    } else if (item.id === '10x15') {
+      qty = printedPhotosCount;
+    } else if (item.id === '15x20') {
+      qty = printedPhotos15x20Count;
+    }
+    return sum + qty;
+  }, 0);
+
+  const size10x15 = printSizesCatalog.find(s => s.id === '10x15');
+  const size15x20 = printSizesCatalog.find(s => s.id === '15x20');
+  const printedPrice = size10x15?.price || 7000;
+  const printed15x20Price = size15x20?.price || 8000;
+
   // Cálculos de selección y pasarela de pago directo automático
   const sessionBasePrice = getSessionBasePrice(galleryData);
   const selectedCount = Object.values(selections).filter(s => s.selected).length;
   const maxAllowed = galleryData?.maxPhotosAllowed || 10;
   const extraPhotos = Math.max(0, selectedCount - maxAllowed);
   const extraPhotoPrice = 7000;
-  const printedPrice = galleryData?.watermarkSettings?.printedPhotoPrice || 7000;
-  const printed15x20Price = galleryData?.watermarkSettings?.printedPhoto15x20Price || 8000;
   const extraPhotosTotal = extraPhotos * extraPhotoPrice;
-  const printed10x15Total = printedPhotosCount * printedPrice;
-  const printed15x20Total = printedPhotos15x20Count * printed15x20Price;
-  const printedPhotosTotal = printed10x15Total + printed15x20Total;
-  const totalPrintedCount = printedPhotosCount + printedPhotos15x20Count;
   const totalAmount = sessionBasePrice + extraPhotosTotal + printedPhotosTotal;
   const formatPrice = (val) => Number(val || 0).toLocaleString('es-CO');
   const watermarkText = galleryData?.watermarkSettings?.watermarkText || 'SEBASTIAN G';
@@ -280,8 +325,10 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           reference: paymentReference,
           extraPhotosCount: extraPhotos,
           printedPhotosCount: totalPrintedCount,
-          printedPhotos10x15Count: printedPhotosCount,
-          printedPhotos15x20Count: printedPhotos15x20Count
+          printedPhotos10x15Count: printedSizes['10x15'] ?? printedPhotosCount,
+          printedPhotos15x20Count: printedSizes['15x20'] ?? printedPhotos15x20Count,
+          printedSizes: printedSizes,
+          printedPhotosSummary: formatPrintedPhotosSummary(printedSizes, printSizesCatalog)
         });
       } catch (payErr) {
         console.warn('Error al registrar pago en tiempo real:', payErr);
@@ -307,12 +354,12 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
           daviplata: 'DaviPlata (Llave @PLATA3244725167)',
           dale: 'Dale! (Llave @SGG04)'
         };
+        const printedSummaryText = formatPrintedPhotosSummary(printedSizes, printSizesCatalog);
         const payText = `\n\n💳 *DETALLE DE PAGO / TRANSFERENCIA:*` +
           `\n💰 *Total Sesión:* $${formatPrice(totalAmount)} COP` +
           `\n📦 *Valor Base Paquete:* $${formatPrice(sessionBasePrice)} COP` +
           (extraPhotos > 0 ? `\n📸 *Fotos Extra:* +${extraPhotos} ($${formatPrice(extraPhotosTotal)} COP)` : '') +
-          (printedPhotosCount > 0 ? `\n🖼️ *Fotos Impresas 10x15:* +${printedPhotosCount} ($${formatPrice(printed10x15Total)} COP)` : '') +
-          (printedPhotos15x20Count > 0 ? `\n🖼️ *Fotos Impresas 15x20:* +${printedPhotos15x20Count} ($${formatPrice(printed15x20Total)} COP)` : '') +
+          (printedSummaryText ? `\n🖼️ *Fotos Impresas / Cuadros:* ${printedSummaryText} ($${formatPrice(printedPhotosTotal)} COP)` : '') +
           `\n🏦 *Método de Pago Elegido:* ${walletLabels[selectedWallet] || selectedWallet}` +
           (paymentReference ? `\n🔢 *Referencia:* ${paymentReference}` : '') +
           `\n\n_Por favor verifica y confirma el recibido de mi sesión._`;
@@ -976,27 +1023,46 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     </div>
                   )}
 
-                  {/* Selector opcional de fotos impresas (10x15 y 15x20) */}
+                  {/* Selector opcional de fotos impresas y cuadros decorativos */}
                   <div className="pt-2 border-t border-stone-800 space-y-2">
+                    <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Printer className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Impresiones y Cuadros Decorativos</span>
+                      </span>
+                      {totalPrintedCount > 0 && (
+                        <span className="text-amber-400 font-mono text-[10px] font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">
+                          {totalPrintedCount} seleccionada(s)
+                        </span>
+                      )}
+                    </span>
+
                     {/* Opción 10x15 */}
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 10x15</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 10x15</span>
+                          <span className="bg-stone-800 text-stone-300 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                            Estándar
+                          </span>
+                        </div>
                         <span className="text-[10px] text-stone-400">Papel profesional (${formatPrice(printedPrice)} c/u)</span>
                       </div>
                       <div className="flex items-center gap-2 bg-stone-900 border border-stone-700 rounded-xl px-2 py-1">
                         <button
                           type="button"
-                          onClick={() => setPrintedPhotosCount(Math.max(0, printedPhotosCount - 1))}
-                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                          onClick={() => handleUpdatePrintQty('10x15', -1)}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm cursor-pointer"
                         >
                           -
                         </button>
-                        <span className="w-5 text-center font-bold text-white font-mono">{printedPhotosCount}</span>
+                        <span className="w-5 text-center font-bold text-white font-mono">
+                          {printedSizes['10x15'] ?? printedPhotosCount}
+                        </span>
                         <button
                           type="button"
-                          onClick={() => setPrintedPhotosCount(printedPhotosCount + 1)}
-                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                          onClick={() => handleUpdatePrintQty('10x15', 1)}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm cursor-pointer"
                         >
                           +
                         </button>
@@ -1009,7 +1075,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-xs text-stone-200 block">Fotos Impresas 15x20</span>
                           <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
-                            Grande
+                            Portarretrato
                           </span>
                         </div>
                         <span className="text-[10px] text-stone-400">Tamaño ampliado (${formatPrice(printed15x20Price)} c/u)</span>
@@ -1017,26 +1083,96 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                       <div className="flex items-center gap-2 bg-stone-900 border border-amber-500/30 rounded-xl px-2 py-1">
                         <button
                           type="button"
-                          onClick={() => setPrintedPhotos15x20Count(Math.max(0, printedPhotos15x20Count - 1))}
-                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                          onClick={() => handleUpdatePrintQty('15x20', -1)}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm cursor-pointer"
                         >
                           -
                         </button>
-                        <span className="w-5 text-center font-bold text-amber-300 font-mono">{printedPhotos15x20Count}</span>
+                        <span className="w-5 text-center font-bold text-amber-300 font-mono">
+                          {printedSizes['15x20'] ?? printedPhotos15x20Count}
+                        </span>
                         <button
                           type="button"
-                          onClick={() => setPrintedPhotos15x20Count(printedPhotos15x20Count + 1)}
-                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm"
+                          onClick={() => handleUpdatePrintQty('15x20', 1)}
+                          className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm cursor-pointer"
                         >
                           +
                         </button>
                       </div>
                     </div>
+
+                    {/* Botón desplegable para cuadros y ampliaciones (20x30, 30x45, 40x50, 50x70, 70x50, 70x100) */}
+                    <button
+                      type="button"
+                      onClick={() => setShowAllPrintSizes(!showAllPrintSizes)}
+                      className="w-full flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/15 transition-all text-xs font-semibold cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Ver Cuadros y Ampliaciones para Sala</span>
+                        <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.2 rounded uppercase">
+                          6 Medidas
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px] font-bold">
+                        <span>{showAllPrintSizes ? 'Ocultar' : 'Elegir'}</span>
+                        {showAllPrintSizes ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      </div>
+                    </button>
+
+                    {showAllPrintSizes && (
+                      <div className="space-y-2 pt-1">
+                        {printSizesCatalog.filter(s => s.id !== '10x15' && s.id !== '15x20').map(item => {
+                          const count = Number(printedSizes[item.id] || 0);
+                          return (
+                            <div
+                              key={item.id}
+                              className={`p-2 rounded-xl bg-stone-900 border transition-colors flex items-center justify-between ${count > 0 ? 'border-amber-400/80 bg-amber-950/20' : 'border-stone-800 hover:border-stone-700'}`}
+                            >
+                              <div className="pr-2">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs text-stone-100 font-bold">
+                                    {item.dimensions}
+                                  </span>
+                                  <span className="text-amber-400 font-semibold text-xs font-mono">
+                                    (${formatPrice(item.price)})
+                                  </span>
+                                  <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                                    {item.tag}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-stone-400 block line-clamp-1">{item.desc}</span>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0 bg-stone-950 border border-stone-800 rounded-xl px-2 py-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdatePrintQty(item.id, -1)}
+                                  className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <span className="w-5 text-center font-bold text-amber-300 font-mono">
+                                  {count}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdatePrintQty(item.id, 1)}
+                                  className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold flex items-center justify-center text-sm cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {totalPrintedCount > 0 && (
                     <div className="flex justify-between text-stone-300 text-xs">
-                      <span className="text-stone-400">Total impresiones ({totalPrintedCount}):</span>
+                      <span className="text-stone-400">Total fotos y cuadros ({totalPrintedCount}):</span>
                       <span className="font-bold font-mono text-amber-400">+${formatPrice(printedPhotosTotal)} COP</span>
                     </div>
                   )}

@@ -1,13 +1,13 @@
 import React from 'react';
-import { Check, Image, Star, ArrowRight, Sparkles, Printer, Heart, ShieldCheck, UserCheck, Zap } from 'lucide-react';
+import { Check, Image, Star, ArrowRight, Sparkles, Printer, Heart, ShieldCheck, UserCheck, Zap, Maximize2 } from 'lucide-react';
+import { getPrintSizes } from '../services/api';
 
 export default function PackagesSection({ packages = [], onSelectPackage, settings = {} }) {
   const formatPrice = (price) => {
     return Number(price).toLocaleString('es-CO');
   };
 
-  const price10x15 = settings?.printedPhotoPrice || 7000;
-  const price15x20 = settings?.printedPhoto15x20Price || 8000;
+  const printSizes = getPrintSizes(settings);
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -150,51 +150,85 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
         })}
       </div>
 
-      {/* SERVICIO ADICIONAL: FOTOS IMPRESAS (10x15 Y 15x20) */}
-      <div 
-        onClick={() => onSelectPackage(packages[0] || null)}
-        className="mt-10 group bg-gradient-to-r from-stone-900 via-amber-950/30 to-stone-900 border border-amber-500/40 hover:border-amber-400 rounded-3xl p-6 sm:p-8 shadow-xl hover:shadow-2xl hover:shadow-amber-500/20 hover:-translate-y-1 transition-all duration-300 cursor-pointer"
-      >
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="flex items-start sm:items-center gap-4 text-left">
-            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-110 group-hover:rotate-6 group-hover:bg-amber-500 group-hover:text-stone-950 transition-all duration-300">
-              <Printer className="w-7 h-7" />
+      {/* CATÁLOGO DE MEDIDAS & PRECIOS: FOTOS IMPRESAS, AMPLIACIONES & CUADROS */}
+      <div className="mt-14 space-y-6">
+        <div className="text-center max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[11px] font-bold uppercase tracking-widest mb-3">
+            <Printer className="w-3.5 h-3.5 text-amber-400" />
+            <span>Laboratorio & Cuadros Decorativos</span>
+          </div>
+          <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white">
+            Medidas y Precios de Fotos Impresas & Cuadros
+          </h3>
+          <p className="text-xs sm:text-sm text-stone-300 mt-2">
+            Papel fotográfico profesional de laboratorio con máxima fidelidad de color y protección UV. Elige tus medidas para portarretratos, salas o cuadros de gran formato.
+          </p>
+        </div>
+
+        {/* GRID DE LAS 8 MEDIDAS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {printSizes.map((item) => (
+            <div
+              key={item.id}
+              onClick={() => onSelectPackage(packages[0] || null)}
+              className="group relative bg-stone-900/90 hover:bg-stone-900 border border-stone-800 hover:border-amber-400/80 rounded-2xl p-4 sm:p-5 flex flex-col justify-between shadow-lg hover:shadow-xl hover:shadow-amber-500/15 hover:-translate-y-1.5 transition-all duration-300 cursor-pointer"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 group-hover:bg-amber-400 group-hover:text-stone-950 transition-colors">
+                    {item.tag}
+                  </span>
+                  <Maximize2 className="w-4 h-4 text-stone-500 group-hover:text-amber-400 transition-colors" />
+                </div>
+
+                <div className="space-y-1 mb-3">
+                  <h4 className="text-lg sm:text-xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
+                    {item.dimensions}
+                  </h4>
+                  <p className="text-[11px] text-stone-400 leading-snug line-clamp-2">
+                    {item.desc}
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-stone-800/80 flex items-baseline justify-between">
+                <div>
+                  <span className="text-xl sm:text-2xl font-black font-mono text-amber-400 group-hover:text-amber-300 transition-colors">
+                    ${formatPrice(item.price)}
+                  </span>
+                  <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / unidad</span>
+                </div>
+                <span className="text-[11px] font-bold text-amber-400/90 group-hover:text-amber-300 flex items-center gap-1">
+                  <span>Pedir</span>
+                  <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* BANNER INFORMATIVO */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-stone-950/80 border border-stone-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-stone-300">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+              <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-[11px] font-bold uppercase tracking-widest text-amber-400 block group-hover:text-amber-300 transition-colors">
-                Servicio Adicional Opcional
-              </span>
-              <h3 className="text-xl sm:text-2xl font-serif font-bold text-white group-hover:text-amber-200 transition-colors">
-                Fotos Impresas en Papel Fotográfico
-              </h3>
-              <p className="text-xs text-stone-300 mt-1 max-w-xl">
-                Papel fotográfico profesional de laboratorio con acabado brillante o mate. Puedes agregarlas al reservar cualquier paquete o al seleccionar tus fotos en tu galería privada.
+              <p className="font-semibold text-stone-200">
+                ¿Deseas pedir tus fotos en alguna de estas medidas?
+              </p>
+              <p className="text-stone-400 text-[11px]">
+                Puedes seleccionarlas directamente al reservar tu sesión o encargarlas con tus fotos favoritas desde tu galería privada.
               </p>
             </div>
           </div>
-
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0">
-            {/* Opción 1: 10x15 */}
-            <div className="flex-1 sm:flex-initial bg-stone-950/90 px-5 py-3 rounded-2xl border border-stone-800 group-hover:border-amber-500/50 text-center transition-colors">
-              <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block">Tamaño 10x15</span>
-              <span className="text-xl sm:text-2xl font-extrabold text-amber-400 font-mono inline-block">
-                ${formatPrice(price10x15)}
-              </span>
-              <span className="text-[10px] text-stone-400 block font-medium">por unidad (COP)</span>
-            </div>
-
-            {/* Opción 2: 15x20 */}
-            <div className="flex-1 sm:flex-initial bg-stone-950/90 px-5 py-3 rounded-2xl border border-amber-500/40 group-hover:border-amber-400 text-center transition-colors relative overflow-hidden">
-              <div className="absolute top-0 right-0 bg-amber-500 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded-bl uppercase">
-                Grande
-              </div>
-              <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider block">Tamaño 15x20</span>
-              <span className="text-xl sm:text-2xl font-extrabold text-amber-300 font-mono inline-block">
-                ${formatPrice(price15x20)}
-              </span>
-              <span className="text-[10px] text-stone-400 block font-medium">por unidad (COP)</span>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => onSelectPackage(packages[0] || null)}
+            className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-xs uppercase tracking-wider shrink-0 hover:from-amber-300 hover:to-amber-400 transition-all shadow-md active:scale-95 cursor-pointer"
+          >
+            Agendar con Medidas
+          </button>
         </div>
       </div>
 

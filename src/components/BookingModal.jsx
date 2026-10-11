@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, ArrowRight, ChevronLeft } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, ArrowRight, ChevronLeft, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { createBooking, checkClientLoyalty, formatTo12Hour } from '../services/api';
+import { createBooking, checkClientLoyalty, formatTo12Hour, getPrintSizes, formatPrintedPhotosSummary } from '../services/api';
 import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', settings = {} }) {
@@ -9,8 +9,11 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
   const scrollRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
-  const printedPhotoPrice = settings.printedPhotoPrice || 7000;
-  const printedPhoto15x20Price = settings.printedPhoto15x20Price || 8000;
+  const printSizesCatalog = getPrintSizes(settings);
+  const size10x15 = printSizesCatalog.find(s => s.id === '10x15');
+  const size15x20 = printSizesCatalog.find(s => s.id === '15x20');
+  const printedPhotoPrice = size10x15?.price || 7000;
+  const printedPhoto15x20Price = size15x20?.price || 8000;
 
   // Form State
   const [formData, setFormData] = useState({
@@ -24,10 +27,12 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     time: '16:00',
     description: '',
     printedPhotosCount: 0,
-    printedPhotos15x20Count: 0
+    printedPhotos15x20Count: 0,
+    printedSizes: {}
   });
 
   const [bookingStep, setBookingStep] = useState(1); // 1: Datos, 2: Paquete y Lugar, 3: Fecha y Hora
+  const [showAllPrintSizes, setShowAllPrintSizes] = useState(false);
   const [loyalInfo, setLoyalInfo] = useState({ isLoyal: false, discountPercent: 0, clientName: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -128,11 +133,58 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
   // Descuento de fidelización del 15% para clientes recurrentes
   const loyaltyDiscount = loyalInfo.isLoyal ? Math.round(baseOrSurchargedPrice * 0.15) : 0;
-  const printed10x15Total = Number(formData.printedPhotosCount || 0) * printedPhotoPrice;
-  const printed15x20Total = Number(formData.printedPhotos15x20Count || 0) * printedPhoto15x20Price;
-  const printedPhotosTotal = printed10x15Total + printed15x20Total;
-  const totalPrintedCount = Number(formData.printedPhotosCount || 0) + Number(formData.printedPhotos15x20Count || 0);
+
+  // Cálculo de fotos impresas y cuadros sobre todo el catálogo de medidas
+  const printedPhotosTotal = printSizesCatalog.reduce((sum, item) => {
+    let qty = 0;
+    if (formData.printedSizes && formData.printedSizes[item.id] !== undefined) {
+      qty = Number(formData.printedSizes[item.id]) || 0;
+    } else if (item.id === '10x15') {
+      qty = Number(formData.printedPhotosCount || 0);
+    } else if (item.id === '15x20') {
+      qty = Number(formData.printedPhotos15x20Count || 0);
+    }
+    return sum + (qty * item.price);
+  }, 0);
+
+  const totalPrintedCount = printSizesCatalog.reduce((sum, item) => {
+    let qty = 0;
+    if (formData.printedSizes && formData.printedSizes[item.id] !== undefined) {
+      qty = Number(formData.printedSizes[item.id]) || 0;
+    } else if (item.id === '10x15') {
+      qty = Number(formData.printedPhotosCount || 0);
+    } else if (item.id === '15x20') {
+      qty = Number(formData.printedPhotos15x20Count || 0);
+    }
+    return sum + qty;
+  }, 0);
+
   const calculatedPrice = (baseOrSurchargedPrice - loyaltyDiscount) + printedPhotosTotal;
+
+  const handleUpdatePrintQty = (sizeId, delta) => {
+    setFormData(prev => {
+      const currentSizes = { ...(prev.printedSizes || {}) };
+      if (currentSizes['10x15'] === undefined && prev.printedPhotosCount) {
+        currentSizes['10x15'] = Number(prev.printedPhotosCount);
+      }
+      if (currentSizes['15x20'] === undefined && prev.printedPhotos15x20Count) {
+        currentSizes['15x20'] = Number(prev.printedPhotos15x20Count);
+      }
+      const cur = Number(currentSizes[sizeId] || 0);
+      const next = Math.max(0, cur + delta);
+      currentSizes[sizeId] = next;
+
+      const p10 = sizeId === '10x15' ? next : Number(currentSizes['10x15'] || 0);
+      const p15 = sizeId === '15x20' ? next : Number(currentSizes['15x20'] || 0);
+
+      return {
+        ...prev,
+        printedSizes: currentSizes,
+        printedPhotosCount: p10,
+        printedPhotos15x20Count: p15
+      };
+    });
+  };
 
   const formatPrice = (val) => Number(val).toLocaleString('es-CO');
 
@@ -203,8 +255,10 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         dateTime: formattedDateTime,
         description: formData.description.trim(),
         printedPhotosCount: totalPrintedCount,
-        printedPhotos10x15Count: Number(formData.printedPhotosCount || 0),
-        printedPhotos15x20Count: Number(formData.printedPhotos15x20Count || 0)
+        printedPhotos10x15Count: Number(formData.printedSizes?.['10x15'] ?? formData.printedPhotosCount ?? 0),
+        printedPhotos15x20Count: Number(formData.printedSizes?.['15x20'] ?? formData.printedPhotos15x20Count ?? 0),
+        printedSizes: formData.printedSizes || {},
+        printedPhotosSummary: formatPrintedPhotosSummary(formData.printedSizes, printSizesCatalog)
       };
 
       const result = await createBooking(bookingPayload);
@@ -756,44 +810,56 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     </div>
                   )}
 
-                  {/* FOTOS IMPRESAS OPCIONALES (10x15 Y 15x20) */}
+                  {/* FOTOS IMPRESAS Y CUADROS OPCIONALES */}
                   <div className="space-y-2">
-                    <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block flex items-center gap-1.5">
-                      <Printer className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Fotos Impresas en Papel Fotográfico (Opcional)</span>
+                    <span className="text-[11px] font-bold text-stone-300 uppercase tracking-wider block flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Printer className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Fotos Impresas y Cuadros Decorativos (Opcional)</span>
+                      </span>
+                      {totalPrintedCount > 0 && (
+                        <span className="text-amber-400 font-mono text-[10px] font-bold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">
+                          {totalPrintedCount} seleccionada(s)
+                        </span>
+                      )}
                     </span>
 
-                    {/* Opción 10x15 */}
+                    {/* Opción Estándar 10x15 */}
                     <div className="p-2.5 rounded-xl bg-stone-950 border border-stone-800/80 flex items-center justify-between hover:border-stone-700 transition-colors">
                       <div>
-                        <span className="text-xs text-stone-200 font-semibold block">
-                          Tamaño 10x15 (${formatPrice(printedPhotoPrice)} c/u)
-                        </span>
-                        <span className="text-[10px] text-stone-400">Papel fotográfico profesional</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-stone-200 font-semibold block">
+                            Tamaño 10x15 (${formatPrice(printedPhotoPrice)} c/u)
+                          </span>
+                          <span className="bg-stone-800 text-stone-300 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                            Estándar
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-stone-400">Papel fotográfico profesional de laboratorio</span>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setFormData(p => ({ ...p, printedPhotosCount: Math.max(0, p.printedPhotosCount - 1) }))}
-                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                          onClick={() => handleUpdatePrintQty('10x15', -1)}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors flex items-center justify-center cursor-pointer"
                         >
                           -
                         </button>
                         <span className="w-5 text-center text-xs font-bold text-amber-400 font-mono">
-                          {formData.printedPhotosCount}
+                          {formData.printedSizes?.['10x15'] ?? formData.printedPhotosCount ?? 0}
                         </span>
                         <button
                           type="button"
-                          onClick={() => setFormData(p => ({ ...p, printedPhotosCount: p.printedPhotosCount + 1 }))}
-                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                          onClick={() => handleUpdatePrintQty('10x15', 1)}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors flex items-center justify-center cursor-pointer"
                         >
                           +
                         </button>
                       </div>
                     </div>
 
-                    {/* Opción 15x20 */}
+                    {/* Opción Portarretrato 15x20 */}
                     <div className="p-2.5 rounded-xl bg-stone-950 border border-amber-500/30 flex items-center justify-between hover:border-amber-400/50 transition-colors">
                       <div>
                         <div className="flex items-center gap-1.5">
@@ -801,32 +867,111 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                             Tamaño 15x20 (${formatPrice(printedPhoto15x20Price)} c/u)
                           </span>
                           <span className="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
-                            Grande
+                            Portarretrato
                           </span>
                         </div>
-                        <span className="text-[10px] text-stone-400">Formato ampliado para portarretratos</span>
+                        <span className="text-[10px] text-stone-400">Formato ampliado para portarretratos de mesa</span>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setFormData(p => ({ ...p, printedPhotos15x20Count: Math.max(0, (p.printedPhotos15x20Count || 0) - 1) }))}
-                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                          onClick={() => handleUpdatePrintQty('15x20', -1)}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors flex items-center justify-center cursor-pointer"
                         >
                           -
                         </button>
                         <span className="w-5 text-center text-xs font-bold text-amber-300 font-mono">
-                          {formData.printedPhotos15x20Count || 0}
+                          {formData.printedSizes?.['15x20'] ?? formData.printedPhotos15x20Count ?? 0}
                         </span>
                         <button
                           type="button"
-                          onClick={() => setFormData(p => ({ ...p, printedPhotos15x20Count: (p.printedPhotos15x20Count || 0) + 1 }))}
-                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors"
+                          onClick={() => handleUpdatePrintQty('15x20', 1)}
+                          className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors flex items-center justify-center cursor-pointer"
                         >
                           +
                         </button>
                       </div>
                     </div>
+
+                    {/* Botón desplegable para cuadros y ampliaciones (20x30, 30x45, 40x50, 50x70, 70x50, 70x100) */}
+                    <button
+                      type="button"
+                      onClick={() => setShowAllPrintSizes(!showAllPrintSizes)}
+                      className="w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 text-amber-300 hover:bg-amber-500/15 transition-all text-xs font-semibold cursor-pointer active:scale-98"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Maximize2 className="w-4 h-4 text-amber-400" />
+                        <span>Ver Cuadros y Ampliaciones para Sala</span>
+                        <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
+                          6 Medidas
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px] font-bold">
+                        <span>{showAllPrintSizes ? 'Ocultar' : 'Elegir medidas'}</span>
+                        {showAllPrintSizes ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      </div>
+                    </button>
+
+                    {showAllPrintSizes && (
+                      <div className="space-y-2 pt-1 animate-fadeIn">
+                        {printSizesCatalog.filter(s => s.id !== '10x15' && s.id !== '15x20').map(item => {
+                          const count = Number(formData.printedSizes?.[item.id] || 0);
+                          return (
+                            <div
+                              key={item.id}
+                              className={`p-2.5 rounded-xl bg-stone-950 border transition-colors flex items-center justify-between ${count > 0 ? 'border-amber-400/80 bg-amber-950/20' : 'border-stone-800/80 hover:border-stone-700'}`}
+                            >
+                              <div className="pr-2">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs text-stone-100 font-bold">
+                                    {item.dimensions}
+                                  </span>
+                                  <span className="text-amber-400 font-semibold text-xs font-mono">
+                                    (${formatPrice(item.price)})
+                                  </span>
+                                  <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.2 rounded uppercase">
+                                    {item.tag}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-stone-400 block line-clamp-1">{item.desc}</span>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdatePrintQty(item.id, -1)}
+                                  className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors flex items-center justify-center cursor-pointer"
+                                >
+                                  -
+                                </button>
+                                <span className="w-5 text-center text-xs font-bold text-amber-300 font-mono">
+                                  {count}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdatePrintQty(item.id, 1)}
+                                  className="w-7 h-7 bg-stone-800 rounded-lg text-white font-bold hover:bg-stone-700 transition-colors flex items-center justify-center cursor-pointer"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {totalPrintedCount > 0 && (
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs">
+                        <span className="text-amber-200 font-medium">
+                          Total fotos y cuadros ({totalPrintedCount} unid.):
+                        </span>
+                        <span className="font-bold text-amber-400 font-mono">
+                          +${formatPrice(printedPhotosTotal)} COP
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* NOTAS O DESCRIPCIÓN */}

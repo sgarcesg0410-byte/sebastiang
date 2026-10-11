@@ -133,7 +133,9 @@ import {
   createPayment,
   deleteAdminPayment,
   getVipClients,
-  saveVipClient
+  saveVipClient,
+  formatPrintedPhotosSummary,
+  getPrintSizes
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import { getLocalAnalytics } from '../services/analytics';
@@ -360,6 +362,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [editableSurcharge, setEditableSurcharge] = useState(10000);
   const [editablePrintedPhotoPrice, setEditablePrintedPhotoPrice] = useState(7000);
   const [editablePrintedPhoto15x20Price, setEditablePrintedPhoto15x20Price] = useState(8000);
+  const [editablePrintedPhoto20x30Price, setEditablePrintedPhoto20x30Price] = useState(30000);
+  const [editablePrintedPhoto30x45Price, setEditablePrintedPhoto30x45Price] = useState(60000);
+  const [editablePrintedPhoto40x50Price, setEditablePrintedPhoto40x50Price] = useState(85000);
+  const [editablePrintedPhoto50x70Price, setEditablePrintedPhoto50x70Price] = useState(110000);
+  const [editablePrintedPhoto70x50Price, setEditablePrintedPhoto70x50Price] = useState(120000);
+  const [editablePrintedPhoto70x100Price, setEditablePrintedPhoto70x100Price] = useState(200000);
   const [isSavingPrices, setIsSavingPrices] = useState(false);
   const [priceSaveSuccess, setPriceSaveSuccess] = useState('');
 
@@ -1246,6 +1254,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           setSettings(setData);
           setEditablePrintedPhotoPrice(setData.printedPhotoPrice || 7000);
           setEditablePrintedPhoto15x20Price(setData.printedPhoto15x20Price || 8000);
+          setEditablePrintedPhoto20x30Price(setData.printedPhoto20x30Price || 30000);
+          setEditablePrintedPhoto30x45Price(setData.printedPhoto30x45Price || 60000);
+          setEditablePrintedPhoto40x50Price(setData.printedPhoto40x50Price || 85000);
+          setEditablePrintedPhoto50x70Price(setData.printedPhoto50x70Price || 110000);
+          setEditablePrintedPhoto70x50Price(setData.printedPhoto70x50Price || 120000);
+          setEditablePrintedPhoto70x100Price(setData.printedPhoto70x100Price || 200000);
           setEditableSurcharge(setData.outOfSanAnteroSurcharge || 10000);
         }
 
@@ -1670,6 +1684,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         ...settings,
         printedPhotoPrice: Number(editablePrintedPhotoPrice),
         printedPhoto15x20Price: Number(editablePrintedPhoto15x20Price),
+        printedPhoto20x30Price: Number(editablePrintedPhoto20x30Price),
+        printedPhoto30x45Price: Number(editablePrintedPhoto30x45Price),
+        printedPhoto40x50Price: Number(editablePrintedPhoto40x50Price),
+        printedPhoto50x70Price: Number(editablePrintedPhoto50x70Price),
+        printedPhoto70x50Price: Number(editablePrintedPhoto70x50Price),
+        printedPhoto70x100Price: Number(editablePrintedPhoto70x100Price),
         outOfSanAnteroSurcharge: Number(editableSurcharge)
       });
       setSettings(updatedSettings);
@@ -2630,17 +2650,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>$${total.toLocaleString('es-CO')} COP</span>
             </div>
             ${(() => {
-              const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
-              const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
-              const txt = (c10 > 0 && c15 > 0)
-                ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
-                : c15 > 0
-                  ? `+ ${c15} Fotos impresas (15x20)`
-                  : c10 > 0
-                    ? `+ ${c10} Fotos impresas (10x15)`
-                    : Number(receiptBooking.printedPhotosCount) > 0
-                      ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
-                      : '';
+              let txt = receiptBooking.printedPhotosSummary || formatPrintedPhotosSummary(receiptBooking);
+              if (!txt) {
+                const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
+                const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
+                txt = (c10 > 0 && c15 > 0)
+                  ? `+ ${c10} Fotos impresas (10x15) y + ${c15} Fotos impresas (15x20)`
+                  : c15 > 0
+                    ? `+ ${c15} Fotos impresas (15x20)`
+                    : c10 > 0
+                      ? `+ ${c10} Fotos impresas (10x15)`
+                      : Number(receiptBooking.printedPhotosCount) > 0
+                        ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
+                        : '';
+              }
               return txt ? `
                 <div class="table-row" style="color: #64748b; font-size: 11px;">
                   <span>${txt}</span>
@@ -7995,6 +8018,167 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
 
+            {/* Medidas de Cuadros y Ampliaciones */}
+            <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-6">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
+                  Ampliaciones y Cuadros Decorativos
+                </span>
+                <h3 className="text-xl font-serif font-bold text-white mt-1">
+                  Tarifas de Impresiones en Gran Formato y Retablos
+                </h3>
+                <p className="text-xs text-stone-400 mt-1">
+                  Configura los precios de las ampliaciones HD y cuadros que los clientes pueden ordenar al agendar o seleccionar sus fotos.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {/* 20x30 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-stone-300 uppercase">
+                      20x30 cm ($ COP)
+                    </label>
+                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      Ampliación HD
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={1000}
+                      value={editablePrintedPhoto20x30Price}
+                      onChange={(e) => setEditablePrintedPhoto20x30Price(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 30x45 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-stone-300 uppercase">
+                      30x45 cm ($ COP)
+                    </label>
+                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      Cuadro Mediano
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={1000}
+                      value={editablePrintedPhoto30x45Price}
+                      onChange={(e) => setEditablePrintedPhoto30x45Price(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 40x50 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-stone-300 uppercase">
+                      40x50 cm ($ COP)
+                    </label>
+                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      Cuadro Galería
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={1000}
+                      value={editablePrintedPhoto40x50Price}
+                      onChange={(e) => setEditablePrintedPhoto40x50Price(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 50x70 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-stone-300 uppercase">
+                      50x70 cm ($ COP)
+                    </label>
+                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      Gran Formato
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={1000}
+                      value={editablePrintedPhoto50x70Price}
+                      onChange={(e) => setEditablePrintedPhoto50x70Price(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 70x50 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-stone-300 uppercase">
+                      70x50 cm ($ COP)
+                    </label>
+                    <span className="bg-amber-500/20 text-amber-300 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      Panorámico / Retablo
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={1000}
+                      value={editablePrintedPhoto70x50Price}
+                      onChange={(e) => setEditablePrintedPhoto70x50Price(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {/* 70x100 */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-stone-300 uppercase">
+                      70x100 cm ($ COP)
+                    </label>
+                    <span className="bg-amber-400 text-stone-950 text-[9px] font-black px-1.5 py-0.5 rounded">
+                      Póster Gigante (1m)
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={1000}
+                      value={editablePrintedPhoto70x100Price}
+                      onChange={(e) => setEditablePrintedPhoto70x100Price(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-8 pr-3 py-2.5 text-sm font-mono font-bold text-amber-400 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* BOTÓN GUARDAR */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
               <p className="text-xs text-stone-400">
@@ -10160,17 +10344,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <span className="font-mono font-semibold">${Number(receiptBooking.totalPrice || 0).toLocaleString('es-CO')} COP</span>
                   </div>
                   {(() => {
-                    const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
-                    const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
-                    const txt = (c10 > 0 && c15 > 0)
-                      ? `+ ${c10} Fotos impresas 10x15 y + ${c15} Fotos impresas 15x20`
-                      : c15 > 0
-                        ? `+ ${c15} Fotos impresas 15x20`
-                        : c10 > 0
-                          ? `+ ${c10} Fotos impresas 10x15`
-                          : Number(receiptBooking.printedPhotosCount) > 0
-                            ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
-                            : '';
+                    let txt = receiptBooking.printedPhotosSummary || formatPrintedPhotosSummary(receiptBooking);
+                    if (!txt) {
+                      const c10 = Number(receiptBooking.printedPhotos10x15Count || (receiptBooking.printedPhotosCount && !receiptBooking.printedPhotos15x20Count ? receiptBooking.printedPhotosCount : 0));
+                      const c15 = Number(receiptBooking.printedPhotos15x20Count || 0);
+                      txt = (c10 > 0 && c15 > 0)
+                        ? `+ ${c10} Fotos impresas 10x15 y + ${c15} Fotos impresas 15x20`
+                        : c15 > 0
+                          ? `+ ${c15} Fotos impresas 15x20`
+                          : c10 > 0
+                            ? `+ ${c10} Fotos impresas 10x15`
+                            : Number(receiptBooking.printedPhotosCount) > 0
+                              ? `+ ${receiptBooking.printedPhotosCount} Fotos impresas en papel fotográfico`
+                              : '';
+                    }
                     if (!txt) return null;
                     return (
                       <div className="flex justify-between text-stone-400 text-[11px]">
