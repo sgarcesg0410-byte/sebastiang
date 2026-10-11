@@ -16,6 +16,7 @@ import {
   Shield, 
   AlertCircle,
   Eye,
+  EyeOff,
   Trash2,
   Share2,
   Upload,
@@ -327,6 +328,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   // Nadie puede entrar sin ingresar la contraseña / PIN correcta (0493).
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [pinInput, setPinInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState('');
 
   // Autenticación de Doble Factor (2FA)
@@ -972,7 +974,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         loadAllAdminData();
       }
     } catch (err) {
-      setAuthError('PIN incorrecto. Si lo olvidaste, usa la opción de recuperación abajo.');
+      setAuthError(err.message || 'Contraseña incorrecta. Si la olvidaste, usa la opción de recuperación abajo.');
       setPinInput('');
     } finally {
       setIsVerifyingPin(false);
@@ -980,8 +982,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   const handleLogin = async (e) => {
-    e.preventDefault();
-    handleVerifyPinSubmit(pinInput);
+    if (e) e.preventDefault();
+    if (!pinInput.trim()) return;
+    handleVerifyPinSubmit(pinInput.trim());
   };
 
   const handleVerify2FASubmit = async (e) => {
@@ -3661,18 +3664,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
           ) : !isRecoveringPin ? (
-            /* FORMULARIO DE LOGIN VIP CON KEYPAD */
-            <div>
+            /* FORMULARIO DE LOGIN VIP CON CONTRASEÑA MAESTRA */
+            <form onSubmit={handleLogin} className="space-y-4">
               {authError && (
-                <div className="p-3 mb-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
+                <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-left">
                   {authError}
                 </div>
               )}
 
               {isVerifyingPin && (
-                <div className="p-2.5 mb-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs flex items-center justify-center gap-2">
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs flex items-center justify-center gap-2">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
-                  <span>Verificando credenciales y seguridad 2FA...</span>
+                  <span>Verificando credenciales de seguridad...</span>
                 </div>
               )}
 
@@ -3682,7 +3685,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   type="button"
                   onClick={handleBiometricLogin}
                   disabled={isAuthenticatingBio}
-                  className="w-full mb-3.5 py-3 px-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 active:scale-95 text-amber-300 font-semibold text-xs flex items-center justify-center gap-2.5 transition-all shadow-md shadow-amber-500/10 cursor-pointer touch-manipulation"
+                  className="w-full mb-1 py-3 px-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 active:scale-95 text-amber-300 font-semibold text-xs flex items-center justify-center gap-2.5 transition-all shadow-md shadow-amber-500/10 cursor-pointer touch-manipulation"
                 >
                   <Fingerprint className={`w-5 h-5 text-amber-400 ${isAuthenticatingBio ? 'animate-bounce' : 'animate-pulse'}`} />
                   <span>{isAuthenticatingBio ? 'Coloca tu dedo en el sensor...' : 'Ingresar con Huella Dactilar'}</span>
@@ -3690,80 +3693,61 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               )}
 
               {bioError && (
-                <div className="p-2.5 mb-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-center">
+                <div className="p-2.5 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-center">
                   {bioError}
                 </div>
               )}
 
-              {/* Indicador de 4 Dots Luminosos */}
-              <div className="flex items-center justify-center gap-3.5 my-4">
-                {[0, 1, 2, 3].map((idx) => {
-                  const isFilled = pinInput.length > idx;
-                  return (
-                    <div
-                      key={idx}
-                      className={`w-4 h-4 rounded-full transition-all duration-200 ${
-                        isFilled
-                          ? 'bg-amber-400 scale-125 shadow-[0_0_15px_rgba(245,158,11,0.9)] ring-2 ring-amber-300'
-                          : 'bg-stone-950 border border-stone-700'
-                      }`}
-                    />
-                  );
-                })}
-              </div>
-
-              {/* Entrada oculta para soporte de teclado físico en laptops */}
-              <input
-                type="password"
-                maxLength={8}
-                value={pinInput}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setPinInput(val);
-                  if (val.length === 4) {
-                    handleVerifyPinSubmit(val);
-                  }
-                }}
-                className="opacity-0 w-0 h-0 absolute -top-10"
-                autoFocus
-              />
-
-              {/* Teclado Numérico Táctil de Lujo */}
-              <div className="grid grid-cols-3 gap-2.5 max-w-[240px] mx-auto mb-4">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+              {/* Campo de Contraseña Alfanumérica */}
+              <div className="space-y-1.5 text-left">
+                <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block text-center">
+                  Contraseña Maestra
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-amber-400/80">
+                    <Key className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={pinInput}
+                    onChange={(e) => {
+                      setPinInput(e.target.value);
+                      if (authError) setAuthError('');
+                    }}
+                    placeholder="Ingresa tu contraseña"
+                    className="w-full pl-10 pr-10 py-3 rounded-2xl bg-stone-950 border border-stone-800 focus:border-amber-400/80 focus:ring-2 focus:ring-amber-500/20 text-white text-sm tracking-wider placeholder:text-stone-600 transition-all outline-none"
+                    autoFocus
+                    required
+                  />
                   <button
-                    key={num}
                     type="button"
-                    onClick={() => handleKeypadPress(num.toString())}
-                    className="w-16 h-13 rounded-2xl bg-stone-950 border border-stone-800/90 hover:border-amber-400/60 active:bg-amber-500 active:text-stone-950 text-white font-mono text-xl font-bold flex items-center justify-center transition-all shadow-md active:scale-95 touch-manipulation"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-stone-500 hover:text-amber-300 transition-colors cursor-pointer"
+                    title={showPassword ? "Ocultar contraseña" : "Ver contraseña"}
                   >
-                    {num}
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => handleKeypadPress('backspace')}
-                  className="w-16 h-13 rounded-2xl bg-stone-950 border border-stone-800/90 hover:border-red-500/60 active:bg-red-500 active:text-white text-stone-400 font-mono text-sm font-bold flex items-center justify-center transition-all shadow-md active:scale-95 touch-manipulation"
-                  title="Borrar dígito"
-                >
-                  <Delete className="w-5 h-5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleKeypadPress('0')}
-                  className="w-16 h-13 rounded-2xl bg-stone-950 border border-stone-800/90 hover:border-amber-400/60 active:bg-amber-500 active:text-stone-950 text-white font-mono text-xl font-bold flex items-center justify-center transition-all shadow-md active:scale-95 touch-manipulation"
-                >
-                  0
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleKeypadPress('enter')}
-                  className="w-16 h-13 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 border border-amber-300 hover:from-amber-400 hover:to-amber-300 active:scale-95 text-stone-950 font-bold flex items-center justify-center transition-all shadow-lg shadow-amber-500/25 touch-manipulation"
-                  title="Entrar"
-                >
-                  <Check className="w-6 h-6 stroke-[3]" />
-                </button>
+                </div>
               </div>
+
+              {/* Botón de Ingreso a la Bóveda */}
+              <button
+                type="submit"
+                disabled={isVerifyingPin || !pinInput.trim()}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 active:scale-95 text-stone-950 font-bold text-xs sm:text-sm shadow-lg shadow-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isVerifyingPin ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-stone-950" />
+                    <span>Verificando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Ingresar a la Bóveda</span>
+                  </>
+                )}
+              </button>
 
               <div className="pt-3 border-t border-stone-800/80 space-y-2">
                 <button
@@ -3772,7 +3756,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   className="text-xs text-amber-400 hover:text-amber-300 hover:underline flex items-center justify-center gap-1 mx-auto font-medium cursor-pointer"
                 >
                   <Key className="w-3.5 h-3.5" />
-                  <span>¿Olvidaste tu PIN? Recuperar aquí</span>
+                  <span>¿Olvidaste tu contraseña? Recuperar aquí</span>
                 </button>
 
                 {bioSupported && !bioConfigured && (
@@ -3793,7 +3777,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   </button>
                 )}
               </div>
-            </div>
+            </form>
           ) : (
             /* FLUJO DE RECUPERACIÓN DE PIN */
             <div className="space-y-4 text-left">
