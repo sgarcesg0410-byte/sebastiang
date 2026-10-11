@@ -20,8 +20,33 @@ import {
   sendTwoFactorCodeEmail
 } from './emailService.js';
 
+const ALLOWED_ORIGINS = [
+  'https://sebastiang.app',
+  'https://www.sebastiang.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000'
+];
+
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+      ALLOWED_ORIGINS.includes(origin) ||
+      /^https:\/\/[a-z0-9-]+(\.vercel\.app)$/.test(origin) ||
+      origin.startsWith('capacitor://') ||
+      origin.startsWith('http://localhost')
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token']
+}));
 app.use(express.json({ limit: '50mb' }));
 
 // ==============================================================================
@@ -384,32 +409,6 @@ app.get('/api/reviews', (req, res) => {
   res.json(runtimeDB.reviews || []);
 });
 
-app.post('/api/gallery/:token/review', (req, res) => {
-  const { token } = req.params;
-  const { clientName, sessionTitle, rating, comment, recommend } = req.body;
-  const newReview = {
-    id: `rev-${Date.now()}`,
-    token,
-    clientName: (clientName || 'Cliente').trim(),
-    sessionTitle: sessionTitle || 'Sesión Fotográfica',
-    rating: Number(rating) || 5,
-    recommend: recommend !== false,
-    comment: (comment || '').trim(),
-    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: true
-  };
-  if (!runtimeDB.reviews) runtimeDB.reviews = [];
-  runtimeDB.reviews.unshift(newReview);
-
-  sendOneSignalPush({
-    title: '⭐ ¡Nueva Reseña de Cliente!',
-    message: `${newReview.clientName} (${newReview.rating}★): "${(newReview.comment || 'Excelente sesión').slice(0, 60)}"`,
-    url: 'https://sebastiang.app/?mode=admin',
-    data: { type: 'review' }
-  }).catch(() => {});
-
-  res.json({ success: true, review: newReview });
-});
 
 app.get('/api/admin/wallets', (req, res) => {
   res.json(runtimeDB.walletBalances || { nequi: 0, daviplata: 0, dale: 0 });
@@ -786,7 +785,7 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${encodeURIComponent(summary)}`;
   const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${encodeURIComponent(summary)}`;
 
-  sendOneSignalPush({
+  await sendOneSignalPush({
     title: `📸 ¡${session.clientName || 'Cliente'} envió sus fotos!`,
     message: `Eligió ${selectedPhotos.length} fotos de su paquete "${session.packageTitle}". ¡Lista para procesar!`,
     url: 'https://sebastiang.app/?mode=admin',
@@ -1002,7 +1001,7 @@ app.get('/api/admin/payments', (req, res) => {
   res.json(runtimeDB.payments || []);
 });
 
-app.post('/api/payments', (req, res) => {
+app.post('/api/payments', async (req, res) => {
   const {
     clientName, clientWhatsApp, sessionToken, packageTitle, amount, method,
     reference, voucherUrl, extraPhotosCount, printedPhotosCount,
@@ -1077,12 +1076,36 @@ app.post('/api/payments', (req, res) => {
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
 
-  sendOneSignalPush({
+  // Sincronización serverless garantizada antes de emitir respuesta
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: `pay-${newPayment.id.replace(/^pay-/, '')}`,
+          title: newPayment.clientName,
+          category: 'payment_data',
+          location: newPayment.method || '',
+          url: JSON.stringify(newPayment)
+        })
+      });
+    } catch (e) {
+      console.warn('Error syncing payment to Supabase:', e?.message || e);
+    }
+  }
+
+  await sendOneSignalPush({
     title: '💰 ¡Nuevo Pago Registrado!',
     message: `${newPayment.clientName} registró pago de $${newPayment.amount.toLocaleString('es-CO')} COP (${methodName})`,
     url: 'https://sebastiang.app/?mode=admin',
     data: { type: 'payment', paymentId: newPayment.id }
-  }).catch(err => console.error('Error OneSignal Push pago:', err));
+  }).catch(err => console.error('Error OneSignal Push pago:', err?.message || err));
 
   res.status(201).json({
     success: true,
@@ -1135,7 +1158,7 @@ app.delete('/api/admin/sessions/:id', (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/admin/sessions', (req, res) => {
+app.post('/api/admin/sessions', async (req, res) => {
   const {
     clientName, clientWhatsApp, packageTitle, maxPhotosAllowed, photos,
     totalPrice, packagePrice, sessionBasePrice, bookingId, location
@@ -1183,7 +1206,7 @@ app.post('/api/admin/sessions', (req, res) => {
 
   if (SUPABASE_REST_KEY) {
     try {
-      fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_REST_KEY,
@@ -1224,10 +1247,27 @@ app.post('/api/admin/sessions/:id/reopen', (req, res) => {
   res.json({ success: true, session });
 });
 
-app.post('/api/admin/sessions/:id/deliver', (req, res) => {
+app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
   const { id } = req.params;
   const { finalDeliveryUrl, deliveryService = 'wetransfer', deliveryNotes = '', finalPhotos = [] } = req.body;
-  const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
+  let session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
+
+  if (!session && SUPABASE_REST_KEY) {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(id)}&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (rows && rows.length > 0 && rows[0].url) {
+          session = JSON.parse(rows[0].url);
+          runtimeDB.sessions = runtimeDB.sessions || [];
+          runtimeDB.sessions.push(session);
+        }
+      }
+    } catch (e) {}
+  }
+
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   session.status = 'delivered';
@@ -1238,6 +1278,23 @@ app.post('/api/admin/sessions/:id/deliver', (req, res) => {
   if (Array.isArray(finalPhotos) && finalPhotos.length > 0) {
     session.finalPhotos = finalPhotos;
   }
+
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(session.token)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ url: JSON.stringify(session) })
+      });
+    } catch (e) {
+      console.warn('Error al persistir entrega en Supabase:', e?.message || e);
+    }
+  }
+
   res.json({ success: true, session });
 });
 
@@ -1417,7 +1474,7 @@ app.post('/api/reviews', async (req, res) => {
     }
   }
 
-  sendOneSignalPush({
+  await sendOneSignalPush({
     title: `⭐ ¡Nueva Calificación de ${newReview.clientName}!`,
     message: `${'⭐'.repeat(newReview.rating)} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
     url: 'https://sebastiang.app/?mode=admin',
@@ -1463,7 +1520,7 @@ app.post('/api/gallery/:token/review', async (req, res) => {
     } catch (err) {}
   }
 
-  sendOneSignalPush({
+  await sendOneSignalPush({
     title: `⭐ ¡Nueva Reseña de ${newReview.clientName}!`,
     message: `${'⭐'.repeat(newReview.rating)} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
     url: 'https://sebastiang.app/?mode=admin',
