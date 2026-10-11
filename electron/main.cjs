@@ -3,6 +3,44 @@ const path = require('path');
 
 let mainWindow;
 
+// ------------------------------------------------------------------------------
+// VALIDACIÓN DE ENLACES EXTERNOS
+// ------------------------------------------------------------------------------
+// Antes se usaba `!url.includes('sebastiang.app')`, que se burla con un dominio
+// como sebastiang.app.evil.com. Ahora se parsea la URL y se exige https + host
+// de una lista blanca. Nunca se abren esquemas peligrosos (file:, ms-*, smb:...).
+// ------------------------------------------------------------------------------
+const APP_HOSTS = ['sebastiang.app', 'www.sebastiang.app'];
+const EXTERNAL_HOSTS = [
+  ...APP_HOSTS,
+  'wa.me', 'api.whatsapp.com',
+  'instagram.com', 'www.instagram.com',
+  'facebook.com', 'www.facebook.com'
+];
+
+function parseUrl(rawUrl) {
+  try {
+    return new URL(String(rawUrl || ''));
+  } catch {
+    return null;
+  }
+}
+
+function isSafeExternalUrl(rawUrl) {
+  const parsed = parseUrl(rawUrl);
+  if (!parsed) return false;
+  if (parsed.protocol === 'mailto:') return true;
+  if (parsed.protocol !== 'https:') return false;
+  return EXTERNAL_HOSTS.includes(parsed.hostname.toLowerCase());
+}
+
+function isInternalUrl(rawUrl) {
+  const parsed = parseUrl(rawUrl);
+  if (!parsed) return false;
+  if (parsed.protocol === 'file:') return true;
+  return APP_HOSTS.includes(parsed.hostname.toLowerCase());
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1366,
@@ -18,7 +56,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      sandbox: true, // aísla el renderer aunque cargue contenido remoto
       webSecurity: true
     }
   });
@@ -27,11 +65,21 @@ function createWindow() {
 
   // Abrir enlaces externos (WhatsApp, Instagram, etc.) en el navegador predeterminado de Windows
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://wa.me') || url.startsWith('https://api.whatsapp.com') || url.startsWith('mailto:') || !url.includes('sebastiang.app')) {
+    if (isInternalUrl(url)) return { action: 'allow' };
+    if (isSafeExternalUrl(url)) {
       shell.openExternal(url);
-      return { action: 'deny' };
+    } else {
+      console.warn('[Electron] Ventana bloqueada por seguridad:', url);
     }
-    return { action: 'allow' };
+    return { action: 'deny' };
+  });
+
+  // Impedir que la app navegue fuera del sitio (o al navegador si es un enlace externo)
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isInternalUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) shell.openExternal(url);
+    else console.warn('[Electron] Navegación bloqueada por seguridad:', url);
   });
 
   // Mostrar la ventana cuando esté lista para evitar parpadeos blancos
@@ -65,7 +113,12 @@ ipcMain.handle('app:print', async (event, options = {}) => {
 });
 
 ipcMain.handle('app:open-external', async (event, url) => {
-  if (url) await shell.openExternal(url);
+  // El renderer puede cargar contenido remoto: nunca se abre una URL sin validar.
+  if (!isSafeExternalUrl(url)) {
+    console.warn('[Electron] URL externa bloqueada por seguridad:', url);
+    return false;
+  }
+  await shell.openExternal(url);
   return true;
 });
 

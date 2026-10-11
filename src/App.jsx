@@ -453,6 +453,9 @@ export default function App() {
       </SecurityOverlay>
 
       {/* MODAL DE RESERVA DIRECTA SIN REGISTRO */}
+      {/* Se monta solo al abrirse: evita la violación de las Reglas de Hooks
+          (BookingModal devolvía null antes de declarar sus hooks). */}
+      {isBookingOpen && (
       <BookingModal
         isOpen={isBookingOpen}
         onClose={() => {
@@ -466,6 +469,7 @@ export default function App() {
         preselectedDate={selectedDateForBooking}
         settings={settings}
       />
+      )}
 
       {/* BARRA FLOTANTE FIJA DE RESERVA PARA CELULARES */}
       <MobileStickyBookingBar

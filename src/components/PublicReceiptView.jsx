@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Download, MessageCircle, ArrowLeft, CheckCircle2, ShieldCheck, Printer } from 'lucide-react';
-import { getAdminBookings, formatDateTime12Hour, formatPaperPhotosSummary, formatRetablosSummary, formatPrintedPhotosSummary } from '../services/api';
+import { fetchPublicReceipt, formatDateTime12Hour, formatPaperPhotosSummary, formatRetablosSummary, formatPrintedPhotosSummary } from '../services/api';
 import { LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 import { generateLuxuryReceiptPdf } from '../services/receiptPdfGenerator';
 
@@ -19,8 +19,8 @@ export default function PublicReceiptView({ bookingId, onBack }) {
       const params = new URLSearchParams(hash.includes('?') ? hash.split('?')[1] : (hash.includes('&') ? hash.replace('#recibo=', 'id=').replace('&', '&') : ''));
       const urlParams = new URLSearchParams(window.location.search);
       
-      const paidParam = params.get('paid') || urlParams.get('paid');
-      if (paidParam) setPaidAmount(Number(paidParam));
+      // El importe abonado ya NO se acepta por URL (era falsificable: ?paid=1).
+      // Se calcula en el servidor a partir de los pagos registrados.
       
       const methodParam = params.get('method') || urlParams.get('method');
       if (methodParam) setPaymentMethod(decodeURIComponent(methodParam));
@@ -29,13 +29,16 @@ export default function PublicReceiptView({ bookingId, onBack }) {
     const fetchBooking = async () => {
       try {
         setLoading(true);
-        const list = await getAdminBookings();
-        const found = list.find(b => String(b.id) === String(bookingId));
+        // Un solo comprobante por token firmado: antes se descargaba el CRM completo.
+        const found = await fetchPublicReceipt(bookingId);
         if (found) {
           setBooking(found);
           if (paidAmount === null) {
             const total = Number(found.totalPrice || 0);
-            setPaidAmount(found.status === 'completed' ? total : Math.round(total * 0.5));
+            const fromServer = Number(found.paidAmount);
+            setPaidAmount(Number.isFinite(fromServer) && fromServer > 0
+              ? fromServer
+              : (found.status === 'completed' ? total : Math.round(total * 0.5)));
           }
         }
       } catch (err) {

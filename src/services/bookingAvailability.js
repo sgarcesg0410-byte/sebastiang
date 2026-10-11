@@ -2,7 +2,7 @@
 // Disponibilidad de cupos por fecha y hora para Sebastian G • Fotografía.
 // Solo expone fecha + hora (nunca nombres, teléfonos ni precios) para uso público.
 
-import { getAdminBookings, formatTo12Hour } from './api';
+import { fetchPublicSchedule, formatTo12Hour } from './api';
 
 export const SESSION_DURATION_MIN = 120; // duración estimada de cada sesión
 export const DAY_START_MIN = 6 * 60;      // 6:00 a. m.
@@ -59,7 +59,8 @@ export function timeInputToMinutes(t) {
 export async function getPublicSchedule() {
   let bookings = [];
   try {
-    bookings = await getAdminBookings();
+    // Endpoint público: devuelve solo cupos ocupados (sin nombres ni teléfonos).
+    bookings = await fetchPublicSchedule();
   } catch (e) {
     bookings = [];
   }

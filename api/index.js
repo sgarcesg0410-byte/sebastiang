@@ -2,6 +2,17 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import {
+  createAdminToken,
+  requireAdminAuth,
+  verifyAdminPin,
+  isWeakConfiguredPin,
+  createReceiptToken,
+  readAdminToken,
+  verifyAdminToken
+} from './security.js';
+import { registerPublicRoutes } from './publicRoutes.js';
+import { resolveBookingPrice } from './pricingGuard.js';
+import {
   sendNewBookingEmails,
   sendBookingConfirmedEmail,
   sendPhotoDeliveryEmail,
@@ -65,7 +76,7 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
 // SUPABASE CLOUD (Fuente canónica de verdad)
 // ==============================================================================
 const SUPABASE_REST_URL = process.env.SUPABASE_REST_URL || 'https://maqqzcawbdhhfqxoabyq.supabase.co';
-const SUPABASE_REST_KEY = process.env.SUPABASE_REST_KEY || '';
+const SUPABASE_REST_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_REST_KEY || '';
 
 if (!SUPABASE_REST_KEY) {
   console.warn(
@@ -337,11 +348,21 @@ function getDefaultDB() {
 
 let runtimeDB = getDefaultDB();
 
+// ------------------------------------------------------------------------------
+// RUTAS PÚBLICAS ACOTADAS (calendario, fidelidad y recibo por token)
+// Se registran ANTES del middleware de administración: el sitio público no
+// debe necesitar sesión, pero tampoco recibe ningún dato personal.
+// ------------------------------------------------------------------------------
+registerPublicRoutes(app, {
+  getRuntimeDB: () => runtimeDB,
+  supabase: { url: SUPABASE_REST_URL, key: SUPABASE_REST_KEY }
+});
+
 // ==============================================================================
 // ENDPOINTS PÚBLICOS
 // ==============================================================================
 
-app.post('/api/send-push', async (req, res) => {
+app.post('/api/send-push', requireAdminAuth, async (req, res) => {
   const { title, message, url, data } = req.body || {};
   if (!title || !message) {
     return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
@@ -406,7 +427,7 @@ app.post('/api/admin/wallets', (req, res) => {
   res.json({ success: true, walletBalances: runtimeDB.walletBalances });
 });
 
-app.post('/api/packages', (req, res) => {
+app.post('/api/packages', requireAdminAuth, (req, res) => {
   const { packages } = req.body;
   if (Array.isArray(packages)) {
     runtimeDB.packages = packages;
@@ -414,7 +435,7 @@ app.post('/api/packages', (req, res) => {
   res.json({ success: true, packages: runtimeDB.packages });
 });
 
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireAdminAuth, (req, res) => {
   const newSettings = req.body;
   if (newSettings && typeof newSettings === 'object') {
     // Nunca permitir que se sobreescriba el hash del PIN por este endpoint
@@ -424,7 +445,7 @@ app.post('/api/settings', (req, res) => {
   res.json({ success: true, settings: runtimeDB.settings });
 });
 
-app.post('/api/bookings', (req, res) => {
+app.post('/api/bookings', async (req, res) => {
   const {
     clientName, clientWhatsApp, clientEmail, packageId,
     locationType, specificLocation, dateTime, description,
@@ -434,15 +455,23 @@ app.post('/api/bookings', (req, res) => {
   } = req.body;
 
   const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
-  let finalPrice = pkg.price;
-  const surcharge = runtimeDB.settings.outOfSanAnteroSurcharge || 10000;
-  if (locationType === 'outside') finalPrice += surcharge;
-  if (totalPrice && Number(totalPrice) > 0) finalPrice = Number(totalPrice);
+
+  // El precio lo decide el SERVIDOR entre un mínimo y un máximo legítimos:
+  //  - se ignoran los valores manipulados (por ejemplo reservar por $1),
+  //  - se respetan las combinaciones válidas (impresiones, retablos, fidelidad),
+  //  - el descuento de recurrencia se comprueba aquí, no en el navegador.
+  const { finalPrice, band, priceCheck } = resolveBookingPrice({ db: runtimeDB, pkg, body: req.body });
+  if (priceCheck.adjusted) {
+    console.warn(`[Precios] Corregido (${priceCheck.reason}) para ${clientName || 'cliente sin nombre'}: banda ${band.minPrice}-${band.listPrice}`);
+  }
+
+  const bookingId = `book-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const receiptToken = createReceiptToken(bookingId);
 
   const newBooking = {
-    id: `book-${Date.now()}`,
-    clientName: clientName.trim(),
-    clientWhatsApp: clientWhatsApp.trim(),
+    id: bookingId,
+    clientName: (clientName || 'Cliente').trim(),
+    clientWhatsApp: (clientWhatsApp || '').trim(),
     clientEmail: (clientEmail || '').trim(),
     packageId: pkg.id,
     packageName: pkg.name,
@@ -459,24 +488,38 @@ app.post('/api/bookings', (req, res) => {
     paperPhotosSummary: paperPhotosSummary || '',
     retablosSummary: retablosSummary || '',
     printedPhotosSummary: printedPhotosSummary || '',
+    receiptToken,
     createdAt: new Date().toISOString(),
     status: 'pending',
     isReal: true
   };
 
   runtimeDB.bookings.unshift(newBooking);
-  syncBookingToSupabaseServer(newBooking).catch(e => console.warn('Supabase sync server error:', e));
 
-  sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
-    console.error('Error enviando correos de nueva reserva:', err);
-  });
+  // En Vercel Serverless, res.json() congela el proceso inmediatamente y descarta
+  // cualquier promesa no resuelta. Es mandatorio esperar la sincronización a la nube,
+  // el envío de correos y la notificación push con Promise.allSettled antes de responder:
+  const backgroundTasks = [
+    syncBookingToSupabaseServer(newBooking).catch(e => {
+      console.warn('Supabase sync server error:', e?.message || e);
+      return null;
+    }),
+    sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
+      console.error('Error enviando correos de nueva reserva:', err?.message || err);
+      return null;
+    }),
+    sendOneSignalPush({
+      title: '📸 ¡Nueva Reserva Recibida!',
+      message: `${newBooking.clientName} ha reservado ${newBooking.packageName} (${newBooking.dateTime})`,
+      url: 'https://sebastiang.app/?mode=admin',
+      data: { type: 'booking', bookingId: newBooking.id }
+    }).catch(err => {
+      console.error('Error OneSignal Push reserva:', err?.message || err);
+      return null;
+    })
+  ];
 
-  sendOneSignalPush({
-    title: '📸 ¡Nueva Reserva Recibida!',
-    message: `${newBooking.clientName} ha reservado ${newBooking.packageName} (${newBooking.dateTime})`,
-    url: 'https://sebastiang.app/?mode=admin',
-    data: { type: 'booking', bookingId: newBooking.id }
-  }).catch(err => console.error('Error OneSignal Push reserva:', err));
+  await Promise.allSettled(backgroundTasks);
 
   const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
   const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
@@ -496,12 +539,13 @@ app.post('/api/bookings', (req, res) => {
   res.status(201).json({
     success: true,
     booking: newBooking,
+    receiptToken,
     directWhatsAppUrl: `https://wa.me/${photogWhatsApp1}?text=${msgText}`,
     secondaryWhatsAppUrl: `https://wa.me/${photogWhatsApp2}?text=${msgText}`
   });
 });
 
-app.post('/api/send-email', async (req, res) => {
+app.post('/api/send-email', requireAdminAuth, async (req, res) => {
   const { type, data } = req.body || {};
   try {
     if (type === '2fa_code') {
@@ -767,14 +811,19 @@ app.post('/api/admin/auth', (req, res) => {
     return res.status(400).json({ error: 'PIN requerido.' });
   }
 
-  // Hash del PIN ingresado
-  const inputHash = hashSHA256(pin);
+  // Verificación del PIN en el SERVIDOR (el navegador ya no conoce el hash).
+  // Admite scrypt (recomendado, ADMIN_PIN_SCRYPT) o SHA-256 (compatibilidad).
+  const configuredHash = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || '';
+  if (isWeakConfiguredPin(configuredHash)) {
+    console.warn('⚠️ [Seguridad] El PIN configurado sigue siendo el conocido "0493". Cámbialo en ADMIN_PIN_SCRYPT.');
+  }
 
-  // Hash esperado: desde settings o por defecto
-  const expectedHash = runtimeDB.settings.adminPinHash || DEFAULT_ADMIN_PIN_HASH;
+  const pinOk = verifyAdminPin(pin, {
+    scryptHash: process.env.ADMIN_PIN_SCRYPT,
+    sha256Hash: runtimeDB.settings.adminPinHash || process.env.ADMIN_PIN_HASH
+  });
 
-  // Comparación en tiempo constante
-  if (!secureCompare(inputHash, expectedHash)) {
+  if (!pinOk) {
     const newRecord = recordFailedLogin(ip);
     const remaining = MAX_LOGIN_ATTEMPTS - newRecord.count;
 
@@ -791,10 +840,23 @@ app.post('/api/admin/auth', (req, res) => {
     });
   }
 
-  // Login exitoso
+  // Login exitoso: token firmado (HMAC-SHA256), no un texto fijo.
   resetLoginAttempts(ip);
-  const token = signAdminToken();
-  res.json({ success: true, token });
+  try {
+    const token = createAdminToken();
+    return res.json({ success: true, token, expiresInMs: 12 * 60 * 60 * 1000 });
+  } catch (e) {
+    console.error('[Seguridad] No se pudo emitir la sesión:', e?.message || e);
+    return res.status(503).json({ error: 'El servidor no tiene configurado ADMIN_AUTH_SECRET.' });
+  }
+});
+
+// ==============================================================================
+// A PARTIR DE AQUÍ, TODO /api/admin/* EXIGE UNA SESIÓN FIRMADA VÁLIDA
+// ==============================================================================
+app.use('/api/admin', (req, res, next) => {
+  if (req.path === '/auth') return next();
+  return requireAdminAuth(req, res, next);
 });
 
 app.get('/api/admin/bookings', async (req, res) => {
@@ -865,7 +927,13 @@ app.get('/api/admin/bookings', async (req, res) => {
   } catch (e) {
     console.warn('Error en /api/admin/bookings:', e);
   }
-  res.json(runtimeDB.bookings || []);
+  // Se añade un token firmado por reserva para los comprobantes públicos,
+  // de modo que el recibo no dependa de que el navegador descargue el CRM.
+  const bookingsWithReceiptToken = (runtimeDB.bookings || []).map(b => ({
+    ...b,
+    receiptToken: createReceiptToken(b.id)
+  }));
+  res.json(bookingsWithReceiptToken);
 });
 
 app.patch('/api/admin/bookings/:id', async (req, res) => {
@@ -927,6 +995,10 @@ app.post('/api/payments', (req, res) => {
     status, concept
   } = req.body;
 
+  // Solo un administrador con sesión válida puede dar por verificado un pago.
+  // Un cliente anónimo puede registrar su comprobante, pero siempre queda pendiente.
+  const isAdminCaller = Boolean(verifyAdminToken(readAdminToken(req)));
+
   const newPayment = {
     id: `pay-${Date.now()}`,
     clientName: (clientName || 'Cliente').trim(),
@@ -947,7 +1019,9 @@ app.post('/api/payments', (req, res) => {
     retablosSummary: retablosSummary || '',
     printedPhotosSummary: printedPhotosSummary || '',
     concept: concept || 'Sesión Fotográfica',
-    status: status || 'verified',
+    // El estado NUNCA se acepta del cliente: solo un administrador autenticado
+    // puede marcarlo como verificado (y debe pedirlo explícitamente).
+    status: isAdminCaller && status === 'verified' ? 'verified' : 'pending',
     createdAt: new Date().toISOString()
   };
 
@@ -1223,28 +1297,15 @@ app.post('/api/admin/pin/change', (req, res) => {
   res.json({ success: true, message: '¡PIN de acceso actualizado correctamente!' });
 });
 
-app.post('/api/admin/pin/recover', (req, res) => {
-  const { phone, newPin } = req.body;
-  const cleanPhone = (phone || '').replace(/\D/g, '');
-  const p1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
-  const p2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
-  const matchesP1 = cleanPhone.length >= 7 && (p1.endsWith(cleanPhone) || cleanPhone.endsWith(p1.slice(-10)));
-  const matchesP2 = cleanPhone.length >= 7 && (p2.endsWith(cleanPhone) || cleanPhone.endsWith(p2.slice(-10)));
-
-  if (!matchesP1 && !matchesP2) {
-    return res.status(403).json({ error: 'El número no coincide con las líneas de WhatsApp registradas de Sebastian G.' });
-  }
-
-  if (newPin) {
-    if (String(newPin).length < 4) {
-      return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
-    }
-    runtimeDB.settings.adminPinHash = hashSHA256(String(newPin).trim());
-    return res.json({ success: true, message: '¡PIN restablecido con éxito!' });
-  }
-
-  res.json({ success: true, verified: true });
-});
+// ==============================================================================
+// RECUPERACIÓN DE PIN POR TELÉFONO: ELIMINADA
+// ==============================================================================
+// Antes este endpoint permitía fijar un PIN nuevo (o leer el vigente) con solo
+// conocer los últimos 7 dígitos de un WhatsApp público: era una toma de control
+// del panel sin credenciales. La recuperación ahora es una operación de
+// administración del servidor: se cambia ADMIN_PIN_SCRYPT / ADMIN_PIN_HASH en
+// las variables de entorno y se vuelve a desplegar.
+// ==============================================================================
 
 // ==============================================================================
 // RESEÑAS

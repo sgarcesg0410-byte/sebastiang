@@ -146,6 +146,17 @@ import {
   DEFAULT_RETABLO_COSTS
 } from '../services/api';
 import { supabase } from '../services/supabase';
+import { computeBookingPaymentStatus } from '../services/financials';
+
+// Escapa cualquier valor antes de interpolarlo en HTML (impresión de comprobantes).
+// Sin esto, un cliente podía inyectar HTML/JS en el nombre o la locación y ejecutarlo
+// en el navegador del fotógrafo al imprimir el recibo.
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 import { getLocalAnalytics } from '../services/analytics';
 import { NequiLogo, DaviPlataLogo, DaleLogo, WalletAccountCard } from './PaymentLogos';
 import jsPDF from 'jspdf';
@@ -1843,23 +1854,32 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       // 3. Auto-registrar ingreso en saldo de fotografía si está activado
       if (confirmAutoRegisterPayment) {
         const total = Number(confirmingBooking.totalPrice || 0);
-        const amountToCredit = confirmPaymentType === 'deposit' ? Math.round(total * 0.5) : total;
+        // Se topa SIEMPRE al saldo pendiente: antes se precargaba el 50% del total
+        // aunque el cliente ya hubiera abonado, lo que permitía cobrar dos veces.
+        const finConfirm = computeBookingPaymentStatus(confirmingBooking, payments || []);
+        const amountToCredit = confirmPaymentType === 'deposit'
+          ? Math.min(finConfirm.remaining, Math.round(total * 0.5))
+          : finConfirm.remaining;
         const concept = confirmPaymentType === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
         
         try {
-          const resPay = await createPayment({
-            clientName: confirmingBooking.clientName,
-            clientWhatsApp: activePhone,
-            sessionToken: String(confirmingBooking.id),
-            packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
-            amount: amountToCredit,
-            method: confirmPaymentMethod,
-            reference: `Abono Reserva #${confirmingBooking.id}`,
-            concept: concept,
-            status: 'verified'
-          });
-          if (resPay && resPay.payment) {
-            setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
+          if (amountToCredit > 0) {
+            const resPay = await createPayment({
+              clientName: confirmingBooking.clientName,
+              clientWhatsApp: activePhone,
+              sessionToken: String(confirmingBooking.id),
+              packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
+              amount: amountToCredit,
+              method: confirmPaymentMethod,
+              reference: `Abono Reserva #${confirmingBooking.id}`,
+              concept: concept,
+              status: 'verified'
+            });
+            if (resPay && resPay.payment) {
+              setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
+            }
+          } else {
+            console.warn('[Caja] La reserva ya está pagada por completo: no se registra otro abono.');
           }
         } catch (payErr) {
           console.warn('Error al auto-registrar pago en saldo de fotos:', payErr);
@@ -1888,7 +1908,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   const handleQuickRegisterBookingPayment = async (booking, type = 'deposit', method = 'nequi') => {
     const total = Number(booking.totalPrice || 0);
-    const amount = type === 'deposit' ? Math.round(total * 0.5) : total;
+    // Topado al saldo pendiente: antes precargaba el 50% del total aunque el
+    // cliente ya hubiera abonado, lo que abría la puerta al doble cobro.
+    const finQuick = computeBookingPaymentStatus(booking, payments || []);
+    const amount = type === 'deposit'
+      ? Math.min(finQuick.remaining, Math.round(total * 0.5))
+      : finQuick.remaining;
     const concept = type === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
     
     try {
@@ -2376,7 +2401,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setReceiptType('remaining');
       setReceiptNotes(`Saldo final para completar el 100% de la sesión fotográfica (Abono previo de $${alreadyPaid.toLocaleString('es-CO')} COP acreditado).`);
     } else {
-      setReceiptPaidAmount(Math.round(total * 0.5));
+      setReceiptPaidAmount(Math.min(remaining > 0 ? remaining : total, Math.round(total * 0.5)));
       setReceiptType('deposit');
       setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
     }
@@ -2467,7 +2492,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       <html>
       <head>
         <meta charset="utf-8">
-        <title>Comprobante de Pago Oficial • ${receiptBooking.clientName}</title>
+        <title>Comprobante de Pago Oficial • ${escapeHtml(receiptBooking.clientName)}</title>
         <style>
           @page { size: portrait; margin: 12mm; }
           * { box-sizing: border-box; }
@@ -2678,15 +2703,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           <div class="grid-2">
             <div class="card">
               <div class="card-title">Cliente Titular</div>
-              <p><strong>${receiptBooking.clientName}</strong></p>
-              <p>WhatsApp: <strong>${receiptBooking.clientWhatsApp}</strong></p>
-              ${receiptBooking.clientEmail ? `<p>Correo: ${receiptBooking.clientEmail}</p>` : ''}
+              <p><strong>${escapeHtml(receiptBooking.clientName)}</strong></p>
+              <p>WhatsApp: <strong>${escapeHtml(receiptBooking.clientWhatsApp)}</strong></p>
+              ${receiptBooking.clientEmail ? `<p>Correo: ${escapeHtml(receiptBooking.clientEmail)}</p>` : ''}
             </div>
             <div class="card">
               <div class="card-title">Detalles de la Cita</div>
               <p>Fecha/Hora: <strong>${formatDateTime12Hour(receiptBooking.dateTime)}</strong></p>
-              <p>Locación: <strong>${loc}</strong></p>
-              <p>Paquete: <strong>${receiptBooking.packageName}</strong></p>
+              <p>Locación: <strong>${escapeHtml(loc)}</strong></p>
+              <p>Paquete: <strong>${escapeHtml(receiptBooking.packageName)}</strong></p>
             </div>
           </div>
 
@@ -2696,7 +2721,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <span>VALOR</span>
             </div>
             <div class="table-row">
-              <span>Sesión Fotográfica (${receiptBooking.packageName})</span>
+              <span>Sesión Fotográfica (${escapeHtml(receiptBooking.packageName)})</span>
               <span>$${total.toLocaleString('es-CO')} COP</span>
             </div>
             ${(() => {
@@ -2760,7 +2785,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </div>
 
           <div class="guarantee-box">
-            <strong style="color: #b45309;">⛅ Garantía de Clima en ${loc}:</strong> En caso de lluvia o clima adverso, tu sesión se reprograma para una nueva fecha sin ningún costo ni penalidad.<br>
+            <strong style="color: #b45309;">⛅ Garantía de Clima en ${escapeHtml(loc)}:</strong> En caso de lluvia o clima adverso, tu sesión se reprograma para una nueva fecha sin ningún costo ni penalidad.<br>
             <span style="font-size: 10px; color: #94a3b8;">Documento electrónico emitido en sebastiang.app • Válido como soporte oficial de reserva.</span>
           </div>
 
@@ -2825,7 +2850,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const firstName = rawName.split(' ')[0] || rawName;
     const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
 
-    const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.id}&paid=${isNowFull ? total : paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
+    const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.receiptToken || receiptBooking.id}&paid=${isNowFull ? total : paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
     const lineInfo = chosenLine === 'line2'
       ? '+57 302 369 6513 (Línea 2 - WhatsApp Business)'
@@ -4592,17 +4617,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </div>
 
           {(() => {
+            // Una sola implementación para TODO el panel (antes había tres distintas
+            // que no coincidían entre sí y permitían cobrar dos veces el 50%).
             const getFinancials = (b) => {
-              const bPayments = (payments || []).filter(
-                p => String(p.sessionToken) === String(b.id) && p.status !== 'rejected'
-              );
-              const totalPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-              const totalPrice = Number(b.totalPrice) || 0;
-              const isFullyPaid = b.status === 'completed' || (totalPrice > 0 && totalPaid >= totalPrice);
-              const hasDeposit = !isFullyPaid && (totalPaid > 0 || b.status === 'confirmed');
-              const isPendingAbono = !isFullyPaid && !hasDeposit;
-              const remaining = Math.max(0, totalPrice - totalPaid);
-              return { bPayments, totalPaid, totalPrice, isFullyPaid, hasDeposit, isPendingAbono, remaining };
+              const fin = computeBookingPaymentStatus(b, payments || []);
+              return {
+                bPayments: fin.payments,
+                totalPaid: fin.totalPaid,
+                totalPrice: fin.totalPrice,
+                isFullyPaid: fin.isFullyPaid,
+                hasDeposit: fin.hasDeposit,
+                isPendingAbono: fin.isPendingAbono,
+                remaining: fin.remaining
+              };
             };
 
             const completedBookings = bookings.filter(b => getFinancials(b).isFullyPaid);
@@ -5139,11 +5166,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                                 {/* Estado de pago y Auto-Abono 1-Tap */}
                                 {(() => {
-                                  const bookingPayments = (payments || []).filter(p => String(p.sessionToken) === String(booking.id));
-                                  const totalPaid = bookingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-                                  const totalPrice = Number(booking.totalPrice) || 0;
-                                  const isFullyPaid = totalPrice > 0 && totalPaid >= totalPrice;
-                                  const hasDeposit = totalPaid > 0 && !isFullyPaid;
+                                  // Misma función que el resto del panel: nunca ofrece cobrar
+                                  // de más, y los pagos rechazados no cuentan como recibidos.
+                                  const finAgenda = computeBookingPaymentStatus(booking, payments || []);
+                                  const bookingPayments = finAgenda.payments;
+                                  const totalPaid = finAgenda.totalPaid;
+                                  const totalPrice = finAgenda.totalPrice;
+                                  const isFullyPaid = finAgenda.isFullyPaid;
+                                  const hasDeposit = finAgenda.hasDeposit;
 
                                   return (
                                     <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-xl bg-stone-900 border border-stone-800">
@@ -5408,15 +5438,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                       {/* ESTADO DE PAGO INTELIGENTE Y AUTO-ABONO 1-TAP (SOLO FOTOGRAFÍA) */}
                       {(() => {
-                        const bookingPayments = (payments || []).filter(
-                          p => String(p.sessionToken) === String(booking.id)
-                        );
-                        const totalPaid = bookingPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-                        const totalPrice = Number(booking.totalPrice) || 0;
-                        const deposit50 = Math.round(totalPrice * 0.5);
-                        const remaining = Math.max(0, totalPrice - totalPaid);
-                        const isFullyPaid = totalPrice > 0 && totalPaid >= totalPrice;
-                        const hasDeposit = totalPaid > 0 && !isFullyPaid;
+                        const {
+                          validPayments: bookingPayments,
+                          totalPaid,
+                          totalPrice,
+                          remaining,
+                          isFullyPaid,
+                          hasDeposit,
+                          suggestedDeposit: deposit50
+                        } = computeBookingPaymentStatus(booking, payments);
 
                         return (
                           <div className="mt-3 p-3 rounded-2xl bg-stone-950/90 border border-stone-800 space-y-2 text-xs">
@@ -10912,7 +10942,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           setReceiptPaidAmount(remaining > 0 ? remaining : total);
                           setReceiptNotes(`Saldo final para completar el 100% de la sesión fotográfica (Abono previo de $${alreadyPaid.toLocaleString('es-CO')} COP acreditado).`);
                         } else if (val === 'deposit') {
-                          setReceiptPaidAmount(Math.round(total * 0.5));
+                          setReceiptPaidAmount(Math.min(remaining > 0 ? remaining : total, Math.round(total * 0.5)));
                           setReceiptNotes('Abono para reserva de cupo y fecha garantizada en agenda oficial.');
                         } else if (val === 'total') {
                           setReceiptPaidAmount(total);

@@ -5,8 +5,6 @@ import { createBooking, checkClientLoyalty, formatTo12Hour, getPrintSizes, getPa
 import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', settings = {} }) {
-  if (!isOpen) return null;
-
   const scrollRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
   const paperSizes = getPaperPrintSizes(settings);
@@ -324,6 +322,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md p-2 sm:p-6 flex flex-col items-center justify-start sm:justify-center">

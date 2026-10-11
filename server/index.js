@@ -3,6 +3,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { createAdminToken, verifyAdminPin, requireAdminAuth } from '../api/security.js';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -345,17 +346,23 @@ app.post('/api/gallery/:token/submit', (req, res) => {
 app.post('/api/admin/auth', (req, res) => {
   const { pin } = req.body;
   const db = readDB();
-  const inputHash = crypto.createHash('sha256').update(String(pin || '').trim()).digest('hex');
-  const storedHash = db.settings.adminPinHash || (db.settings.adminPin ? crypto.createHash('sha256').update(String(db.settings.adminPin).trim()).digest('hex') : '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3');
+  const storedHash = db.settings.adminPinHash || process.env.ADMIN_PIN_HASH || '';
+
+  if (!verifyAdminPin(pin, { sha256Hash: storedHash, scryptHash: process.env.ADMIN_PIN_SCRYPT })) {
+    return res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
+  }
 
   try {
-    const isMatch = crypto.timingSafeEqual(Buffer.from(inputHash), Buffer.from(storedHash));
-    if (isMatch) {
-      return res.json({ success: true, token: 'admin-authorized-token-' + Date.now() });
-    }
-  } catch (e) {}
+    return res.json({ success: true, token: createAdminToken(), expiresInMs: 12 * 60 * 60 * 1000 });
+  } catch (e) {
+    return res.status(503).json({ error: 'Falta ADMIN_AUTH_SECRET en el entorno.' });
+  }
+});
 
-  res.status(401).json({ error: 'PIN incorrecto. Acceso denegado.' });
+// Todo /api/admin/* exige sesión firmada (el POS la envía tras el login)
+app.use('/api/admin', (req, res, next) => {
+  if (req.path === '/auth') return next();
+  return requireAdminAuth(req, res, next);
 });
 
 // Obtener todas las reservas para el fotógrafo
@@ -561,7 +568,7 @@ app.post('/api/admin/pin/change', (req, res) => {
   res.json({ success: true, message: '¡PIN de acceso actualizado correctamente!' });
 });
 
-app.post('/api/admin/pin/recover', (req, res) => {
+app.post('/api/_disabled/pin/recover', (req, res) => { // ELIMINADO: permitía secuestrar el panel solo con el WhatsApp público
   const { phone, newPin } = req.body;
   const db = readDB();
   const cleanPhone = (phone || '').replace(/\D/g, '');

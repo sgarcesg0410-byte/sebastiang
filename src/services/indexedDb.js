@@ -85,6 +85,7 @@ export async function idbGetCatalog() {
       return new Promise((resolve) => {
         const tx = db.transaction(CATALOG_STORE, 'readonly');
         const store = tx.objectStore(CATALOG_STORE);
+        const req = store.getAll(); // FALTABA: provocaba ReferenceError y la bóveda nunca leía nada
         req.onsuccess = () => {
           const list = Array.isArray(req.result) ? req.result : [];
           resolve(list.filter(item => 
@@ -104,6 +105,7 @@ export async function idbGetCatalog() {
             !item.url.includes('fbcdn.net')
           ));
         };
+        req.onerror = () => resolve([]);
       });
     });
   } catch (e) {

@@ -495,7 +495,7 @@ export function saveLocalCatalog(items) {
   if (!Array.isArray(items)) return;
   // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB y sin truncar nada)
   try {
-    idbSaveCatalogBatch(items);
+    idbSaveCatalogBatch(items).catch(err => console.warn('Error guardando catálogo en IDB:', err));
   } catch (e) {}
 
   // 2. Guardar en localStorage solo items ligeros (evitar saturar la cuota de 5MB con base64 gigantes)
@@ -512,7 +512,7 @@ export function saveLocalCatalogItem(item) {
   if (!item || !item.id) return;
   // 1. Guardar de forma inmediata en IndexedDB (soporta cientos de MB sin límite de 5MB)
   try {
-    idbSaveCatalogItem(item);
+    idbSaveCatalogItem(item).catch(err => console.warn('Error guardando item en IDB:', err));
   } catch (e) {}
 
   // 2. Respaldo adicional en localStorage con manejo seguro de cuota
@@ -861,7 +861,7 @@ export function saveLocalBooking(booking) {
 
     // 1. Blindaje en IndexedDB (Bóveda inmutable 100MB+)
     try {
-      idbSaveBooking(enriched);
+      idbSaveBooking(enriched).catch(() => {});
     } catch (e) {}
 
     // 2. Sincronización inmutable directa a Supabase Cloud (2 capas: catalog y bookings)
@@ -1791,18 +1791,61 @@ export async function verifyTwoFactorCode(inputCode, rememberDevice = false) {
   };
 }
 
+const ADMIN_SESSION_TOKEN_KEY = 'sebastian_g_admin_server_session_v1';
+
+/** Token de sesión emitido y firmado por el SERVIDOR. */
+export function getAdminSessionToken() {
+  try {
+    return sessionStorage.getItem(ADMIN_SESSION_TOKEN_KEY) || localStorage.getItem(ADMIN_SESSION_TOKEN_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+export function setAdminSessionToken(token) {
+  try {
+    if (token) {
+      sessionStorage.setItem(ADMIN_SESSION_TOKEN_KEY, token);
+      localStorage.setItem(ADMIN_SESSION_TOKEN_KEY, token);
+    } else {
+      sessionStorage.removeItem(ADMIN_SESSION_TOKEN_KEY);
+      localStorage.removeItem(ADMIN_SESSION_TOKEN_KEY);
+    }
+  } catch (e) {}
+}
+
+export function clearAdminSession() {
+  setAdminSessionToken('');
+}
+
+// ------------------------------------------------------------------------------
+// INTERCEPTOR: añade la sesión de administrador a TODA llamada /api/admin/*
+// ------------------------------------------------------------------------------
+// Se hace en un solo punto para que ninguna llamada del panel se quede sin
+// token (y con ello el panel no se bloquee al exigir el servidor la sesión).
+if (typeof window !== 'undefined' && !window.__sgAdminFetchPatched) {
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    // La sesión viaja a toda la API salvo las rutas públicas y el propio login.
+    // El servidor decide qué habilita esa sesión (por ejemplo, verificar un pago).
+    const needsAuth = url.includes('/api/')
+      && !url.includes('/api/public/')
+      && !url.includes('/api/admin/auth');
+    const token = needsAuth ? getAdminSessionToken() : '';
+    if (token) {
+      const headers = { ...(init.headers || {}), Authorization: `Bearer ${token}` };
+      return originalFetch(input, { ...init, headers });
+    }
+    return originalFetch(input, init);
+  };
+  window.__sgAdminFetchPatched = true;
+}
+
 export async function verifyAdminPin(pin) {
-  // Comprobar bloqueo anti-brute-force
   const lockout = checkLockout();
   if (lockout.locked) {
     throw new Error(`Demasiados intentos fallidos. Acceso temporalmente bloqueado por ${lockout.remainingMinutes} minuto(s).`);
-  }
-
-  // Purga de seguridad: si localSavedPin quedó con el pin viejo '1234', lo eliminamos
-  let localSavedPin = localStorage.getItem(LOCAL_PIN_KEY);
-  if (localSavedPin === '1234') {
-    localStorage.removeItem(LOCAL_PIN_KEY);
-    localSavedPin = null;
   }
 
   const cleanPin = String(pin || '').trim();
@@ -1810,42 +1853,25 @@ export async function verifyAdminPin(pin) {
     throw new Error('Por favor ingresa tu PIN.');
   }
 
-  // Hashear PIN entrante con SHA-256
-  const inputHash = await hashStringSHA256(cleanPin);
-
-  // Obtener hash activo (custom guardado o predeterminado 0493)
-  let activeHash = DEFAULT_PIN_HASH;
-  const savedHash = localStorage.getItem(LOCAL_PIN_HASH_KEY);
-  if (savedHash && savedHash.length === 64) {
-    activeHash = savedHash;
+  // La verificación ocurre en el SERVIDOR. El navegador ya no conoce el hash,
+  // no lo compara y no puede saltárselo con códigos maestros.
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/admin/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: cleanPin })
+    });
+  } catch (e) {
+    throw new Error('No se pudo contactar al servidor. Revisa tu conexión e inténtalo de nuevo.');
   }
 
-  let isMatch = secureCompare(inputHash, activeHash);
-
-  // Compatibilidad hacia atrás: si tenía un PIN plano previo guardado en localStorage
-  if (!isMatch && localSavedPin && cleanPin === localSavedPin && cleanPin !== '1234') {
-    isMatch = true;
-    localStorage.setItem(LOCAL_PIN_HASH_KEY, inputHash);
-    localStorage.removeItem(LOCAL_PIN_KEY);
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || 'Demasiados intentos. Inténtalo más tarde.');
   }
 
-  // Sincronización en la nube: si no coincide localmente, verificar si se actualizó desde otro dispositivo
-  if (!isMatch) {
-    try {
-      const { data } = await supabase.from('catalog').select('url').eq('id', 'system_admin_pin_hash').maybeSingle();
-      if (data && data.url) {
-        const parsed = JSON.parse(data.url);
-        if (parsed && parsed.hash && parsed.hash.length === 64 && secureCompare(inputHash, parsed.hash)) {
-          isMatch = true;
-          activeHash = parsed.hash;
-          localStorage.setItem(LOCAL_PIN_HASH_KEY, parsed.hash);
-          localStorage.removeItem(LOCAL_PIN_KEY);
-        }
-      }
-    } catch (e) {}
-  }
-
-  if (!isMatch) {
+  if (!res.ok) {
     recordFailedAttempt();
     const attempts = getAttemptsState();
     const remaining = Math.max(0, 5 - attempts.count);
@@ -1855,25 +1881,16 @@ export async function verifyAdminPin(pin) {
     throw new Error(`PIN incorrecto.${remaining > 0 ? ` Te quedan ${remaining} intento(s).` : ''}`);
   }
 
-  // PIN correcto: restablecer contador de fallos
-  resetAttempts();
-
-  // Evaluar si este dispositivo ya está verificado por 30 días
-  if (isTrustedDevice()) {
-    return {
-      success: true,
-      requires2FA: false,
-      token: generateSessionToken()
-    };
+  const data = await res.json().catch(() => ({}));
+  if (!data?.token) {
+    throw new Error('El servidor no devolvió una sesión válida.');
   }
 
-  // Si no está recordado, generar código 2FA de 6 dígitos
-  const twoFactorData = await generateTwoFactorCode();
-  return {
-    success: true,
-    requires2FA: true,
-    ...twoFactorData
-  };
+  resetAttempts();
+  setAdminSessionToken(data.token);
+
+  // El segundo factor y la expiración los controla el servidor con el token firmado.
+  return { success: true, requires2FA: false, token: data.token };
 }
 
 export async function getAdminBookings() {
@@ -1982,7 +1999,7 @@ export async function getAdminBookings() {
   // Respaldar inmediatamente en caché local Y en Bóveda IndexedDB
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(combined));
-    idbSaveBookingsBatch(combined);
+    idbSaveBookingsBatch(combined).catch(() => {});
   } catch (e) {}
 
   return combined;
@@ -2017,7 +2034,7 @@ export async function updateAdminBooking(id, updates) {
   }
   try {
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(list));
-    idbSaveBooking(updatedBooking);
+    idbSaveBooking(updatedBooking).catch(() => {});
   } catch (e) {}
 
   // Sincronizar actualización de reserva en la nube (Supabase)
@@ -2625,14 +2642,59 @@ export async function submitGalleryReview(token, reviewData) {
 }
 
 // --- PROGRAMA DE FIDELIZACIÓN PARA CLIENTES RECURRENTES ---
+// ------------------------------------------------------------------------------
+// CONSULTAS PÚBLICAS (no requieren sesión de administrador ni exponen datos)
+// ------------------------------------------------------------------------------
+
+/** Cupos ocupados del calendario: solo id, fecha/hora y estado. */
+export async function fetchPublicSchedule() {
+  const res = await fetch(`${API_BASE}/public/schedule`);
+  if (!res.ok) throw new Error('No se pudo cargar la agenda de cupos.');
+  const data = await res.json();
+  return Array.isArray(data?.slots) ? data.slots : [];
+}
+
+/** ¿El cliente tiene historial? El servidor decide; solo devuelve sí/no y el %. */
+export async function fetchPublicLoyalty(phone) {
+  const clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length < 7) return { isLoyal: false, discountPercent: 0 };
+  try {
+    const res = await fetch(`${API_BASE}/public/loyalty?phone=${encodeURIComponent(clean)}`);
+    if (!res.ok) return { isLoyal: false, discountPercent: 0 };
+    const data = await res.json();
+    return { isLoyal: Boolean(data?.isLoyal), discountPercent: Number(data?.discountPercent) || 0 };
+  } catch (e) {
+    return { isLoyal: false, discountPercent: 0 };
+  }
+}
+
+/** Un solo comprobante por token firmado (nunca el listado completo de reservas). */
+export async function fetchPublicReceipt(token) {
+  const res = await fetch(`${API_BASE}/public/receipt/${encodeURIComponent(token)}`);
+  if (!res.ok) throw new Error('Comprobante no encontrado o enlace inválido.');
+  const data = await res.json();
+  return data?.booking || null;
+}
+
 export async function checkClientLoyalty(phone) {
   if (!phone) return { isLoyal: false, discountPercent: 0 };
   const clean = phone.replace(/\D/g, '');
   if (clean.length < 7) return { isLoyal: false, discountPercent: 0 };
 
   try {
-    const bookings = await getAdminBookings();
-    const sessions = await getAdminSessions();
+    // Consulta al endpoint público: el descuento lo decide el servidor.
+    const publicCheck = await fetchPublicLoyalty(phone);
+    if (publicCheck.isLoyal) {
+      return {
+        isLoyal: true,
+        discountPercent: publicCheck.discountPercent,
+        clientName: 'Cliente VIP',
+        previousSessions: 1
+      };
+    }
+
+    const bookings = [];
+    const sessions = [];
 
     const matchedBooking = bookings.find(b => {
       const bClean = (b.clientWhatsApp || '').replace(/\D/g, '');

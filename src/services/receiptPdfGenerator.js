@@ -68,7 +68,7 @@ export async function generateLuxuryReceiptPdf({
   const formattedDateTime = formatReadableDateTime(booking.dateTime);
   const emissionDate = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  const verifyUrl = `https://sebastiang.app/#recibo=${booking.id}&paid=${actualPaid}&method=${encodeURIComponent(paymentMethod)}`;
+  const verifyUrl = `https://sebastiang.app/#recibo=${booking.receiptToken || booking.id}&paid=${actualPaid}&method=${encodeURIComponent(paymentMethod)}`;
   const displayHash = auditHash || `SG-${String(booking.id).slice(-6)}-${Date.now().toString(36).toUpperCase()}`;
 
   // 1. Generar Código QR nítido
