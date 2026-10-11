@@ -8,7 +8,8 @@ import {
   isWeakConfiguredPin,
   createReceiptToken,
   readAdminToken,
-  verifyAdminToken
+  verifyAdminToken,
+  KNOWN_WEAK_PIN_HASH
 } from './security.js';
 import { registerPublicRoutes } from './publicRoutes.js';
 import { resolveBookingPrice } from './pricingGuard.js';
@@ -807,15 +808,20 @@ app.post('/api/admin/auth', (req, res) => {
   }
 
   // Verificación del PIN en el SERVIDOR (el navegador ya no conoce el hash).
-  // Admite scrypt (recomendado, ADMIN_PIN_SCRYPT) o SHA-256 (compatibilidad).
-  const configuredHash = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || '';
-  if (isWeakConfiguredPin(configuredHash)) {
-    console.warn('⚠️ [Seguridad] El PIN configurado sigue siendo el conocido "0493". Cámbialo en ADMIN_PIN_SCRYPT.');
+  // Prioridad:
+  // 1. ADMIN_PIN_SCRYPT (scrypt robusto de 8+ caracteres, recomendado)
+  // 2. ADMIN_PIN_HASH (SHA-256 explícito en variables de entorno)
+  // 3. Fallback a 0493 únicamente si aún no se configuró ninguna variable en Vercel
+  const hasConfiguredPin = Boolean(process.env.ADMIN_PIN_SCRYPT || process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash);
+  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || (!hasConfiguredPin ? KNOWN_WEAK_PIN_HASH : '');
+
+  if (!hasConfiguredPin || isWeakConfiguredPin(effectiveSha)) {
+    console.warn('⚠️ [Seguridad] No se ha configurado un PIN robusto aún. Usa ADMIN_PIN_SCRYPT para activar tu nuevo PIN.');
   }
 
   const pinOk = verifyAdminPin(pin, {
     scryptHash: process.env.ADMIN_PIN_SCRYPT,
-    sha256Hash: runtimeDB.settings.adminPinHash || process.env.ADMIN_PIN_HASH
+    sha256Hash: effectiveSha
   });
 
   if (!pinOk) {
