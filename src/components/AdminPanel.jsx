@@ -85,10 +85,6 @@ import {
 } from '../services/onesignal';
 import { 
   verifyAdminPin, 
-  verifyTwoFactorCode,
-  generateTwoFactorCode,
-  isTrustedDevice,
-  saveTrustedDevice,
   forgetTrustedDevice,
   getAdminBookings, 
   updateBookingStatus, 
@@ -108,8 +104,6 @@ import {
   deleteCatalogPhoto,
   deleteAllSampleCatalogPhotos,
   isSampleItem,
-  changeAdminPin,
-  recoverAdminPin,
   getAdminPayments,
   updatePaymentStatus,
   formatDateTime12Hour,
@@ -387,26 +381,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  // Autenticación de Doble Factor (2FA)
-  const [isTwoFactorStep, setIsTwoFactorStep] = useState(false);
-  const [twoFactorData, setTwoFactorData] = useState(null);
-  const [twoFactorInput, setTwoFactorInput] = useState('');
-  const [twoFactorError, setTwoFactorError] = useState('');
-  const [rememberDevice, setRememberDevice] = useState(false);
-  const [isVerifying2FA, setIsVerifying2FA] = useState(false);
   const [isVerifyingPin, setIsVerifyingPin] = useState(false);
-
-  // Recuperación de PIN
-  const [isRecoveringPin, setIsRecoveringPin] = useState(false);
-  const [recoveryPhone, setRecoveryPhone] = useState('');
-  const [recoveryStep, setRecoveryStep] = useState(1); // 1: ingresar teléfono o código, 2: ingresar nuevo PIN
-  const [recoveryMethod, setRecoveryMethod] = useState('phone'); // 'phone' | 'email'
-  const [isSendingRecoveryEmail, setIsSendingRecoveryEmail] = useState(false);
-  const [recoveryNewPin, setRecoveryNewPin] = useState('');
-  const [recoveryConfirmPin, setRecoveryConfirmPin] = useState('');
-  const [recoveryMsg, setRecoveryMsg] = useState('');
-  const [recoveryError, setRecoveryError] = useState('');
-  const [recoveredPinDisplay, setRecoveredPinDisplay] = useState('');
 
   // Autenticación Biométrica (Huella Dactilar / Face ID)
   const [bioSupported, setBioSupported] = useState(false);
@@ -766,15 +741,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const catalogFileInputRef = useRef(null);
   const catalogBackupInputRef = useRef(null);
 
-  // Cambio de PIN dentro del Panel
-  const [pinChangeForm, setPinChangeForm] = useState({
-    currentPin: '',
-    newPin: '',
-    confirmPin: ''
-  });
-  const [pinChangeMsg, setPinChangeMsg] = useState('');
-  const [pinChangeError, setPinChangeError] = useState('');
-
   // Estados para Bot de Automatización de WhatsApp (Sin QR)
   const [botSimMessage, setBotSimMessage] = useState('1');
   const [botSimReply, setBotSimReply] = useState('');
@@ -1014,23 +980,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setAuthError('');
     setIsVerifyingPin(true);
     try {
-      const res = await verifyAdminPin(pinToVerify);
-      if (res.requires2FA) {
-        setTwoFactorData(res);
-        setIsTwoFactorStep(true);
-        setTwoFactorInput('');
-        setTwoFactorError('');
-      } else {
-        setIsAuthenticated(true);
-        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-          try {
-            Notification.requestPermission();
-          } catch (err) {}
-        }
-        loadAllAdminData();
+      await verifyAdminPin(pinToVerify);
+      setIsAuthenticated(true);
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+        try {
+          Notification.requestPermission();
+        } catch (err) {}
       }
+      loadAllAdminData();
     } catch (err) {
-      setAuthError(err.message || 'Contraseña incorrecta. Si la olvidaste, usa la opción de recuperación abajo.');
+      setAuthError(err.message || 'Contraseña incorrecta.');
       setPinInput('');
     } finally {
       setIsVerifyingPin(false);
@@ -1041,128 +1000,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     if (e) e.preventDefault();
     if (!pinInput.trim()) return;
     handleVerifyPinSubmit(pinInput.trim());
-  };
-
-  const handleVerify2FASubmit = async (e) => {
-    if (e) e.preventDefault();
-    setTwoFactorError('');
-    const cleanCode = String(twoFactorInput || '').trim();
-    if (cleanCode.length < 6) {
-      setTwoFactorError('Por favor ingresa el código completo de 6 dígitos.');
-      return;
-    }
-    setIsVerifying2FA(true);
-    try {
-      await verifyTwoFactorCode(cleanCode, rememberDevice);
-      setIsAuthenticated(true);
-      setIsTwoFactorStep(false);
-      setPinInput('');
-      setTwoFactorInput('');
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-        try {
-          Notification.requestPermission();
-        } catch (err) {}
-      }
-      loadAllAdminData();
-    } catch (err) {
-      setTwoFactorError(err.message || 'Código de seguridad incorrecto.');
-    } finally {
-      setIsVerifying2FA(false);
-    }
-  };
-
-  const handleResend2FACode = async () => {
-    try {
-      setTwoFactorError('Enviando nuevo código a tu correo...');
-      const fresh = await generateTwoFactorCode();
-      setTwoFactorData(fresh);
-      setTwoFactorInput('');
-      setTwoFactorError('✓ Se ha enviado un nuevo código de 6 dígitos a tu correo sgarcesg0410@gmail.com.');
-    } catch (err) {
-      setTwoFactorError('Error al reenviar código.');
-    }
-  };
-
-  const handleBackToPin = () => {
-    setIsTwoFactorStep(false);
-    setPinInput('');
-    setTwoFactorInput('');
-    setTwoFactorError('');
-    setAuthError('');
-  };
-
-  const handleStartRecovery = (e) => {
-    if (e) e.preventDefault();
-    setIsRecoveringPin(true);
-    setRecoveryStep(1);
-    setRecoveryMethod('phone');
-    setRecoveryError('');
-    setRecoveryMsg('');
-    setRecoveryPhone('');
-    setRecoveryNewPin('');
-    setRecoveryConfirmPin('');
-  };
-
-  const handleRequestEmailRecoveryCode = async () => {
-    setIsSendingRecoveryEmail(true);
-    setRecoveryError('');
-    setRecoveryMsg('');
-    try {
-      const res = await generateTwoFactorCode();
-      setRecoveryMethod('email');
-      setRecoveryStep(1);
-      setRecoveryPhone('');
-      setRecoveryMsg(`✓ Código de 6 dígitos enviado a tu correo (${res.emailMasked}). Revisa tu bandeja de entrada.`);
-    } catch (err) {
-      setRecoveryError('Error al enviar el código de seguridad al correo.');
-    } finally {
-      setIsSendingRecoveryEmail(false);
-    }
-  };
-
-  const handleVerifyPhoneForRecovery = async (e) => {
-    if (e) e.preventDefault();
-    setRecoveryError('');
-    setRecoveryMsg('');
-    try {
-      const res = await recoverAdminPin(recoveryPhone);
-      setRecoveryStep(2);
-      setRecoveredPinDisplay(res.currentPin || '');
-      setRecoveryMsg('✓ Identidad verificada exitosamente. Ahora escribe tu nuevo PIN de acceso.');
-    } catch (err) {
-      if (recoveryMethod === 'email') {
-        setRecoveryError(err.message || 'Código de verificación incorrecto o expirado.');
-      } else {
-        setRecoveryError(err.message || 'El número ingresado no coincide con las líneas registradas (324 4725167 o 302 369 6513).');
-      }
-    }
-  };
-
-  const handleResetPinSubmit = async (e) => {
-    e.preventDefault();
-    setRecoveryError('');
-    setRecoveryMsg('');
-
-    if (recoveryNewPin.length < 4) {
-      setRecoveryError('El nuevo PIN debe tener al menos 4 números.');
-      return;
-    }
-
-    if (recoveryNewPin !== recoveryConfirmPin) {
-      setRecoveryError('Los dos PIN ingresados no coinciden.');
-      return;
-    }
-
-    try {
-      await recoverAdminPin(recoveryPhone, recoveryNewPin);
-      setRecoveryMsg('¡PIN actualizado con éxito! Ya puedes iniciar sesión con tu nuevo PIN.');
-      setTimeout(() => {
-        setIsRecoveringPin(false);
-        setPinInput(recoveryNewPin);
-      }, 2000);
-    } catch (err) {
-      setRecoveryError(err.message || 'Error al actualizar PIN');
-    }
   };
 
   // Handlers para Acceso Biométrico (Huella Dactilar / Face ID)
@@ -3486,32 +3323,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Manejador de Cambio de PIN dentro del Dashboard
-  const handleChangePinSubmit = async (e) => {
-    e.preventDefault();
-    setPinChangeMsg('');
-    setPinChangeError('');
-
-    if (pinChangeForm.newPin.length < 4) {
-      setPinChangeError('El nuevo PIN debe tener al menos 4 caracteres.');
-      return;
-    }
-
-    if (pinChangeForm.newPin !== pinChangeForm.confirmPin) {
-      setPinChangeError('El nuevo PIN y su confirmación no coinciden.');
-      return;
-    }
-
-    try {
-      await changeAdminPin(pinChangeForm.currentPin, pinChangeForm.newPin);
-      setPinChangeMsg('¡PIN de acceso actualizado con éxito!');
-      setPinChangeForm({ currentPin: '', newPin: '', confirmPin: '' });
-      setTimeout(() => setPinChangeMsg(''), 4000);
-    } catch (err) {
-      setPinChangeError(err.message || 'El PIN actual no es correcto.');
-    }
-  };
-
   const handleReopenSession = async (sessionId) => {
     if (!confirm('¿Deseas reabrir esta sesión y darle 3 días adicionales al cliente para elegir?')) return;
     try {
@@ -3597,131 +3408,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             Ingreso privado para reservas, fotos y precios
           </p>
 
-          {isTwoFactorStep ? (
-            /* PASO 2: VERIFICACIÓN DE DOBLE FACTOR (2FA) */
-            <div className="space-y-4 text-left">
-              <div className="text-center">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-bold uppercase tracking-wider mb-2">
-                  <Shield className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Paso 2 • Doble Factor (2FA)</span>
-                </div>
-                <h4 className="text-xl font-serif font-bold text-white">
-                  Verifica tu Identidad
-                </h4>
-                <p className="text-xs text-stone-300 mt-1">
-                  Se detectó un dispositivo no verificado. Hemos despachado un código exclusivo de seguridad a tu correo oficial.
-                </p>
-              </div>
-
-              {/* Canal Seguro de Entrega */}
-              <div className="p-3.5 rounded-2xl bg-stone-950/90 border border-stone-800 space-y-2 text-xs">
-                <div className="flex items-center justify-between text-stone-300">
-                  <span className="flex items-center gap-1.5 text-stone-400">
-                    <Mail className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Correo Autorizado:</span>
-                  </span>
-                  <span className="font-mono font-bold text-amber-300">sga••••••0410@gmail.com</span>
-                </div>
-                <p className="text-[11px] text-stone-400 leading-relaxed pt-1 border-t border-stone-800/80">
-                  Abre tu correo electrónico personal para copiar el código de 6 dígitos e ingresarlo abajo.
-                </p>
-              </div>
-
-              {/* Mensajes de error o éxito */}
-              {twoFactorError && (
-                <div className={`p-2.5 rounded-xl text-xs text-center ${
-                  twoFactorError.startsWith('✓') 
-                    ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-200' 
-                    : 'bg-red-950/80 border border-red-500/40 text-red-200'
-                }`}>
-                  {twoFactorError}
-                </div>
-              )}
-
-              {/* Formulario de Código de 6 dígitos */}
-              <form onSubmit={handleVerify2FASubmit} className="space-y-3 pt-1">
-                <div>
-                  <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block mb-1.5 text-center">
-                    Ingresa el código de 6 dígitos:
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={twoFactorInput}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 6);
-                      setTwoFactorInput(val);
-                      if (val.length === 6) {
-                        setTimeout(async () => {
-                          try {
-                            await verifyTwoFactorCode(val, rememberDevice);
-                            setIsAuthenticated(true);
-                            setIsTwoFactorStep(false);
-                            setPinInput('');
-                            setTwoFactorInput('');
-                            loadAllAdminData();
-                          } catch (err) {
-                            setTwoFactorError(err.message || 'Código incorrecto');
-                          }
-                        }, 120);
-                      }
-                    }}
-                    placeholder="000000"
-                    className="w-full text-center tracking-[0.35em] font-mono font-bold text-2xl py-2.5 px-4 rounded-2xl bg-stone-950 border border-amber-500/50 text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-stone-700"
-                    autoFocus
-                  />
-                </div>
-
-                {/* Casilla: Recordar este dispositivo por 30 días */}
-                <label className="flex items-center justify-center gap-2 text-xs text-stone-300 cursor-pointer pt-1 select-none">
-                  <input
-                    type="checkbox"
-                    checked={rememberDevice}
-                    onChange={(e) => setRememberDevice(e.target.checked)}
-                    className="w-4 h-4 rounded text-amber-500 bg-stone-950 border-stone-700 focus:ring-amber-400 cursor-pointer"
-                  />
-                  <span>Recordar este dispositivo por 30 días</span>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={isVerifying2FA || twoFactorInput.length < 6}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 disabled:opacity-40 text-stone-950 font-bold text-xs sm:text-sm shadow-lg shadow-amber-500/25 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Check className="w-4 h-4 stroke-[3]" />
-                  <span>{isVerifying2FA ? 'Verificando...' : 'Confirmar & Entrar al Panel'}</span>
-                </button>
-              </form>
-
-              {/* Nota de verificación */}
-              <div className="p-2.5 rounded-xl bg-stone-950/60 border border-stone-800/80 text-[11px] text-stone-400 text-center">
-                💡 <span className="text-stone-300">¿No recibes el correo?</span> Revisa tu carpeta de spam o pulsa en <strong className="text-stone-300 font-semibold">Reenviar código</strong>.
-              </div>
-
-              {/* Botones de pie */}
-              <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  onClick={handleResend2FACode}
-                  className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 font-medium cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Reenviar código</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleBackToPin}
-                  className="text-stone-400 hover:text-stone-200 hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                  <span>Volver al PIN</span>
-                </button>
-              </div>
-            </div>
-          ) : !isRecoveringPin ? (
-            /* FORMULARIO DE LOGIN VIP CON CONTRASEÑA MAESTRA */
-            <form onSubmit={handleLogin} className="space-y-4">
+          {/* FORMULARIO DE LOGIN VIP CON CONTRASEÑA MAESTRA */}
+          <form onSubmit={handleLogin} className="space-y-4">
               {authError && (
                 <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-left">
                   {authError}
@@ -3806,15 +3494,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </button>
 
               <div className="pt-3 border-t border-stone-800/80 space-y-2">
-                <button
-                  type="button"
-                  onClick={handleStartRecovery}
-                  className="text-xs text-amber-400 hover:text-amber-300 hover:underline flex items-center justify-center gap-1 mx-auto font-medium cursor-pointer"
-                >
-                  <Key className="w-3.5 h-3.5" />
-                  <span>¿Olvidaste tu contraseña? Recuperar aquí</span>
-                </button>
-
                 {bioSupported && !bioConfigured && (
                   <p className="text-[11px] text-stone-400 text-center flex items-center justify-center gap-1.5 pt-1">
                     <Fingerprint className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -3834,166 +3513,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 )}
               </div>
             </form>
-          ) : (
-            /* FLUJO DE RECUPERACIÓN DE PIN */
-            <div className="space-y-4 text-left">
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-200">
-                🔐 <strong>Recuperación de Seguridad:</strong> Elige tu método de validación para verificar tu identidad y restablecer tu PIN.
-              </div>
-
-              {/* Selector de Método de Recuperación */}
-              {recoveryStep === 1 && (
-                <div className="flex rounded-xl bg-stone-950 p-1 border border-stone-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRecoveryMethod('phone');
-                      setRecoveryError('');
-                      setRecoveryPhone('');
-                    }}
-                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
-                      recoveryMethod === 'phone' ? 'bg-amber-500 text-stone-950 shadow' : 'text-stone-400 hover:text-white'
-                    }`}
-                  >
-                    Por WhatsApp
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRecoveryMethod('email');
-                      setRecoveryError('');
-                      setRecoveryPhone('');
-                      handleRequestEmailRecoveryCode();
-                    }}
-                    className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
-                      recoveryMethod === 'email' ? 'bg-amber-500 text-stone-950 shadow' : 'text-stone-400 hover:text-white'
-                    }`}
-                  >
-                    Por Correo (Código)
-                  </button>
-                </div>
-              )}
-
-              {recoveryError && (
-                <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs">
-                  {recoveryError}
-                </div>
-              )}
-
-              {recoveryMsg && (
-                <div className="p-3 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-200 text-xs">
-                  {recoveryMsg}
-                </div>
-              )}
-
-              {recoveryStep === 1 ? (
-                recoveryMethod === 'phone' ? (
-                  <form onSubmit={handleVerifyPhoneForRecovery} className="space-y-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                        Tu Número de WhatsApp Registrado *
-                      </label>
-                      <input
-                        type="tel"
-                        required
-                        value={recoveryPhone}
-                        onChange={(e) => setRecoveryPhone(e.target.value)}
-                        placeholder="Ej. 3244725167 o 3023696513"
-                        className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl text-xs cursor-pointer"
-                    >
-                      Verificar Mi Número
-                    </button>
-                  </form>
-                ) : (
-                  <form onSubmit={handleVerifyPhoneForRecovery} className="space-y-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                        Código de 6 Dígitos Recibido al Correo *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={6}
-                        value={recoveryPhone}
-                        onChange={(e) => setRecoveryPhone(e.target.value)}
-                        placeholder="Ej. 654321"
-                        className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 font-mono text-center tracking-widest text-lg"
-                      />
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        type="submit"
-                        className="flex-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold py-3 rounded-xl text-xs cursor-pointer"
-                      >
-                        Validar Código y Continuar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleRequestEmailRecoveryCode}
-                        disabled={isSendingRecoveryEmail}
-                        className="px-3 bg-stone-800 hover:bg-stone-700 text-amber-400 rounded-xl text-xs font-medium cursor-pointer"
-                        title="Reenviar código al correo"
-                      >
-                        {isSendingRecoveryEmail ? '...' : 'Reenviar'}
-                      </button>
-                    </div>
-                  </form>
-                )
-              ) : (
-                <form onSubmit={handleResetPinSubmit} className="space-y-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                      Escribe tu Nuevo PIN *
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={recoveryNewPin}
-                      onChange={(e) => setRecoveryNewPin(e.target.value)}
-                      placeholder="Mínimo 4 dígitos (ej: 0493)"
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                      Confirma tu Nuevo PIN *
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={recoveryConfirmPin}
-                      onChange={(e) => setRecoveryConfirmPin(e.target.value)}
-                      placeholder="Repite el nuevo PIN"
-                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-xs cursor-pointer"
-                  >
-                    Guardar Nuevo PIN y Entrar
-                  </button>
-                </form>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setIsRecoveringPin(false)}
-                className="w-full text-center text-xs text-stone-400 hover:text-white pt-1"
-              >
-                Volver a la pantalla de PIN
-              </button>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -9229,84 +8748,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           </div>
 
-          {/* SECCIÓN 2: SEGURIDAD Y CAMBIO DE PIN */}
-          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-5">
+          {/* SECCIÓN 2: SEGURIDAD Y ACCESO DE LA BÓVEDA */}
+          <div className="bg-stone-900 border border-stone-800 rounded-3xl p-6 sm:p-8 space-y-4">
             <div>
-              <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-                Seguridad de Acceso
+              <span className="text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+                <Lock className="w-4 h-4 text-amber-400" />
+                Seguridad de la Bóveda VIP
               </span>
-              <h3 className="text-xl font-serif font-bold text-white">
-                Cambiar Contraseña / PIN del Panel
+              <h3 className="text-xl font-serif font-bold text-white mt-1">
+                Contraseña Maestra de Acceso
               </h3>
-              <p className="text-xs text-stone-400 mt-0.5">
-                Modifica tu clave de acceso para mayor seguridad.
+              <p className="text-xs text-stone-400 mt-1">
+                Por seguridad de nivel bancario, la contraseña está protegida mediante derivación criptográfica scrypt en el servidor (Vercel).
               </p>
             </div>
 
-            {pinChangeMsg && (
-              <div className="p-3 bg-emerald-950/80 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs">
-                {pinChangeMsg}
+            <div className="p-4 bg-stone-950/80 border border-stone-800/80 rounded-2xl space-y-2 text-xs text-stone-300">
+              <div className="flex items-center gap-2 text-amber-400 font-semibold">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Protección Criptográfica Activa</span>
               </div>
-            )}
-
-            {pinChangeError && (
-              <div className="p-3 bg-red-950/80 border border-red-500/50 rounded-xl text-red-200 text-xs">
-                {pinChangeError}
-              </div>
-            )}
-
-            <form onSubmit={handleChangePinSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
-                  PIN Actual *
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={pinChangeForm.currentPin}
-                  onChange={(e) => setPinChangeForm({ ...pinChangeForm, currentPin: e.target.value })}
-                  placeholder="Escribe tu PIN actual"
-                  className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
-                    Nuevo PIN (Mínimo 4 dígitos) *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={pinChangeForm.newPin}
-                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, newPin: e.target.value })}
-                    placeholder="Nuevo PIN"
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1">
-                    Confirma tu Nuevo PIN *
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={pinChangeForm.confirmPin}
-                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, confirmPin: e.target.value })}
-                    placeholder="Repite el nuevo PIN"
-                    className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full bg-stone-800 hover:bg-stone-700 text-white font-bold py-3 rounded-xl text-xs transition-colors"
-              >
-                Actualizar PIN de Seguridad
-              </button>
-            </form>
+              <p className="text-stone-400 text-[11px] leading-relaxed">
+                Para rotar tu contraseña en cualquier momento, genera un nuevo hash con <code className="text-amber-300 bg-stone-900 px-1.5 py-0.5 rounded font-mono">node scripts/hash-admin-pin.mjs &quot;TuNuevaClave&quot;</code> y actualiza la variable de entorno <code className="text-amber-300 bg-stone-900 px-1.5 py-0.5 rounded font-mono">ADMIN_PIN_SCRYPT</code> en tu panel de Vercel.
+              </p>
+            </div>
           </div>
 
           {/* SECCIÓN 2.5: ACCESO BIOMÉTRICO (HUELLA DACTILAR / FACE ID) */}

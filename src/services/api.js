@@ -3525,105 +3525,11 @@ export async function deleteAllSampleCatalogPhotos() {
   return { success: true };
 }
 
-export async function changeAdminPin(currentPin, newPin) {
-  const cleanCurrent = String(currentPin || '').trim();
-  const cleanNew = String(newPin || '').trim();
-
-  if (!cleanCurrent || !cleanNew) {
-    throw new Error('Por favor completa el PIN actual y el nuevo PIN.');
-  }
-
-  const currentHash = await hashStringSHA256(cleanCurrent);
-  const newHash = await hashStringSHA256(cleanNew);
-
-  let activeHash = DEFAULT_PIN_HASH;
-  const savedHash = localStorage.getItem(LOCAL_PIN_HASH_KEY);
-  if (savedHash && savedHash.length === 64) {
-    activeHash = savedHash;
-  }
-
-  // Comprobar PIN actual
-  if (currentHash !== activeHash) {
-    const rawLegacy = localStorage.getItem(LOCAL_PIN_KEY);
-    if (!rawLegacy || rawLegacy !== cleanCurrent) {
-      throw new Error('El PIN actual no coincide.');
-    }
-  }
-
-  // Guardar nuevo PIN hasheado
-  localStorage.setItem(LOCAL_PIN_HASH_KEY, newHash);
-  localStorage.removeItem(LOCAL_PIN_KEY); // Eliminar PIN en texto plano
-
-  // Sincronizar en Supabase
-  try {
-    await supabase.from('catalog').upsert({
-      id: 'system_admin_pin_hash',
-      title: 'Admin Security Hash',
-      category: 'security_data',
-      location: 'system',
-      url: JSON.stringify({ hash: newHash, updatedAt: new Date().toISOString() })
-    });
-  } catch (e) {}
-
-  return { success: true, message: '¡PIN actualizado y cifrado con éxito!' };
+export async function changeAdminPin() {
+  throw new Error('La contraseña maestra se administra de forma segura en las variables de entorno de Vercel.');
 }
 
-export async function recoverAdminPin(phoneOrCode, newPin = null) {
-  const cleanInput = String(phoneOrCode || '').trim();
-  const cleanPhone = cleanInput.replace(/\D/g, '');
-  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
-  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
-
-  let isVerified = false;
-
-  // 1. Verificación por número de WhatsApp registrado
-  if ((cleanPhone.length >= 7 && p1.endsWith(cleanPhone)) || (cleanPhone.length >= 7 && p2.endsWith(cleanPhone))) {
-    isVerified = true;
-  }
-
-  // 2. Verificación por código de seguridad recibido por correo (6 dígitos)
-  if (!isVerified && cleanInput.length === 6) {
-    try {
-      const codeCheck = await verifyTwoFactorCode(cleanInput, false);
-      if (codeCheck && codeCheck.success) {
-        isVerified = true;
-      }
-    } catch (e) {
-      // Código inválido o expirado
-    }
-  }
-
-  if (isVerified) {
-    if (newPin) {
-      const cleanNew = String(newPin).trim();
-      if (cleanNew.length < 4) {
-        throw new Error('El nuevo PIN debe tener al menos 4 números.');
-      }
-      const newHash = await hashStringSHA256(cleanNew);
-      localStorage.setItem(LOCAL_PIN_HASH_KEY, newHash);
-      localStorage.removeItem(LOCAL_PIN_KEY);
-
-      // Sincronizar en Supabase para que todas las instancias (APK y Web) lo reconozcan
-      try {
-        await supabase.from('catalog').upsert({
-          id: 'system_admin_pin_hash',
-          title: 'Admin Security Hash',
-          category: 'security_data',
-          location: 'system',
-          url: JSON.stringify({ hash: newHash, updatedAt: new Date().toISOString() })
-        });
-      } catch (e) {}
-
-      // Sincronizar en el servidor local/Vercel
-      try {
-        await fetch(`${API_BASE}/settings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ adminPinHash: newHash })
-        });
-      } catch (e) {}
-    }
-    return { success: true, verified: true, message: 'Identidad verificada exitosamente.' };
-  }
-  throw new Error('Número de WhatsApp o código de seguridad no reconocido.');
+export async function recoverAdminPin() {
+  throw new Error('La recuperación de credenciales se gestiona mediante rotación de claves en Vercel.');
 }
+
