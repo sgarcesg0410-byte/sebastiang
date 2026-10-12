@@ -293,13 +293,28 @@ describe('Pasarela de Pagos Wompi - Módulo Criptográfico y Reglas de Negocio',
       const alreadyApprovedPayment = {
         id: 'pay-wompi-1',
         reference: 'ref-wompi-test-123',
-        status: 'approved',
+        status: 'verified',
+        gatewayStatus: 'APPROVED',
         amount: 20000
       };
 
       // Si el webhook llega por segunda vez para la misma transacción
       const isAlreadyProcessed = alreadyApprovedPayment.status === 'verified' || alreadyApprovedPayment.status === 'approved';
       expect(isAlreadyProcessed).toBe(true);
+    });
+
+    it('normaliza el estado contable a verified preservando gatewayStatus para trazabilidad', () => {
+      // Simulación de la transición del webhook
+      const rawWebhookStatus = 'APPROVED';
+      const updatedPayment = {
+        id: 'pay-wompi-1',
+        amount: 20000,
+        status: rawWebhookStatus === 'APPROVED' ? 'verified' : 'rejected',
+        gatewayStatus: rawWebhookStatus
+      };
+
+      expect(updatedPayment.status).toBe('verified');
+      expect(updatedPayment.gatewayStatus).toBe('APPROVED');
     });
   });
 

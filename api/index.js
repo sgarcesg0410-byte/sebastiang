@@ -1423,7 +1423,9 @@ app.post('/api/payments/webhook', async (req, res) => {
   }
 
   if (tx.status === 'APPROVED') {
-    payment.status = 'approved';
+    // Estado canónico unificado para toda la contabilidad del sistema
+    payment.status = 'verified';
+    payment.gatewayStatus = tx.status;
     payment.transactionId = tx.id;
     payment.paymentMethodType = tx.payment_method_type || 'WOMPI';
     payment.approvedAt = new Date().toISOString();
@@ -1463,6 +1465,7 @@ app.post('/api/payments/webhook', async (req, res) => {
     return res.status(200).json({ success: true, status: 'APPROVED', reference: payment.reference });
   } else if (tx.status === 'DECLINED' || tx.status === 'VOIDED' || tx.status === 'ERROR') {
     payment.status = 'rejected';
+    payment.gatewayStatus = tx.status;
     payment.transactionId = tx.id;
     payment.rejectedAt = new Date().toISOString();
 

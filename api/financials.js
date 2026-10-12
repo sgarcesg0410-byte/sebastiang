@@ -92,10 +92,10 @@ export function computeBookingPaymentStatus(booking, payments = []) {
 }
 
 export function computeWalletTotals(payments = [], { onlyVerified = true } = {}) {
-  const totals = { nequi: 0, daviplata: 0, dale: 0, efectivo: 0, otro: 0 };
+  const totals = { nequi: 0, daviplata: 0, dale: 0, wompi: 0, efectivo: 0, otro: 0 };
   for (const p of Array.isArray(payments) ? payments : []) {
     if (!p) continue;
-    if (onlyVerified && p.status !== 'verified') continue;
+    if (onlyVerified && p.status !== 'verified' && p.status !== 'approved') continue;
     if (!onlyVerified && p.status === 'rejected') continue;
 
     const method = String(p.method || 'otro').toLowerCase().trim();
@@ -119,7 +119,7 @@ export function computePortfolioBalance(bookings = [], payments = []) {
 
   let cobrado = 0;
   for (const p of Array.isArray(payments) ? payments : []) {
-    if (p && p.status === 'verified') {
+    if (p && (p.status === 'verified' || p.status === 'approved')) {
       cobrado += Number(p.amount) || 0;
     }
   }

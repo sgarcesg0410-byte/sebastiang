@@ -5,6 +5,10 @@ import {
   getRetabloSizes,
   calculateRetablosFinancials
 } from '../services/api';
+import {
+  computeWalletTotals,
+  computePortfolioBalance
+} from '../services/financials';
 
 describe('Cálculos Financieros de Retablos (Margen, Costo y Ganancia)', () => {
   it('debe tener las dimensiones y precios acordados por defecto para Sebastian G', () => {
@@ -77,3 +81,43 @@ describe('Cálculos Financieros de Retablos (Margen, Costo y Ganancia)', () => {
     expect(fin.items).toEqual([]);
   });
 });
+
+describe('Totales de Billeteras y Balance de Portafolio (computeWalletTotals & computePortfolioBalance)', () => {
+  it('computeWalletTotals suma pagos con method "wompi" y estados "verified" y "approved"', () => {
+    const payments = [
+      { id: 'pay-1', method: 'wompi', amount: 20000, status: 'verified' },
+      { id: 'pay-2', method: 'nequi', amount: 50000, status: 'verified' },
+      { id: 'pay-3', method: 'wompi', amount: 30000, status: 'approved' }, // Compatibilidad defensiva
+      { id: 'pay-4', method: 'daviplata', amount: 40000, status: 'pending_gateway' }, // No verificado
+      { id: 'pay-5', method: 'wompi', amount: 20000, status: 'rejected' } // Rechazado
+    ];
+
+    const totals = computeWalletTotals(payments, { onlyVerified: true });
+
+    expect(totals.wompi).toBe(50000); // 20k verified + 30k approved
+    expect(totals.nequi).toBe(50000);
+    expect(totals.daviplata).toBe(0); // pending_gateway no cuenta
+    expect(totals.dale).toBe(0);
+  });
+
+  it('computePortfolioBalance cuenta pagos Wompi verificados y no infla con pendientes', () => {
+    const bookings = [
+      { id: 'b-1', totalPrice: 100000, status: 'confirmed' },
+      { id: 'b-2', totalPrice: 80000, status: 'pending' },
+      { id: 'b-3', totalPrice: 50000, status: 'cancelled' } // Cancelada no suma
+    ];
+
+    const payments = [
+      { id: 'p-1', amount: 20000, status: 'verified', method: 'wompi' },
+      { id: 'p-2', amount: 30000, status: 'approved', method: 'nequi' },
+      { id: 'p-3', amount: 20000, status: 'pending_gateway', method: 'wompi' } // Pendiente no suma a cobrado
+    ];
+
+    const balance = computePortfolioBalance(bookings, payments);
+
+    expect(balance.total).toBe(180000); // 100k + 80k (la de 50k cancelada se excluye)
+    expect(balance.cobrado).toBe(50000); // 20k verified + 30k approved (p-3 no cuenta)
+    expect(balance.porCobrar).toBe(130000); // 180k - 50k
+  });
+});
+
