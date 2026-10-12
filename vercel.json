@@ -24,6 +24,10 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/fotografo-covenas", "destination": "/fotografo-covenas/index.html" },
+    { "source": "/fotografo-covenas/", "destination": "/fotografo-covenas/index.html" },
+    { "source": "/sesiones-playa-san-antero", "destination": "/sesiones-playa-san-antero/index.html" },
+    { "source": "/sesiones-playa-san-antero/", "destination": "/sesiones-playa-san-antero/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote, Camera } from 'lucide-react';
-import { getReviews, REAL_DEFAULT_REVIEWS } from '../services/api';
+import { getReviews } from '../services/api';
 
 export default function TestimonialsSection({ onOpenBooking }) {
   const [reviews, setReviews] = useState([]);
@@ -45,6 +45,17 @@ export default function TestimonialsSection({ onOpenBooking }) {
     return null;
   }
 
+  // Métricas reales y honestas calculadas en vivo
+  const totalReviews = reviews.length;
+  const ratings = reviews.map(r => Math.max(1, Math.min(5, Number(r.rating) || 5)));
+  const avgRating = totalReviews > 0
+    ? (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1)
+    : '5.0';
+  const satisfiedReviews = ratings.filter(r => r >= 4).length;
+  const recommendPercent = totalReviews > 0
+    ? Math.round((satisfiedReviews / totalReviews) * 100)
+    : 100;
+
   return (
     <section id="testimonials-section" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">
       
@@ -63,24 +74,26 @@ export default function TestimonialsSection({ onOpenBooking }) {
           La confianza de quienes ya vivieron su sesión con Sebastian G. Cada fotografía es un recuerdo capturado con amor, técnica y entrega en máxima resolución original.
         </p>
 
-        {/* INSIGNIAS DE CONFIANZA */}
+        {/* INSIGNIAS DE CONFIANZA CALCULADAS EN VIVO */}
         <div className="grid grid-cols-3 gap-3 sm:gap-6 mt-8 max-w-xl mx-auto">
           <div className="bg-stone-900/80 border border-stone-800/80 p-3.5 rounded-2xl text-center shadow-lg">
             <div className="flex items-center justify-center gap-1 text-amber-400 text-base sm:text-lg font-black font-mono">
-              <span>5.0</span>
+              <span>{avgRating}</span>
               <Star className="w-4 h-4 fill-amber-400" />
             </div>
-            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">Calificación Promedio</span>
+            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">
+              {totalReviews} {totalReviews === 1 ? 'Opinión Verificada' : 'Opiniones Reales'}
+            </span>
           </div>
 
           <div className="bg-stone-900/80 border border-stone-800/80 p-3.5 rounded-2xl text-center shadow-lg">
-            <span className="text-base sm:text-lg font-black text-emerald-400 font-mono">100%</span>
-            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">Nos Recomiendan</span>
+            <span className="text-base sm:text-lg font-black text-emerald-400 font-mono">{recommendPercent}%</span>
+            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">Recomendación Real</span>
           </div>
 
           <div className="bg-stone-900/80 border border-stone-800/80 p-3.5 rounded-2xl text-center shadow-lg">
             <span className="text-base sm:text-lg font-black text-purple-400 font-mono">Full HD</span>
-            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">Calidad Original</span>
+            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">Resolución Original</span>
           </div>
         </div>
 

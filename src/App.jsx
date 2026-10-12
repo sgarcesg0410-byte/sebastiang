@@ -22,6 +22,7 @@ function ModuleLoader({ message = "Cargando módulo..." }) {
   );
 }
 import AboutSection from './components/AboutSection';
+import HowItWorksSection from './components/HowItWorksSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import MobileStickyBookingBar from './components/MobileStickyBookingBar';
@@ -380,6 +381,13 @@ export default function App() {
                 }}
                 onOpenBooking={(photo) => handleOpenBooking(photo)}
               />
+              <HowItWorksSection
+                onOpenBooking={() => handleOpenBooking(null)}
+                onNavigateToPackages={() => {
+                  setCurrentView('packages');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              />
               <div id="testimonials-section">
                 <TestimonialsSection />
               </div>
@@ -648,6 +656,25 @@ export default function App() {
                   </li>
                   <li>
                     <button
+                      onClick={() => {
+                        if (currentView !== 'home') {
+                          setCurrentView('home');
+                          setTimeout(() => {
+                            const el = document.getElementById('how-it-works-section');
+                            if (el) el.scrollIntoView({ behavior: 'smooth' });
+                          }, 100);
+                        } else {
+                          const el = document.getElementById('how-it-works-section');
+                          if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        }
+                      }}
+                      className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
+                    >
+                      <span>Cómo Funciona (4 Pasos)</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
                       onClick={() => { setCurrentView('packages'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                       className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
                     >
@@ -657,8 +684,16 @@ export default function App() {
                   <li>
                     <button
                       onClick={() => {
-                        const el = document.getElementById('testimonials');
-                        if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        if (currentView !== 'home') {
+                          setCurrentView('home');
+                          setTimeout(() => {
+                            const el = document.getElementById('testimonials-section');
+                            if (el) el.scrollIntoView({ behavior: 'smooth' });
+                          }, 100);
+                        } else {
+                          const el = document.getElementById('testimonials-section');
+                          if (el) el.scrollIntoView({ behavior: 'smooth' });
+                        }
                       }}
                       className="hover:text-amber-300 transition-colors flex items-center gap-1.5"
                     >
@@ -683,13 +718,25 @@ export default function App() {
                   Locaciones
                 </span>
                 <ul className="space-y-2 text-xs text-stone-400">
-                  <li className="flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                    <span>San Antero</span>
+                  <li>
+                    <a
+                      href="/sesiones-playa-san-antero/"
+                      className="flex items-center gap-1.5 hover:text-amber-300 transition-colors"
+                      title="Sesiones de fotos en la playa San Antero"
+                    >
+                      <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                      <span>San Antero (Playa Blanca)</span>
+                    </a>
                   </li>
-                  <li className="flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                    <span>Coveñas</span>
+                  <li>
+                    <a
+                      href="/fotografo-covenas/"
+                      className="flex items-center gap-1.5 hover:text-amber-300 transition-colors"
+                      title="Fotógrafo profesional en Coveñas"
+                    >
+                      <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                      <span>Coveñas (Playas & Atardecer)</span>
+                    </a>
                   </li>
                   <li className="flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
@@ -697,7 +744,7 @@ export default function App() {
                   </li>
                   <li className="flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                    <span>Playa Blanca & Privadas</span>
+                    <span>Playas Privadas & Ensenadas</span>
                   </li>
                 </ul>
                 <div className="pt-1">

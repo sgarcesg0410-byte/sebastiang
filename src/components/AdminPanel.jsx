@@ -8934,16 +8934,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
                   <span>{bioError}</span>
                 </div>
-                <div className="p-3 bg-stone-950/80 border border-amber-500/30 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs">
-                  <span className="text-stone-300">¿Estás en tu celular? Instala la nueva APK para activar el lector:</span>
-                  <a
-                    href="/SebastianG-Admin.apk"
-                    download="SebastianG-Admin.apk"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-stone-950 font-black text-[11px] shadow-sm hover:scale-105 active:scale-95 transition-all"
-                  >
-                    <DownloadCloud className="w-3.5 h-3.5" />
-                    <span>Descargar APK v1.4.0 con Huella</span>
-                  </a>
+                <div className="p-3 bg-stone-950/80 border border-stone-800 rounded-xl text-xs text-stone-400">
+                  <span>💡 Para usar el sensor biométrico, asegúrate de tener activada la huella en los ajustes de seguridad de tu teléfono o navegador compatible.</span>
                 </div>
               </div>
             )}
@@ -10136,15 +10128,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <span>¡Y listo! Se creará el icono de Sebastian G en tu celular y se abrirá siempre en tu panel en pantalla completa.</span>
               </div>
             </div>
-
-            <a
-              href="/SebastianG-Admin.apk"
-              download="SebastianG-Admin.apk"
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.02]"
-            >
-              <DownloadCloud className="w-4 h-4" />
-              <span>📥 Descargar Archivo APK Directo (v1.4.0 con Huella Dactilar)</span>
-            </a>
 
             <button
               type="button"
