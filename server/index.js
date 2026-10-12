@@ -3,7 +3,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { createAdminToken, verifyAdminPin, requireAdminAuth } from '../api/security.js';
+import { createAdminToken, createReceiptToken, verifyAdminPin, requireAdminAuth } from '../api/security.js';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -368,7 +368,8 @@ app.use('/api/admin', (req, res, next) => {
 // Obtener todas las reservas para el fotógrafo
 app.get('/api/admin/bookings', (req, res) => {
   const db = readDB();
-  res.json(db.bookings || []);
+  // receiptToken firma el enlace del recibo público (QR del PDF); sin él el QR usa el ID crudo.
+  res.json((db.bookings || []).map(b => ({ ...b, receiptToken: createReceiptToken(b.id) })));
 });
 
 // Actualizar datos de una reserva (estado, fecha, notas, etc.)

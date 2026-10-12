@@ -257,11 +257,8 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
   // ----------------------------------------------------------------------------
   // Sustituye a la descarga completa de reservas que hacía PublicReceiptView.
   app.get('/api/public/receipt/:token', publicLimiter, async (req, res) => {
-    const rawToken = req.params.token;
-    let bookingId = verifyReceiptToken(rawToken);
-    if (!bookingId && typeof rawToken === 'string' && rawToken.trim()) {
-      bookingId = rawToken.trim();
-    }
+    // Solo tokens firmados: el ID crudo de la reserva nunca autoriza ver el comprobante.
+    const bookingId = verifyReceiptToken(req.params.token);
     if (!bookingId) {
       return res.status(404).json({ error: 'Comprobante no encontrado o enlace inválido.' });
     }
