@@ -443,6 +443,7 @@ export const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
   photographerWhatsApp: "+573244725167",
   photographerWhatsApp2: "+573023696513",
+  googleBusinessUrl: "https://maps.google.com/?q=Sebastian+G+Fotografia+San+Antero+Covenas",
   outOfSanAnteroSurcharge: 10000,
   currencySymbol: "$",
   tagline: "Capturamos momentos, creamos recuerdos. ♡",
@@ -2641,6 +2642,21 @@ export async function checkClientLoyalty(phone) {
   return { isLoyal: false, discountPercent: 0 };
 }
 
+export async function checkReferralCode(code, clientPhone) {
+  if (!code || String(code).trim().length < 6) {
+    return { valid: false, discountPercent: 0, message: '' };
+  }
+  try {
+    const res = await fetch(`${API_BASE}/public/referral?code=${encodeURIComponent(code)}&clientPhone=${encodeURIComponent(clientPhone || '')}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    console.warn('Error verificando código de referido:', e);
+  }
+  return { valid: false, discountPercent: 0, message: 'No se pudo verificar el código de referido.' };
+}
+
 export async function getAdminSessions() {
   let serverSessions = [];
   try {
@@ -3425,5 +3441,47 @@ export async function changeAdminPasswordOnServer(currentPin, newPin) {
     throw new Error(data.error || 'Error al cambiar la contraseña en el servidor.');
   }
   return data;
+}
+
+/**
+ * Inicia una sesión de pago en línea con Wompi (Abono o Saldo).
+ * El backend valida montos, persiste la referencia en Supabase y firma la petición.
+ */
+export async function createWompiCheckout({ bookingId, sessionToken, concept, amount, clientName, clientWhatsApp, clientEmail }) {
+  const res = await fetch(`${API_BASE}/payments/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bookingId,
+      sessionToken,
+      concept,
+      amount,
+      clientName,
+      clientWhatsApp,
+      clientEmail
+    })
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'No se pudo iniciar el checkout de pago.');
+  }
+  return data;
+}
+
+/**
+ * Consulta el estado de un pago por su referencia pública (sin PII sensible).
+ */
+export async function getPaymentStatus(reference) {
+  if (!reference) return null;
+  try {
+    const res = await fetch(`${API_BASE}/payments/status/${encodeURIComponent(reference)}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Error consultando estado del pago:', err);
+  }
+  return null;
 }
 

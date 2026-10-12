@@ -70,7 +70,7 @@ export function computeBookingPaymentStatus(booking, payments = []) {
   }
 
   const allBelonging = getBookingPayments(booking, payments);
-  const validPayments = allBelonging.filter(p => p && p.status !== 'rejected');
+  const validPayments = allBelonging.filter(p => p && (p.status === 'verified' || p.status === 'approved'));
 
   const totalPaid = validPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const totalPrice = Number(booking.totalPrice) || 0;

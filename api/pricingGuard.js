@@ -15,6 +15,7 @@ import {
   resolveLoyaltyDiscountPercent,
   LOYALTY_DISCOUNT_PERCENT
 } from './pricing.js';
+import { validateReferralCode } from './referrals.js';
 
 /** Últimos 8 dígitos de un teléfono ('' si no hay suficientes). */
 export function phoneKey(value) {
@@ -55,6 +56,24 @@ export function resolveBookingPrice({ db = {}, pkg = {}, body = {} } = {}) {
     phone: body.clientWhatsApp
   });
 
+  let referralDiscountPercent = 0;
+  const referralInput = body.referralCode || body.referredBy;
+  if (referralInput) {
+    const refCheck = validateReferralCode({
+      code: referralInput,
+      clientPhone: body.clientWhatsApp,
+      bookings: db.bookings,
+      sessions: db.sessions
+    });
+    if (refCheck.valid) {
+      referralDiscountPercent = refCheck.discountPercent;
+    }
+  }
+
+  // Regla de no acumulación: el descuento total jamás excede el 15%
+  const loyaltyPercent = resolveLoyaltyDiscountPercent(isLoyal, LOYALTY_DISCOUNT_PERCENT);
+  const effectiveDiscountPercent = Math.min(15, Math.max(loyaltyPercent, referralDiscountPercent));
+
   const band = calculateBookingPriceBand({
     packagePrice: pkg?.price || 0,
     locationType: body.locationType,
@@ -63,11 +82,12 @@ export function resolveBookingPrice({ db = {}, pkg = {}, body = {} } = {}) {
     printedPhotosCount: body.printedPhotosCount,
     printedPhotos15x20Count: body.printedPhotos15x20Count,
     settings: db?.settings,
-    loyaltyDiscountPercent: resolveLoyaltyDiscountPercent(isLoyal, LOYALTY_DISCOUNT_PERCENT)
+    loyaltyDiscountPercent: effectiveDiscountPercent
   });
 
+  const hasDiscount = effectiveDiscountPercent > 0;
   const priceCheck = validateOrEnforcePrice(body.totalPrice, band, {
-    fallbackPrice: isLoyal ? band.minPrice : band.listPrice
+    fallbackPrice: hasDiscount ? band.minPrice : band.listPrice
   });
 
   if (priceCheck.adjusted) {
@@ -78,5 +98,12 @@ export function resolveBookingPrice({ db = {}, pkg = {}, body = {} } = {}) {
     );
   }
 
-  return { finalPrice: priceCheck.finalPrice, band, priceCheck, isLoyal };
+  return {
+    finalPrice: priceCheck.finalPrice,
+    band,
+    priceCheck,
+    isLoyal,
+    referralApplied: referralDiscountPercent > 0 && !isLoyal,
+    discountPercent: effectiveDiscountPercent
+  };
 }

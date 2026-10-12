@@ -11,6 +11,7 @@
 
 import { createReceiptToken, verifyReceiptToken, toPublicBooking } from './security.js';
 import { computeBookingPaymentStatus } from './financials.js';
+import { validateReferralCode } from './referrals.js';
 
 /** Limitador simple en memoria para rutas públicas (por instancia del serverless). */
 function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000 } = {}) {
@@ -230,6 +231,24 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
     } catch (e) {
       console.warn('[Público] Error verificando fidelidad:', e?.message || e);
       return res.json({ isLoyal: false, discountPercent: 0 });
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // 2b. VALIDACIÓN DE CÓDIGO DE REFERIDO (Cero PII, rate-limit estricto 10/10m)
+  // ----------------------------------------------------------------------------
+  const referralLimiter = createPublicRateLimiter({ max: 10, windowMs: 10 * 60 * 1000 });
+  app.get('/api/public/referral', referralLimiter, async (req, res) => {
+    const code = String(req.query.code || '');
+    const clientPhone = String(req.query.clientPhone || '');
+
+    try {
+      const [bookings, sessions] = await Promise.all([getAllBookings(), getAllSessions()]);
+      const result = validateReferralCode({ code, clientPhone, bookings, sessions });
+      return res.json(result);
+    } catch (e) {
+      console.warn('[Público] Error verificando código de referido:', e?.message || e);
+      return res.json({ valid: false, discountPercent: 0, message: 'No se pudo verificar el código de referido.' });
     }
   });
 

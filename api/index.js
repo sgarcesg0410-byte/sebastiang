@@ -19,6 +19,12 @@ import {
   sendPhotoDeliveryEmail,
   sendTwoFactorCodeEmail
 } from './emailService.js';
+import {
+  generatePaymentReference,
+  generateWompiSignature,
+  verifyWompiChecksum,
+  validateCheckoutAmount
+} from './payments/gateway.js';
 
 const ALLOWED_ORIGINS = [
   'https://sebastiang.app',
@@ -159,6 +165,110 @@ async function syncBookingToSupabaseServer(b) {
   }
 }
 
+async function syncPaymentToSupabaseServer(p) {
+  if (!p || !p.id || !SUPABASE_REST_KEY) return;
+  const supaId = p.id.startsWith('pay-') ? p.id : `pay-${p.id}`;
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: supaId,
+        title: p.clientName || 'Pago',
+        category: 'payment_data',
+        location: p.method || p.gatewayProvider || '',
+        url: JSON.stringify(p)
+      })
+    });
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/payments`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: supaId,
+        client_name: p.clientName || 'Cliente',
+        client_whatsapp: p.clientWhatsApp || '',
+        session_token: p.sessionToken || p.bookingId || '',
+        amount: Number(p.amount || 0),
+        method: p.method || 'wompi',
+        status: p.status || 'pending',
+        reference: p.reference || ''
+      })
+    }).catch(() => {});
+  } catch (e) {
+    console.warn('Sync payment server -> Supabase:', e);
+  }
+}
+
+async function findPaymentByReference(ref, txId) {
+  if (!ref && !txId) return null;
+  // 1. Memoria
+  let found = (runtimeDB.payments || []).find(p => p && ((ref && p.reference === ref) || (txId && p.transactionId === txId)));
+  if (found) return found;
+
+  // 2. Supabase
+  if (SUPABASE_REST_KEY) {
+    try {
+      const res = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.payment_data&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        for (const r of Array.isArray(rows) ? rows : []) {
+          try {
+            const p = JSON.parse(r.url);
+            if (p && ((ref && p.reference === ref) || (txId && p.transactionId === txId))) {
+              return p;
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading payment from Supabase:', e);
+    }
+  }
+  return null;
+}
+
+async function findBookingById(bookingId) {
+  if (!bookingId) return null;
+  const cleanId = String(bookingId);
+  const supaId = cleanId.startsWith('book-') ? cleanId : `book-${cleanId}`;
+
+  // 1. Memoria
+  const found = (runtimeDB.bookings || []).find(b => b && (b.id === cleanId || b.id === supaId));
+  if (found) return found;
+
+  // 2. Supabase
+  if (SUPABASE_REST_KEY) {
+    try {
+      const res = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows && rows[0]?.url) {
+          try {
+            return JSON.parse(rows[0].url);
+          } catch {}
+        }
+      }
+    } catch (e) {
+      console.warn('Error finding booking in Supabase:', e);
+    }
+  }
+  return null;
+}
+
 // ==============================================================================
 // RATE LIMITER EN MEMORIA (Anti-Brute-Force)
 // ==============================================================================
@@ -224,6 +334,25 @@ function resetLoginAttempts(ip) {
   loginAttempts.delete(ip);
 }
 
+// Rate Limiter para Checkout de Pagos (máximo 15 checkouts por 10 min por IP)
+const checkoutAttempts = new Map(); // IP -> { count, windowStart }
+const CHECKOUT_MAX_ATTEMPTS = 15;
+const CHECKOUT_WINDOW_MS = 10 * 60 * 1000;
+
+function checkCheckoutRateLimit(ip) {
+  const now = Date.now();
+  const record = checkoutAttempts.get(ip);
+  if (!record || (now - record.windowStart > CHECKOUT_WINDOW_MS)) {
+    checkoutAttempts.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (record.count >= CHECKOUT_MAX_ATTEMPTS) {
+    return false;
+  }
+  record.count += 1;
+  return true;
+}
+
 // Limpieza periódica de entradas antiguas del rate limiter (cada 10 min)
 const limpiezaPeriodica = setInterval(() => {
   const now = Date.now();
@@ -232,6 +361,11 @@ const limpiezaPeriodica = setInterval(() => {
       loginAttempts.delete(ip);
     } else if (!record.lockedUntil && record.windowStart && now - record.windowStart > LOGIN_WINDOW_MS * 2) {
       loginAttempts.delete(ip);
+    }
+  }
+  for (const [ip, record] of checkoutAttempts.entries()) {
+    if (record && now - record.windowStart > CHECKOUT_WINDOW_MS * 2) {
+      checkoutAttempts.delete(ip);
     }
   }
 }, 10 * 60 * 1000);
@@ -451,7 +585,7 @@ app.post('/api/bookings', async (req, res) => {
   //  - se ignoran los valores manipulados (por ejemplo reservar por $1),
   //  - se respetan las combinaciones válidas (impresiones, retablos, fidelidad),
   //  - el descuento de recurrencia se comprueba aquí, no en el navegador.
-  const { finalPrice, band, priceCheck } = resolveBookingPrice({ db: runtimeDB, pkg, body: req.body });
+  const { finalPrice, band, priceCheck, referralApplied } = resolveBookingPrice({ db: runtimeDB, pkg, body: req.body });
   if (priceCheck.adjusted) {
     console.warn(`[Precios] Corregido (${priceCheck.reason}) para ${clientName || 'cliente sin nombre'}: banda ${band.minPrice}-${band.listPrice}`);
   }
@@ -479,6 +613,8 @@ app.post('/api/bookings', async (req, res) => {
     paperPhotosSummary: paperPhotosSummary || '',
     retablosSummary: retablosSummary || '',
     printedPhotosSummary: printedPhotosSummary || '',
+    referredBy: req.body.referralCode ? String(req.body.referralCode).trim() : null,
+    referralDiscountApplied: Boolean(referralApplied),
     receiptToken,
     createdAt: new Date().toISOString(),
     status: 'pending',
@@ -1138,6 +1274,222 @@ app.post('/api/payments', async (req, res) => {
     payment: newPayment,
     directWhatsAppUrl: `https://wa.me/${photogWhatsApp1}?text=${msgText}`,
     secondaryWhatsAppUrl: `https://wa.me/${photogWhatsApp2}?text=${msgText}`
+  });
+});
+
+// ==============================================================================
+// PASARELA WOMPI: CHECKOUT, WEBHOOK E IDEMPOTENCIA
+// ==============================================================================
+
+app.post('/api/payments/checkout', async (req, res) => {
+  const ip = getClientIp(req);
+  if (!checkCheckoutRateLimit(ip)) {
+    return res.status(429).json({ error: 'Demasiadas solicitudes de checkout. Intenta de nuevo en unos minutos.' });
+  }
+
+  const {
+    bookingId, sessionToken, concept = 'booking_deposit',
+    amount, clientName, clientWhatsApp, clientEmail
+  } = req.body || {};
+
+  if (!bookingId && !sessionToken) {
+    return res.status(400).json({ error: 'Se requiere bookingId o sessionToken para iniciar el checkout.' });
+  }
+
+  let booking = null;
+  if (bookingId) {
+    booking = await findBookingById(bookingId);
+    if (!booking) {
+      return res.status(404).json({ error: 'Reserva no encontrada para asociar el pago.' });
+    }
+  }
+
+  let sessionRemaining = undefined;
+  if (concept === 'session_balance' || concept === 'saldo_galeria') {
+    sessionRemaining = Number(amount);
+  }
+
+  const check = validateCheckoutAmount({
+    concept,
+    amount,
+    booking,
+    sessionRemaining
+  });
+
+  if (!check.valid) {
+    return res.status(400).json({
+      error: check.error || 'Monto inválido para el concepto.',
+      expectedAmount: check.expectedAmount
+    });
+  }
+
+  const reference = generatePaymentReference('wompi');
+  const amountInCents = Number(amount) * 100;
+  const currency = 'COP';
+
+  const paymentRecord = {
+    id: `pay-wompi-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+    bookingId: booking?.id || bookingId || null,
+    sessionToken: sessionToken || '',
+    clientName: (clientName || booking?.clientName || 'Cliente').trim(),
+    clientWhatsApp: (clientWhatsApp || booking?.clientWhatsApp || '').trim(),
+    clientEmail: (clientEmail || booking?.clientEmail || '').trim(),
+    packageTitle: booking?.packageName || 'Sesión Fotográfica',
+    amount: Number(amount),
+    amountInCents,
+    currency,
+    method: 'wompi',
+    gatewayProvider: 'wompi',
+    reference,
+    concept,
+    status: 'pending_gateway',
+    createdAt: new Date().toISOString()
+  };
+
+  if (!runtimeDB.payments) runtimeDB.payments = [];
+  runtimeDB.payments.unshift(paymentRecord);
+
+  // Persistencia inmediata en Supabase
+  await syncPaymentToSupabaseServer(paymentRecord);
+
+  const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || (process.env.NODE_ENV === 'test' ? 'test_integrity_secret' : 'dev_integrity_secret');
+  let signature = '';
+  try {
+    signature = generateWompiSignature({
+      reference,
+      amountInCents,
+      currency,
+      integritySecret
+    });
+  } catch (err) {
+    console.error('Error generando firma de Wompi:', err);
+  }
+
+  const publicKey = process.env.WOMPI_PUBLIC_KEY || '';
+  const redirectUrl = encodeURIComponent(`https://sebastiang.app/?payment_success=true&ref=${reference}`);
+  const checkoutUrl = `https://checkout.wompi.co/p/?public-key=${publicKey}&currency=${currency}&amount-in-cents=${amountInCents}&reference=${reference}&signature:integrity=${signature}&redirect-url=${redirectUrl}`;
+
+  return res.status(201).json({
+    success: true,
+    paymentId: paymentRecord.id,
+    reference,
+    amount: paymentRecord.amount,
+    amountInCents,
+    currency,
+    signature,
+    publicKey,
+    checkoutUrl
+  });
+});
+
+app.post('/api/payments/webhook', async (req, res) => {
+  const eventsSecret = process.env.WOMPI_EVENTS_SECRET;
+  if (!eventsSecret) {
+    console.error('⚠️ [Wompi Webhook] WOMPI_EVENTS_SECRET no configurada.');
+    return res.status(503).json({ error: 'WOMPI_EVENTS_SECRET no configurada en el servidor.' });
+  }
+
+  const isValid = verifyWompiChecksum({ eventPayload: req.body, eventsSecret });
+  if (!isValid) {
+    console.warn('⚠️ [Wompi Webhook] Firma de evento inválida o manipulada.');
+    return res.status(401).json({ error: 'Firma de webhook inválida.' });
+  }
+
+  const tx = req.body?.data?.transaction;
+  if (!tx || !tx.reference) {
+    return res.status(400).json({ error: 'Payload sin información de transacción o referencia.' });
+  }
+
+  const payment = await findPaymentByReference(tx.reference, tx.id);
+  if (!payment) {
+    console.warn(`[Wompi Webhook] Pago con referencia ${tx.reference} no encontrado.`);
+    return res.status(404).json({ error: 'Pago con la referencia proporcionada no encontrado.' });
+  }
+
+  // Idempotencia: si ya fue aprobado, responder 200 sin duplicar cobros
+  if (payment.status === 'verified' || payment.status === 'approved') {
+    return res.status(200).json({
+      success: true,
+      message: 'Transacción ya procesada previamente (idempotente).',
+      reference: payment.reference
+    });
+  }
+
+  // Verificación estricta de monto
+  const expectedCents = Number(payment.amount) * 100;
+  if (Number(tx.amount_in_cents) !== expectedCents) {
+    console.error(`[Wompi Webhook] Discrepancia de monto: esperado ${expectedCents}, recibido ${tx.amount_in_cents}`);
+    return res.status(400).json({ error: 'El monto de la transacción no coincide con el registro previo.' });
+  }
+
+  if (tx.status === 'APPROVED') {
+    payment.status = 'approved';
+    payment.transactionId = tx.id;
+    payment.paymentMethodType = tx.payment_method_type || 'WOMPI';
+    payment.approvedAt = new Date().toISOString();
+
+    const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
+    if (inMem) {
+      Object.assign(inMem, payment);
+    } else if (runtimeDB.payments) {
+      runtimeDB.payments.unshift(payment);
+    }
+
+    let bookingToUpdate = null;
+    if (payment.bookingId) {
+      bookingToUpdate = await findBookingById(payment.bookingId);
+      if (bookingToUpdate) {
+        if (bookingToUpdate.status === 'pending') {
+          bookingToUpdate.status = 'confirmed';
+        }
+        bookingToUpdate.depositPaid = true;
+        const inMemB = (runtimeDB.bookings || []).find(b => b.id === bookingToUpdate.id);
+        if (inMemB) Object.assign(inMemB, bookingToUpdate);
+      }
+    }
+
+    await Promise.allSettled([
+      syncPaymentToSupabaseServer(payment),
+      bookingToUpdate ? syncBookingToSupabaseServer(bookingToUpdate) : Promise.resolve(),
+      sendOneSignalPush({
+        title: '💰 ¡Abono Confirmado en Wompi!',
+        message: `${payment.clientName} pagó $${payment.amount.toLocaleString('es-CO')} COP (${payment.concept === 'booking_deposit' ? 'Abono de Reserva' : 'Saldo'})`,
+        url: 'https://sebastiang.app/?mode=admin',
+        data: { type: 'payment', paymentId: payment.id, reference: payment.reference, transactionId: tx.id }
+      }).catch(e => console.warn('OneSignal push error:', e)),
+      bookingToUpdate && bookingToUpdate.clientEmail ? sendBookingConfirmedEmail(bookingToUpdate, runtimeDB.settings).catch(e => console.warn('Email error:', e)) : Promise.resolve()
+    ]);
+
+    return res.status(200).json({ success: true, status: 'APPROVED', reference: payment.reference });
+  } else if (tx.status === 'DECLINED' || tx.status === 'VOIDED' || tx.status === 'ERROR') {
+    payment.status = 'rejected';
+    payment.transactionId = tx.id;
+    payment.rejectedAt = new Date().toISOString();
+
+    const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
+    if (inMem) Object.assign(inMem, payment);
+
+    await syncPaymentToSupabaseServer(payment);
+    return res.status(200).json({ success: true, status: tx.status, reference: payment.reference });
+  } else {
+    return res.status(200).json({ success: true, status: tx.status });
+  }
+});
+
+app.get('/api/payments/status/:reference', async (req, res) => {
+  const { reference } = req.params;
+  if (!reference) return res.status(400).json({ error: 'Referencia requerida.' });
+
+  const payment = await findPaymentByReference(reference);
+  if (!payment) return res.status(404).json({ error: 'Pago no encontrado.' });
+
+  return res.json({
+    success: true,
+    reference: payment.reference,
+    status: payment.status,
+    concept: payment.concept,
+    amount: payment.amount,
+    currency: payment.currency || 'COP'
   });
 });
 

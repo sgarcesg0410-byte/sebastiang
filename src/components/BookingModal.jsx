@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, ArrowRight, ChevronLeft, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react';
+import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, Gift, ArrowRight, ChevronLeft, ChevronDown, ChevronUp, Maximize2, CreditCard, Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { createBooking, checkClientLoyalty, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
+import { createBooking, checkClientLoyalty, checkReferralCode, createWompiCheckout, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
 import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', settings = {} }) {
@@ -20,6 +20,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     clientName: '',
     clientWhatsApp: '',
     clientEmail: '',
+    referralCode: '',
     packageId: preselectedPackage ? preselectedPackage.id : (packages[2]?.id || packages[0]?.id || ''),
     locationType: 'san_antero',
     specificLocation: '',
@@ -34,10 +35,59 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   const [bookingStep, setBookingStep] = useState(1); // 1: Datos, 2: Paquete y Lugar, 3: Fecha y Hora
   const [showAllPrintSizes, setShowAllPrintSizes] = useState(false);
   const [loyalInfo, setLoyalInfo] = useState({ isLoyal: false, discountPercent: 0, clientName: '' });
+  const [referralStatus, setReferralStatus] = useState({ checked: false, valid: false, discountPercent: 0, message: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [submittedBooking, setSubmittedBooking] = useState(null);
   const [schedule, setSchedule] = useState([]);
+  const [isStartingCheckout, setIsStartingCheckout] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+  const [showManualTransfer, setShowManualTransfer] = useState(false);
+  const [copiedKey, setCopiedKey] = useState('');
+
+  const handlePayDepositOnline = async () => {
+    if (!submittedBooking) return;
+    setIsStartingCheckout(true);
+    setCheckoutError('');
+
+    try {
+      const res = await createWompiCheckout({
+        bookingId: submittedBooking.id,
+        concept: 'booking_deposit',
+        amount: 20000,
+        clientName: submittedBooking.clientName,
+        clientWhatsApp: submittedBooking.clientWhatsApp,
+        clientEmail: submittedBooking.clientEmail
+      });
+
+      if (typeof window !== 'undefined' && window.WidgetCheckout && res.publicKey && res.signature) {
+        const checkout = new window.WidgetCheckout({
+          currency: res.currency || 'COP',
+          amountInCents: res.amountInCents,
+          reference: res.reference,
+          publicKey: res.publicKey,
+          signature: { integrity: res.signature },
+          redirectUrl: `https://sebastiang.app/?payment_success=true&ref=${res.reference}`
+        });
+        checkout.open(() => {});
+      } else if (res.checkoutUrl) {
+        window.open(res.checkoutUrl, '_blank') || (window.location.href = res.checkoutUrl);
+      }
+    } catch (err) {
+      console.error('Error iniciando pago Wompi:', err);
+      setCheckoutError(err.message || 'No se pudo abrir la pasarela. Puedes usar la transferencia manual.');
+    } finally {
+      setIsStartingCheckout(false);
+    }
+  };
+
+  const copyToClipboard = (text, key) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(''), 2500);
+    }
+  };
 
   // Cargar cupos ocupados (solo fecha y hora) al abrir el modal
   useEffect(() => {
@@ -94,6 +144,19 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     return () => clearTimeout(timer);
   }, [formData.clientWhatsApp]);
 
+  // Detección y validación de código de referido en tiempo real
+  useEffect(() => {
+    if (!formData.referralCode || formData.referralCode.trim().length < 7) {
+      setReferralStatus({ checked: false, valid: false, discountPercent: 0, message: '' });
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const res = await checkReferralCode(formData.referralCode, formData.clientWhatsApp);
+      setReferralStatus(res);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [formData.referralCode, formData.clientWhatsApp]);
+
   // Asegurar que al abrir siempre comience scrolleado arriba de todo
   useEffect(() => {
     if (isOpen) {
@@ -131,8 +194,10 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     ? (formData.locationType === 'outside' ? currentPackage.price + surchargeAmount : currentPackage.price)
     : 0;
 
-  // Descuento de fidelización del 15% para clientes recurrentes
-  const loyaltyDiscount = loyalInfo.isLoyal ? Math.round(baseOrSurchargedPrice * 0.15) : 0;
+  // Descuento no acumulable: máximo 15% (fidelidad VIP o código de referido para clientes nuevos)
+  const isReferralEligible = referralStatus.valid && !loyalInfo.isLoyal;
+  const hasDiscount = loyalInfo.isLoyal || isReferralEligible;
+  const loyaltyDiscount = hasDiscount ? Math.round(baseOrSurchargedPrice * 0.15) : 0;
 
   // Cálculos independientes de fotos impresas en papel y cuadros en retablo
   const paperPhotosTotal = paperSizes.reduce((sum, item) => {
@@ -262,6 +327,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         totalPrice: calculatedPrice,
         loyaltyDiscount: loyaltyDiscount,
         isVipClient: loyalInfo.isLoyal,
+        referralCode: formData.referralCode?.trim() || null,
+        referralDiscountApplied: Boolean(isReferralEligible),
         locationType: formData.locationType,
         specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'San Antero (Playa / Sector)' : 'Locación Especial / Fuera'),
         dateTime: formattedDateTime,
@@ -465,6 +532,93 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                 )}
               </div>
 
+              {/* PAGO DEL ABONO: OPCIÓN EN LÍNEA (WOMPI) Y OPCIÓN MANUAL HÍBRIDA */}
+              <div className="bg-stone-900 border border-amber-500/40 rounded-2xl p-4 text-left space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">Asegura tu Cupo</span>
+                  </div>
+                  <span className="text-xs font-extrabold text-amber-400 bg-amber-400/10 px-2.5 py-1 rounded-full border border-amber-400/20 font-mono">
+                    Abono: $20.000 COP
+                  </span>
+                </div>
+
+                <p className="text-xs text-stone-300 leading-relaxed">
+                  Para asegurar tu fecha y hora en la agenda, abona <strong>$20.000 COP</strong> ahora. El saldo restante de tu paquete se paga el día de la sesión.
+                </p>
+
+                {/* Opción A: Botón de pago en línea Wompi */}
+                <button
+                  type="button"
+                  onClick={handlePayDepositOnline}
+                  disabled={isStartingCheckout}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-extrabold py-3 px-4 rounded-xl shadow-lg shadow-amber-500/20 transition-all text-xs active:scale-98 disabled:opacity-60"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>{isStartingCheckout ? 'Abriendo pasarela segura...' : '💳 Pagar Abono en Línea ($20.000 COP - Nequi, PSE, Tarjeta)'}</span>
+                </button>
+
+                {checkoutError && (
+                  <div className="text-[11px] text-red-400 bg-red-950/40 border border-red-800/40 p-2.5 rounded-lg">
+                    {checkoutError}
+                  </div>
+                )}
+
+                {/* Opción B: Desplegable de Transferencia Directa Manual */}
+                <div className="pt-1 border-t border-stone-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualTransfer(!showManualTransfer)}
+                    className="text-[11px] text-stone-400 hover:text-stone-200 flex items-center gap-1 underline transition-colors"
+                  >
+                    <span>O transferir manualmente (Nequi / DaviPlata / Dale)</span>
+                    {showManualTransfer ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+
+                  {showManualTransfer && (
+                    <div className="mt-2.5 p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-2 text-[11px] text-stone-300">
+                      <div className="flex justify-between items-center py-1 border-b border-stone-900">
+                        <span>🟣 <strong>Nequi:</strong> 324 472 5167</span>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard('3244725167', 'nequi')}
+                          className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
+                        >
+                          {copiedKey === 'nequi' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedKey === 'nequi' ? 'Copiado' : 'Copiar'}</span>
+                        </button>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-stone-900">
+                        <span>🔴 <strong>DaviPlata:</strong> @PLATA3244725167</span>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard('3244725167', 'daviplata')}
+                          className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
+                        >
+                          {copiedKey === 'daviplata' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedKey === 'daviplata' ? 'Copiado' : 'Copiar'}</span>
+                        </button>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span>🟡 <strong>Dale!:</strong> @SGG04</span>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard('@SGG04', 'dale')}
+                          className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
+                        >
+                          {copiedKey === 'dale' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedKey === 'dale' ? 'Copiado' : 'Copiar'}</span>
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-stone-400 pt-1 border-t border-stone-800/80">
+                        Tras transferir, toca el botón de WhatsApp abajo para enviar tu comprobante.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 text-left text-xs text-amber-200">
                 📸 <strong>Paso siguiente:</strong> Te contactaremos por WhatsApp para coordinar los detalles. Una vez hecha la sesión, recibirás tu enlace personal para elegir tus fotos con 2 fotos gratis incluidas.
               </div>
@@ -617,6 +771,37 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     <p className="text-[11px] text-stone-400 mt-1">
                       ✉️ Para recibir tu comprobante oficial digital por correo.
                     </p>
+                  </div>
+
+                  {/* CÓDIGO DE REFERIDO (TRAE UN AMIGO) */}
+                  <div className="pt-1">
+                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Gift className="w-3.5 h-3.5 text-amber-400" />
+                        <span>¿Te recomendó un amigo? (15% OFF)</span>
+                      </span>
+                      <span className="text-[10px] text-amber-400/80 font-bold lowercase">Opcional</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="referralCode"
+                      value={formData.referralCode || ''}
+                      onChange={handleInputChange}
+                      placeholder="Ingresa el WhatsApp de quien te recomendó"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-stone-500 focus:outline-none focus:border-amber-500 font-mono"
+                    />
+                    {referralStatus.message && (
+                      <p className={`text-[11px] mt-1.5 font-semibold flex items-center gap-1 ${
+                        referralStatus.valid ? 'text-emerald-400' : 'text-amber-400/90'
+                      }`}>
+                        {referralStatus.valid ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        ) : (
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        )}
+                        <span>{referralStatus.message}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="pt-2">
@@ -1036,7 +1221,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                       )}
                       {loyaltyDiscount > 0 && (
                         <span className="text-[11px] text-emerald-400 font-semibold block mt-0.5">
-                          👑 Descuento VIP Aplicado (-15%)
+                          {loyalInfo.isLoyal ? '👑 Descuento VIP Aplicado (-15%)' : '🎁 Descuento de Referido Aplicado (-15%)'}
                         </span>
                       )}
                     </div>

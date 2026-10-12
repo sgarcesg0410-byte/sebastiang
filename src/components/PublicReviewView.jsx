@@ -11,7 +11,8 @@ import {
   Camera, 
   ShieldCheck, 
   ExternalLink,
-  Award
+  Award,
+  MapPin
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { submitGalleryReview, getSettings, DEFAULT_SETTINGS } from '../services/api';
@@ -318,11 +319,22 @@ export default function PublicReviewView({ onBackToHome }) {
 
             {/* BOTONES DE ACCIÓN */}
             <div className="space-y-3 pt-2">
+              {/* COMPARTIR EN GOOGLE MAPS (SIN REVIEW GATING - ABIERTO A TODOS) */}
+              <a
+                href={settings.googleBusinessUrl || 'https://maps.google.com/?q=Sebastian+G+Fotografia+San+Antero+Covenas'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-3.5 px-5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-500 hover:to-indigo-500 active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-all border border-blue-400/30"
+              >
+                <MapPin className="w-4 h-4 text-blue-200" />
+                <span>¿Deseas compartir tu opinión también en Google Maps? 📍</span>
+              </a>
+
               <a
                 href={waUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full py-3.5 px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-stone-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all"
+                className="w-full py-3 px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-stone-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all"
               >
                 <MessageCircle className="w-4 h-4 fill-stone-950" />
                 <span>Enviar también por WhatsApp a Sebastian G</span>
@@ -331,7 +343,7 @@ export default function PublicReviewView({ onBackToHome }) {
               <button
                 type="button"
                 onClick={onBackToHome}
-                className="w-full py-3 px-5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-semibold text-xs flex items-center justify-center gap-2 transition-colors border border-stone-700"
+                className="w-full py-2.5 px-5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 font-semibold text-xs flex items-center justify-center gap-2 transition-colors border border-stone-700"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span>Ver mi opinión en la página principal</span>
