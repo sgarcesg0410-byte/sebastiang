@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:all": "node start-all.js",
     "build": "vite build",
+    "check:syntax": "node scripts/check-syntax.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
