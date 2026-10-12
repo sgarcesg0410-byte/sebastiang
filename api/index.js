@@ -540,11 +540,11 @@ app.get('/api/packages', (req, res) => {
 });
 
 
-app.get('/api/admin/wallets', (req, res) => {
+app.get('/api/admin/wallets', requireAdminAuth, (req, res) => {
   res.json(runtimeDB.walletBalances || { nequi: 0, daviplata: 0, dale: 0 });
 });
 
-app.post('/api/admin/wallets', (req, res) => {
+app.post('/api/admin/wallets', requireAdminAuth, (req, res) => {
   const balances = req.body;
   if (balances && typeof balances === 'object') {
     runtimeDB.walletBalances = { ...runtimeDB.walletBalances, ...balances };
@@ -1287,6 +1287,13 @@ app.post('/api/payments/checkout', async (req, res) => {
     return res.status(429).json({ error: 'Demasiadas solicitudes de checkout. Intenta de nuevo en unos minutos.' });
   }
 
+  // Fail-closed: sin secreto de integridad, la firma del checkout sería falsificable.
+  const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || (process.env.NODE_ENV === 'test' ? 'test_integrity_secret' : '');
+  if (!integritySecret) {
+    console.error('⚠️ [Wompi Checkout] WOMPI_INTEGRITY_SECRET no configurada.');
+    return res.status(503).json({ error: 'La pasarela de pagos no está disponible en este momento.' });
+  }
+
   const {
     bookingId, sessionToken, concept = 'booking_deposit',
     amount, clientName, clientWhatsApp, clientEmail
@@ -1352,7 +1359,6 @@ app.post('/api/payments/checkout', async (req, res) => {
   // Persistencia inmediata en Supabase
   await syncPaymentToSupabaseServer(paymentRecord);
 
-  const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || (process.env.NODE_ENV === 'test' ? 'test_integrity_secret' : 'dev_integrity_secret');
   let signature = '';
   try {
     signature = generateWompiSignature({
