@@ -1,13 +1,30 @@
 import nodemailer from 'nodemailer';
+import fs from 'fs';
 import path from 'path';
 
+// Carga .env del proyecto si existe (sin dependencia de dotenv).
+try {
+  const envPath = path.join(process.cwd(), '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+      if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+    }
+  }
+} catch { /* sin .env local: se usan solo variables de entorno */ }
+
+if (!process.env.ZOHO_SMTP_PASS) {
+  console.error('✗ Falta ZOHO_SMTP_PASS en el entorno (.env). No se enviará nada.');
+  process.exit(1);
+}
+
 const ZOHO_CONFIG = {
-  host: 'smtp.zoho.com',
-  port: 587,
+  host: process.env.ZOHO_SMTP_HOST || 'smtp.zoho.com',
+  port: Number(process.env.ZOHO_SMTP_PORT) || 587,
   secure: false,
   auth: {
-    user: 'reservas@sebastiang.app',
-    pass: '***REMOVED***'
+    user: process.env.ZOHO_SMTP_USER || 'reservas@sebastiang.app',
+    pass: process.env.ZOHO_SMTP_PASS
   }
 };
 
