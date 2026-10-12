@@ -9,7 +9,8 @@ import {
   createReceiptToken,
   readAdminToken,
   verifyAdminToken,
-  KNOWN_WEAK_PIN_HASH
+  KNOWN_WEAK_PIN_HASH,
+  setPasswordVersionGetter
 } from './security.js';
 import { registerPublicRoutes } from './publicRoutes.js';
 import { resolveBookingPrice } from './pricingGuard.js';
@@ -17,8 +18,16 @@ import {
   sendNewBookingEmails,
   sendBookingConfirmedEmail,
   sendPhotoDeliveryEmail,
-  sendTwoFactorCodeEmail
+  sendTwoFactorCodeEmail,
+  sendPasswordChangedAlertEmail
 } from './emailService.js';
+import {
+  handlePasswordResetRequest,
+  handlePasswordResetConfirm,
+  getActivePasswordVersionFromStore,
+  updateAdminPasswordInStore,
+  getAdminEmail
+} from './passwordReset.js';
 import {
   generatePaymentReference,
   generateWompiSignature,
@@ -116,6 +125,13 @@ if (!SUPABASE_REST_KEY) {
     'La sincronización con la nube estará limitada.'
   );
 }
+
+// Configurar validador de versión de contraseña en tiempo real para sesiones admin
+setPasswordVersionGetter(() => getActivePasswordVersionFromStore({
+  supaUrl: SUPABASE_REST_URL,
+  supaKey: SUPABASE_REST_KEY,
+  runtimeDB
+}));
 
 async function syncBookingToSupabaseServer(b) {
   if (!b || !b.id || !SUPABASE_REST_KEY) return;
@@ -1017,10 +1033,15 @@ app.post('/api/admin/auth', async (req, res) => {
     });
   }
 
-  // Login exitoso: token firmado (HMAC-SHA256), no un texto fijo.
+  // Login exitoso: token firmado (HMAC-SHA256) con passwordVersion activa
   resetLoginAttempts(ip);
   try {
-    const token = createAdminToken();
+    const activeVersion = await getActivePasswordVersionFromStore({
+      supaUrl: SUPABASE_REST_URL,
+      supaKey: SUPABASE_REST_KEY,
+      runtimeDB
+    });
+    const token = createAdminToken({ pwd: activeVersion });
     return res.json({ success: true, token, expiresInMs: 12 * 60 * 60 * 1000 });
   } catch (e) {
     console.error('[Seguridad] No se pudo emitir la sesión:', e?.message || e);
@@ -1029,10 +1050,29 @@ app.post('/api/admin/auth', async (req, res) => {
 });
 
 // ==============================================================================
+// RUTAS PÚBLICAS DE RECUPERACIÓN DE CONTRASEÑA ADMIN (ZOHO SMTP)
+// ==============================================================================
+app.post('/api/admin/password/reset-request', async (req, res) => {
+  return handlePasswordResetRequest(req, res, {
+    supaUrl: SUPABASE_REST_URL,
+    supaKey: SUPABASE_REST_KEY,
+    runtimeDB
+  });
+});
+
+app.post('/api/admin/password/reset-confirm', async (req, res) => {
+  return handlePasswordResetConfirm(req, res, {
+    supaUrl: SUPABASE_REST_URL,
+    supaKey: SUPABASE_REST_KEY,
+    runtimeDB
+  });
+});
+
+// ==============================================================================
 // A PARTIR DE AQUÍ, TODO /api/admin/* EXIGE UNA SESIÓN FIRMADA VÁLIDA
 // ==============================================================================
 app.use('/api/admin', (req, res, next) => {
-  if (req.path === '/auth') return next();
+  if (req.path === '/auth' || req.path.startsWith('/password/')) return next();
   return requireAdminAuth(req, res, next);
 });
 
@@ -1794,39 +1834,28 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   const hash = crypto.scryptSync(cleanNew, salt, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
   const newScryptHash = 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
 
-  runtimeDB.settings = runtimeDB.settings || {};
-  runtimeDB.settings.adminPinScrypt = newScryptHash;
+  // Incrementar passwordVersion y persistir hash
+  const currentVersion = await getActivePasswordVersionFromStore({
+    supaUrl: SUPABASE_REST_URL,
+    supaKey: SUPABASE_REST_KEY,
+    runtimeDB
+  });
+  const newVersion = (currentVersion || 1) + 1;
 
-  // Persistir en Supabase Cloud con la clave service_role
-  if (SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: 'system_admin_pin_hash',
-          title: 'Admin Security Hash',
-          category: 'security_data',
-          location: 'system',
-          url: JSON.stringify({
-            scryptHash: newScryptHash,
-            updatedAt: new Date().toISOString()
-          })
-        })
-      });
+  await updateAdminPasswordInStore({
+    supaUrl: SUPABASE_REST_URL,
+    supaKey: SUPABASE_REST_KEY,
+    runtimeDB,
+    newScryptHash,
+    newVersion
+  });
 
-      if (!supaRes.ok) {
-        const text = await supaRes.text();
-        console.warn('Aviso persistiendo contraseña en Supabase:', text);
-      }
-    } catch (supaErr) {
-      console.warn('Error al guardar hash en Supabase:', supaErr);
-    }
+  // Alerta de seguridad por correo vía Zoho
+  const targetEmail = getAdminEmail();
+  try {
+    await sendPasswordChangedAlertEmail(targetEmail, { ip: getClientIp(req) });
+  } catch (alertErr) {
+    console.warn('[Seguridad] Advertencia enviando alerta de cambio de clave:', alertErr?.message || alertErr);
   }
 
   return res.json({
@@ -2059,8 +2088,6 @@ app.all('/api/bot-webhook', async (req, res) => {
   }
 });
 
-export default app;
-
 // ==============================================================================
 // PROXY DE BASE DE DATOS AUTENTICADO (Fase 2 - Opcion A)
 // ==============================================================================
@@ -2190,3 +2217,5 @@ app.delete('/api/admin/vip/:id', requireAdminAuth, async (req, res) => {
     return res.status(502).json({ error: 'No se pudo borrar el cliente VIP.' });
   }
 });
+
+export default app;

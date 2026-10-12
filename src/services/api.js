@@ -1743,7 +1743,8 @@ if (typeof window !== 'undefined' && !window.__sgAdminFetchPatched) {
     // El servidor decide qué habilita esa sesión (por ejemplo, verificar un pago).
     const needsAuth = url.includes('/api/')
       && !url.includes('/api/public/')
-      && !url.includes('/api/admin/auth');
+      && !url.includes('/api/admin/auth')
+      && !url.includes('/api/admin/password/');
     const token = needsAuth ? getAdminSessionToken() : '';
     if (token) {
       const headers = { ...(init.headers || {}), Authorization: `Bearer ${token}` };
@@ -3439,6 +3440,32 @@ export async function changeAdminPasswordOnServer(currentPin, newPin) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.error || 'Error al cambiar la contraseña en el servidor.');
+  }
+  return data;
+}
+
+export async function requestAdminPasswordReset() {
+  const res = await fetch(`${API_BASE}/admin/password/reset-request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Error al solicitar el código de recuperación.');
+  }
+  return data;
+}
+
+export async function confirmAdminPasswordReset(code, newPassword) {
+  const res = await fetch(`${API_BASE}/admin/password/reset-confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, newPassword })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Código inválido o expirado.');
   }
   return data;
 }

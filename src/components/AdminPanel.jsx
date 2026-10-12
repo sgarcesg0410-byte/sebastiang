@@ -86,6 +86,8 @@ import {
 import { 
   verifyAdminPin, 
   changeAdminPasswordOnServer,
+  requestAdminPasswordReset,
+  confirmAdminPasswordReset,
   forgetTrustedDevice,
   getAdminBookings, 
   updateBookingStatus, 
@@ -403,6 +405,63 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [isChangingPin, setIsChangingPin] = useState(false);
   const [showCurrentPin, setShowCurrentPin] = useState(false);
   const [showNewPin, setShowNewPin] = useState(false);
+
+  // Recuperación segura de contraseña de administrador (Zoho SMTP)
+  const [resetFlowStep, setResetFlowStep] = useState(null); // null | 'request' | 'confirm'
+  const [resetCode, setResetCode] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [showResetNewPassword, setShowResetNewPassword] = useState(false);
+  const [isResetRequesting, setIsResetRequesting] = useState(false);
+  const [isResetConfirming, setIsResetConfirming] = useState(false);
+  const [resetMsg, setResetMsg] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [resetSuccessBanner, setResetSuccessBanner] = useState('');
+
+  const handleRequestPasswordReset = async () => {
+    setIsResetRequesting(true);
+    setResetError('');
+    try {
+      const res = await requestAdminPasswordReset();
+      setResetMsg(res.message || 'Si el correo corresponde al administrador, se envió un código.');
+      setResetFlowStep('confirm');
+    } catch (err) {
+      setResetError(err.message || 'Error al solicitar el código de recuperación.');
+    } finally {
+      setIsResetRequesting(false);
+    }
+  };
+
+  const handleConfirmPasswordReset = async (e) => {
+    if (e) e.preventDefault();
+    if (!resetCode.trim() || resetCode.trim().length !== 6) {
+      setResetError('Por favor ingresa el código de 6 dígitos enviado a tu correo.');
+      return;
+    }
+    if (resetNewPassword.trim().length < 8) {
+      setResetError('La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetError('Las contraseñas no coinciden.');
+      return;
+    }
+    setIsResetConfirming(true);
+    setResetError('');
+    try {
+      const res = await confirmAdminPasswordReset(resetCode.trim(), resetNewPassword.trim());
+      setResetSuccessBanner(res.message || '✓ Contraseña restablecida con éxito. Inicia sesión con tu nueva contraseña.');
+      setResetFlowStep(null);
+      setPinInput('');
+      setResetCode('');
+      setResetNewPassword('');
+      setResetConfirmPassword('');
+    } catch (err) {
+      setResetError(err.message || 'Código inválido o expirado.');
+    } finally {
+      setIsResetConfirming(false);
+    }
+  };
 
   // Pestañas
   const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'payments' | 'reviews' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
@@ -3443,8 +3502,175 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             Ingreso privado para reservas, fotos y precios
           </p>
 
-          {/* FORMULARIO DE LOGIN VIP CON CONTRASEÑA MAESTRA */}
-          <form onSubmit={handleLogin} className="space-y-4">
+          {/* VISTAS DE LOGIN Y RECUPERACIÓN DE CONTRASEÑA */}
+          {resetSuccessBanner && !resetFlowStep && (
+            <div className="mb-4 p-3 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-200 text-xs text-left flex items-start gap-2 shadow-lg shadow-emerald-950/50">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <span>{resetSuccessBanner}</span>
+            </div>
+          )}
+
+          {resetFlowStep === 'request' ? (
+            /* PASO 1: SOLICITAR CÓDIGO EFÍMERO A ADMIN_EMAIL */
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-200 text-xs text-left leading-relaxed">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300 mb-1">
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Recuperación Segura por Correo</span>
+                </div>
+                <span>Se enviará un código de verificación de 6 dígitos al correo oficial del administrador. El código vence en 10 minutos.</span>
+              </div>
+
+              {resetError && (
+                <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-left">
+                  {resetError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRequestPasswordReset}
+                disabled={isResetRequesting}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 active:scale-95 text-stone-950 font-bold text-xs sm:text-sm shadow-lg shadow-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isResetRequesting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-stone-950" />
+                    <span>Enviando código...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 stroke-[2.5]" />
+                    <span>Enviar código a mi correo</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setResetFlowStep(null);
+                  setResetError('');
+                }}
+                className="w-full text-xs text-stone-400 hover:text-stone-200 pt-2 transition-colors cursor-pointer text-center"
+              >
+                ← Volver al inicio de sesión
+              </button>
+            </div>
+          ) : resetFlowStep === 'confirm' ? (
+            /* PASO 2: INGRESAR CÓDIGO Y NUEVA CONTRASEÑA */
+            <form onSubmit={handleConfirmPasswordReset} className="space-y-4">
+              {resetMsg && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-200 text-xs text-left">
+                  <span className="font-semibold text-amber-300">✉️ {resetMsg}</span>
+                </div>
+              )}
+
+              {resetError && (
+                <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-left">
+                  {resetError}
+                </div>
+              )}
+
+              {/* Código de 6 dígitos */}
+              <div className="space-y-1.5 text-left">
+                <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block text-center">
+                  Código de 6 Dígitos
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={resetCode}
+                  onChange={(e) => {
+                    setResetCode(e.target.value.replace(/\D/g, ''));
+                    if (resetError) setResetError('');
+                  }}
+                  placeholder="123456"
+                  className="w-full py-3 px-4 rounded-2xl bg-stone-950 border border-stone-800 focus:border-amber-400/80 focus:ring-2 focus:ring-amber-500/20 text-white text-center font-mono text-xl tracking-[0.3em] font-bold placeholder:text-stone-700 transition-all outline-none"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              {/* Nueva contraseña */}
+              <div className="space-y-1.5 text-left">
+                <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block text-center">
+                  Nueva Contraseña (mínimo 8 caracteres)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showResetNewPassword ? "text" : "password"}
+                    value={resetNewPassword}
+                    onChange={(e) => {
+                      setResetNewPassword(e.target.value);
+                      if (resetError) setResetError('');
+                    }}
+                    placeholder="Mínimo 8 caracteres"
+                    className="w-full pl-4 pr-10 py-3 rounded-2xl bg-stone-950 border border-stone-800 focus:border-amber-400/80 focus:ring-2 focus:ring-amber-500/20 text-white text-sm placeholder:text-stone-600 transition-all outline-none"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetNewPassword(!showResetNewPassword)}
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-stone-500 hover:text-amber-300 transition-colors cursor-pointer"
+                  >
+                    {showResetNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Confirmar nueva contraseña */}
+              <div className="space-y-1.5 text-left">
+                <label className="text-[11px] font-bold text-stone-400 uppercase tracking-wider block text-center">
+                  Confirma la Nueva Contraseña
+                </label>
+                <input
+                  type={showResetNewPassword ? "text" : "password"}
+                  value={resetConfirmPassword}
+                  onChange={(e) => {
+                    setResetConfirmPassword(e.target.value);
+                    if (resetError) setResetError('');
+                  }}
+                  placeholder="Repite la nueva contraseña"
+                  className="w-full px-4 py-3 rounded-2xl bg-stone-950 border border-stone-800 focus:border-amber-400/80 focus:ring-2 focus:ring-amber-500/20 text-white text-sm placeholder:text-stone-600 transition-all outline-none"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isResetConfirming || resetCode.length !== 6 || resetNewPassword.length < 8}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 active:scale-95 text-stone-950 font-bold text-xs sm:text-sm shadow-lg shadow-amber-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                {isResetConfirming ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-stone-950" />
+                    <span>Actualizando contraseña...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Cambiar Contraseña</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setResetFlowStep(null);
+                  setResetError('');
+                  setResetMsg('');
+                }}
+                className="w-full text-xs text-stone-400 hover:text-stone-200 pt-2 transition-colors cursor-pointer text-center"
+              >
+                ← Cancelar y volver al inicio de sesión
+              </button>
+            </form>
+          ) : (
+            /* FORMULARIO DE LOGIN VIP CON CONTRASEÑA MAESTRA */
+            <form onSubmit={handleLogin} className="space-y-4">
               {authError && (
                 <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl text-red-200 text-xs text-left">
                   {authError}
@@ -3528,6 +3754,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 )}
               </button>
 
+              {/* Enlace para Recuperar Contraseña */}
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetFlowStep('request');
+                    setResetError('');
+                    setResetMsg('');
+                    setResetSuccessBanner('');
+                  }}
+                  className="text-xs text-amber-400 hover:text-amber-300 underline font-medium transition-colors py-1 cursor-pointer inline-flex items-center gap-1"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>¿Olvidaste tu contraseña?</span>
+                </button>
+              </div>
+
               <div className="pt-3 border-t border-stone-800/80 space-y-2">
                 {bioSupported && !bioConfigured && (
                   <p className="text-[11px] text-stone-400 text-center flex items-center justify-center gap-1.5 pt-1">
@@ -3548,6 +3791,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 )}
               </div>
             </form>
+          )}
         </div>
       </div>
     );

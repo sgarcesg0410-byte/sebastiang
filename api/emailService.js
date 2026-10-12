@@ -413,3 +413,103 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@g
     return false;
   }
 }
+
+/**
+ * 5. Envía código de recuperación de contraseña al correo oficial del administrador
+ *    Regla de seguridad: Fuga cero (NUNCA registrar el código en logs)
+ */
+export async function sendPasswordResetCodeEmail(code, targetEmail = process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com') {
+  const transporter = getTransporter();
+  if (!transporter) return false;
+
+  try {
+    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com').trim();
+    const html = wrapEmailTemplate(`
+      <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px;">
+        <span style="color: #f59e0b; font-weight: bold; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
+          🔐 Recuperación de Contraseña • Sebastian G
+        </span>
+      </div>
+      <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6; margin-top: 0;">
+        ¡Hola Sebastian! Se ha solicitado restablecer la contraseña de acceso al <strong>Panel de Administración</strong>.
+      </p>
+      <p style="color: #d6d3d1; font-size: 14px; line-height: 1.6;">
+        Para continuar con el restablecimiento seguro de tu cuenta, ingresa el siguiente código de verificación de 6 dígitos:
+      </p>
+      <div style="text-align: center; margin: 30px 0;">
+        <div style="display: inline-block; background: #0c0a09; border: 2px solid #f59e0b; padding: 16px 36px; border-radius: 16px; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #f59e0b; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.25);">
+          ${code}
+        </div>
+      </div>
+      <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
+        <p style="margin: 0; color: #a8a29e; font-size: 12px; line-height: 1.5;">
+          ⏱️ Este código vence en <strong>10 minutos</strong> y solo puede ser usado una vez.<br/>
+          ⚠️ Si tú no solicitaste este cambio, puedes ignorar este mensaje de forma segura. Tu contraseña actual no ha sido modificada.
+        </p>
+      </div>
+    `);
+
+    await transporter.sendMail({
+      from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
+      to: dest,
+      bcc: 'reservas@sebastiang.app',
+      subject: `🔐 Código para Recuperar Contraseña • Sebastian G`,
+      html
+    });
+
+    console.log('✓ Código de recuperación enviado por correo a:', dest);
+    return true;
+  } catch (err) {
+    console.error('Error enviando código de recuperación por correo:', err);
+    return false;
+  }
+}
+
+/**
+ * 6. Envía alerta de seguridad cuando la contraseña de administrador ha sido cambiada
+ */
+export async function sendPasswordChangedAlertEmail(targetEmail = process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com', details = {}) {
+  const transporter = getTransporter();
+  if (!transporter) return false;
+
+  try {
+    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com').trim();
+    const timestamp = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+    const ip = details.ip ? `<p style="margin: 4px 0; color: #a8a29e; font-size: 13px;">🌐 Dirección IP: <strong>${details.ip}</strong></p>` : '';
+
+    const html = wrapEmailTemplate(`
+      <div style="background-color: #7f1d1d; border-left: 4px solid #ef4444; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px;">
+        <span style="color: #fca5a5; font-weight: bold; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
+          ⚠️ Alerta de Seguridad: Contraseña de Administrador Cambiada
+        </span>
+      </div>
+      <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6; margin-top: 0;">
+        ¡Hola Sebastian! Te notificamos que la contraseña de acceso a tu <strong>Panel de Administración</strong> ha sido modificada satisfactoriamente.
+      </p>
+      <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
+        <p style="margin: 4px 0; color: #a8a29e; font-size: 13px;">🗓️ Fecha y hora: <strong>${timestamp} (hora de Colombia)</strong></p>
+        ${ip}
+        <p style="margin: 8px 0 0; color: #34d399; font-size: 13px; font-weight: bold;">
+          ✓ Todas las sesiones activas en otros dispositivos han sido revocadas automáticamente.
+        </p>
+      </div>
+      <p style="color: #d6d3d1; font-size: 14px; line-height: 1.6;">
+        Si tú realizaste este cambio, no es necesaria ninguna acción adicional. Si tú <strong>NO</strong> realizaste este cambio, tu cuenta podría estar comprometida: ponte en contacto de inmediato o actualiza la clave en tus variables de entorno.
+      </p>
+    `);
+
+    await transporter.sendMail({
+      from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
+      to: dest,
+      bcc: 'reservas@sebastiang.app',
+      subject: `⚠️ Tu Contraseña de Administrador fue Cambiada • Sebastian G`,
+      html
+    });
+
+    console.log('✓ Alerta de seguridad (contraseña cambiada) enviada por correo a:', dest);
+    return true;
+  } catch (err) {
+    console.error('Error enviando alerta de cambio de contraseña por correo:', err);
+    return false;
+  }
+}

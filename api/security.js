@@ -105,6 +105,24 @@ export function isWeakConfiguredPin(hash) {
 
 const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
+let cachedPasswordVersion = 1;
+let passwordVersionGetter = null;
+
+export function setCachedPasswordVersion(version) {
+  const num = Number(version);
+  if (Number.isFinite(num) && num >= 1) {
+    cachedPasswordVersion = num;
+  }
+}
+
+export function getCachedPasswordVersion() {
+  return cachedPasswordVersion;
+}
+
+export function setPasswordVersionGetter(fn) {
+  passwordVersionGetter = typeof fn === 'function' ? fn : null;
+}
+
 export function createAdminToken(extra = {}) {
   const secret = getAdminAuthSecret();
   if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir sesión.');
@@ -113,6 +131,7 @@ export function createAdminToken(extra = {}) {
     iat: Date.now(),
     exp: Date.now() + ADMIN_TOKEN_TTL_MS,
     nonce: crypto.randomBytes(16).toString('hex'),
+    pwd: extra.pwd ?? getCachedPasswordVersion(),
     ...extra
   };
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -120,7 +139,7 @@ export function createAdminToken(extra = {}) {
   return `${body}.${signature}`;
 }
 
-export function verifyAdminToken(token) {
+export function verifyAdminToken(token, { expectedPasswordVersion } = {}) {
   const secret = getAdminAuthSecret();
   if (!secret) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
@@ -135,6 +154,9 @@ export function verifyAdminToken(token) {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     if (payload?.role !== 'admin') return null;
     if (!payload?.exp || Date.now() > payload.exp) return null;
+    if (expectedPasswordVersion !== undefined && expectedPasswordVersion !== null) {
+      if (payload.pwd !== expectedPasswordVersion) return null;
+    }
     return payload;
   } catch {
     return null;
@@ -150,11 +172,31 @@ export function readAdminToken(req) {
 }
 
 /** Middleware: toda ruta protegida exige una sesión de administrador válida. */
-export function requireAdminAuth(req, res, next) {
-  const payload = verifyAdminToken(readAdminToken(req));
+export async function requireAdminAuth(req, res, next) {
+  const token = readAdminToken(req);
+  const payload = verifyAdminToken(token);
   if (!payload) {
     return res.status(401).json({ error: 'No autorizado. Inicia sesión en el panel.' });
   }
+
+  let activeVersion = getCachedPasswordVersion();
+  if (typeof passwordVersionGetter === 'function') {
+    try {
+      const fetched = await passwordVersionGetter();
+      if (fetched !== undefined && fetched !== null) {
+        activeVersion = Number(fetched) || activeVersion;
+      }
+    } catch (err) {
+      // Fallar cerrado: si Supabase o el getter falla, proteger los datos
+      return res.status(401).json({ error: 'Error de verificación de sesión (servicio de autenticación no disponible).' });
+    }
+  }
+
+  // Si la versión del token no coincide con la versión activa, sesión revocada
+  if (payload.pwd !== activeVersion) {
+    return res.status(401).json({ error: 'Sesión revocada. Por favor, inicia sesión de nuevo.' });
+  }
+
   req.admin = payload;
   return next();
 }
