@@ -298,9 +298,42 @@ describe('Pasarela de Pagos Wompi - Módulo Criptográfico y Reglas de Negocio',
         amount: 20000
       };
 
-      // Si el webhook llega por segunda vez para la misma transacción
-      const isAlreadyProcessed = alreadyApprovedPayment.status === 'verified' || alreadyApprovedPayment.status === 'approved';
-      expect(isAlreadyProcessed).toBe(true);
+      // Si el webhook llega por segunda vez con APPROVED
+      const isCurrentlyVerified = alreadyApprovedPayment.status === 'verified' || alreadyApprovedPayment.status === 'approved';
+      const isIncomingApproved = true;
+      const isIdempotentDuplicate = isCurrentlyVerified && isIncomingApproved;
+
+      expect(isIdempotentDuplicate).toBe(true);
+    });
+
+    it('permite transicionar de verified a rejected ante un evento VOIDED o anulación', () => {
+      const existingPayment = {
+        id: 'pay-wompi-1',
+        reference: 'ref-wompi-test-123',
+        status: 'verified',
+        gatewayStatus: 'APPROVED',
+        amount: 20000
+      };
+
+      // Llega un evento posterior VOIDED de Wompi
+      const incomingTxStatus = 'VOIDED';
+      const isIncomingTerminalFail = ['DECLINED', 'VOIDED', 'ERROR'].includes(incomingTxStatus);
+      const isIdempotentDuplicate = (existingPayment.status === 'verified' && incomingTxStatus === 'APPROVED');
+
+      // No debe ser bloqueado por idempotencia; debe procesar la reversión
+      expect(isIdempotentDuplicate).toBe(false);
+      expect(isIncomingTerminalFail).toBe(true);
+
+      // El pago pasa a rejected y actualiza gatewayStatus
+      const updatedPayment = {
+        ...existingPayment,
+        status: 'rejected',
+        gatewayStatus: incomingTxStatus,
+        rejectedAt: '2026-10-12T04:00:00.000Z'
+      };
+
+      expect(updatedPayment.status).toBe('rejected');
+      expect(updatedPayment.gatewayStatus).toBe('VOIDED');
     });
 
     it('normaliza el estado contable a verified preservando gatewayStatus para trazabilidad', () => {

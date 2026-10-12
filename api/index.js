@@ -1406,11 +1406,16 @@ app.post('/api/payments/webhook', async (req, res) => {
     return res.status(404).json({ error: 'Pago con la referencia proporcionada no encontrado.' });
   }
 
-  // Idempotencia: si ya fue aprobado, responder 200 sin duplicar cobros
-  if (payment.status === 'verified' || payment.status === 'approved') {
+  // Idempotencia: si el evento entrante coincide con el estado actual, responder 200 sin duplicar acciones
+  const isCurrentlyVerified = payment.status === 'verified' || payment.status === 'approved';
+  const isIncomingApproved = tx.status === 'APPROVED';
+  const isCurrentlyRejected = payment.status === 'rejected';
+  const isIncomingTerminalFail = ['DECLINED', 'VOIDED', 'ERROR'].includes(tx.status);
+
+  if ((isCurrentlyVerified && isIncomingApproved) || (isCurrentlyRejected && isIncomingTerminalFail)) {
     return res.status(200).json({
       success: true,
-      message: 'Transacción ya procesada previamente (idempotente).',
+      message: 'Transacción ya procesada previamente en este estado (idempotente).',
       reference: payment.reference
     });
   }
@@ -1472,7 +1477,21 @@ app.post('/api/payments/webhook', async (req, res) => {
     const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
     if (inMem) Object.assign(inMem, payment);
 
-    await syncPaymentToSupabaseServer(payment);
+    let bookingToRevert = null;
+    if (payment.bookingId) {
+      bookingToRevert = await findBookingById(payment.bookingId);
+      if (bookingToRevert) {
+        bookingToRevert.depositPaid = false;
+        const inMemB = (runtimeDB.bookings || []).find(b => b.id === bookingToRevert.id);
+        if (inMemB) Object.assign(inMemB, bookingToRevert);
+      }
+    }
+
+    await Promise.allSettled([
+      syncPaymentToSupabaseServer(payment),
+      bookingToRevert ? syncBookingToSupabaseServer(bookingToRevert) : Promise.resolve()
+    ]);
+
     return res.status(200).json({ success: true, status: tx.status, reference: payment.reference });
   } else {
     return res.status(200).json({ success: true, status: tx.status });
