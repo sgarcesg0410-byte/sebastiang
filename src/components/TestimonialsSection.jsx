@@ -40,21 +40,22 @@ export default function TestimonialsSection({ onOpenBooking }) {
     };
   }, []);
 
-  // Si aún no existen comentarios reales de clientes, ocultar la sección para no mostrar datos ficticios
-  if (!reviews || reviews.length === 0) {
+  // Filtrar exclusivamente opiniones reales con contenido o calificación válida
+  const validReviews = Array.isArray(reviews)
+    ? reviews.filter(r => r && (r.comment?.trim() || r.rating))
+    : [];
+
+  // Si no existen comentarios reales de clientes, ocultar la sección para no mostrar datos ficticios
+  if (validReviews.length === 0) {
     return null;
   }
 
-  // Métricas reales y honestas calculadas en vivo
-  const totalReviews = reviews.length;
-  const ratings = reviews.map(r => Math.max(1, Math.min(5, Number(r.rating) || 5)));
-  const avgRating = totalReviews > 0
-    ? (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1)
-    : '5.0';
+  // Métricas reales y honestas calculadas estrictamente desde reseñas verificadas
+  const totalReviews = validReviews.length;
+  const ratings = validReviews.map(r => Math.max(1, Math.min(5, Number(r.rating) || 5)));
+  const avgRating = (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1);
   const satisfiedReviews = ratings.filter(r => r >= 4).length;
-  const recommendPercent = totalReviews > 0
-    ? Math.round((satisfiedReviews / totalReviews) * 100)
-    : 100;
+  const recommendPercent = Math.round((satisfiedReviews / totalReviews) * 100);
 
   return (
     <section id="testimonials-section" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">
@@ -118,7 +119,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
 
       {/* GRID DE TESTIMONIOS REALES */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {reviews.map((rev) => (
+        {validReviews.map((rev) => (
           <div
             key={rev.id}
             className="relative bg-gradient-to-b from-stone-900/90 to-stone-950 border border-stone-800/90 hover:border-amber-500/40 rounded-3xl p-6 sm:p-7 flex flex-col justify-between transition-all duration-300 shadow-xl hover:shadow-2xl hover:shadow-amber-500/5 group"
