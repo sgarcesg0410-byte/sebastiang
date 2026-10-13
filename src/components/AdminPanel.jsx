@@ -4611,42 +4611,47 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   });
 
                   return (
-                    <div className="bg-stone-900 border border-amber-500/30 rounded-3xl p-4 sm:p-6 shadow-xl relative overflow-hidden space-y-4 text-left">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="flex items-start sm:items-center gap-3">
-                          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500/30 to-amber-700/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 shadow-md">
-                            <Maximize2 className="w-5 h-5 text-amber-400" />
+                    <div className="relative bg-gradient-to-b from-stone-900/95 via-stone-900 to-stone-950 border border-amber-500/25 rounded-3xl p-5 sm:p-7 shadow-[0_20px_60px_rgba(0,0,0,0.6)] backdrop-blur-xl overflow-hidden space-y-5 text-left">
+                      {/* Luces ambientales de fondo */}
+                      <div className="absolute -top-20 -right-20 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+                      <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+
+                      <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3.5">
+                          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400/20 via-amber-500/10 to-stone-900 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0 shadow-lg shadow-amber-500/10">
+                            <TrendingUp className="w-6 h-6 text-amber-300" />
                           </div>
                           <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h4 className="text-base sm:text-lg font-serif font-bold text-white flex items-center gap-2">
-                                <span>Control de Costos & Ganancias de Retablos</span>
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <h4 className="text-base sm:text-lg font-serif font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-100 via-amber-300 to-amber-100">
+                                Rentabilidad & Costos de Retablos
                               </h4>
-                              <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                Costo Taller vs. Precio Cliente
+                              <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center gap-1 shadow-sm">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                Costo Taller vs. PVP Cliente
                               </span>
                             </div>
-                            <p className="text-xs text-stone-300 mt-0.5">
-                              A cómo se los dejas a tus clientes vs. el costo de fabricación en taller y tu ganancia neta en cada medida:
+                            <p className="text-xs text-stone-400 mt-1">
+                              Comparativa de precios de venta, costos de fabricación y margen neto por formato.
                             </p>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                        <div className="flex items-center gap-2.5 self-end sm:self-auto shrink-0">
                           <button
                             type="button"
                             onClick={() => setActiveTab('pricing-manager')}
-                            className="px-3 py-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 border border-amber-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                            className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 border border-amber-500/30 text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95 hover:border-amber-400/50"
                             title="Modificar los costos y precios de los retablos"
                           >
-                            <Settings className="w-3.5 h-3.5" />
+                            <Settings className="w-3.5 h-3.5 text-amber-400" />
                             <span>Ajustar Precios</span>
                           </button>
 
                           <button
                             type="button"
                             onClick={() => setShowRetabloCostWidget(prev => !prev)}
-                            className="p-1.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white transition-colors cursor-pointer"
+                            className="p-2 rounded-xl bg-stone-800/80 hover:bg-stone-700/80 border border-stone-700/60 text-stone-400 hover:text-white transition-all cursor-pointer"
                             title={showRetabloCostWidget ? 'Plegar tabla' : 'Desplegar tabla'}
                           >
                             {showRetabloCostWidget ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -4655,40 +4660,72 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       </div>
 
                       {showRetabloCostWidget && (
-                        <div className="space-y-3 pt-2 border-t border-stone-800/80 animate-in fade-in duration-200">
+                        <div className="relative z-10 space-y-4 pt-3 border-t border-stone-800/80 animate-in fade-in duration-200">
                           {/* Grid de las 6 medidas con Costo vs Precio vs Ganancia */}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-3.5">
                             {retabloCatalogWithProfit.map((item) => (
                               <div
                                 key={item.id}
-                                className="p-3.5 rounded-2xl bg-stone-950/90 border border-stone-800 hover:border-amber-500/40 transition-all flex flex-col justify-between space-y-2 shadow-md group"
+                                className="relative p-4 rounded-2xl bg-gradient-to-b from-stone-900/90 via-stone-950/70 to-stone-950/95 border border-stone-800/90 hover:border-amber-500/40 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between space-y-3 group overflow-hidden"
                               >
+                                {/* Línea dorada de brillo superior en hover */}
+                                <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+
                                 <div>
-                                  <div className="flex items-center justify-between mb-1">
-                                    <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                  {/* Tag & Porcentaje de Utilidad */}
+                                  <div className="flex items-center justify-between gap-1 mb-2.5">
+                                    <span className="text-[9px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-md bg-stone-800/80 text-amber-300/90 border border-amber-500/20 group-hover:border-amber-400/40 transition-colors">
                                       {item.tag}
                                     </span>
-                                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-1.5 py-0.2 rounded border border-emerald-500/20">
-                                      {item.marginPercent}% utilidad
+                                    <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/25 flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                      {item.marginPercent}%
                                     </span>
                                   </div>
-                                  <h5 className="text-base font-black font-mono text-white group-hover:text-amber-300 transition-colors">
-                                    {item.dimensions}
-                                  </h5>
+
+                                  {/* Medidas */}
+                                  <div>
+                                    <h5 className="text-lg font-serif font-bold text-white group-hover:text-amber-200 transition-colors tracking-tight">
+                                      {item.dimensions}
+                                    </h5>
+                                    <span className="text-[10px] text-stone-500 font-medium block">Formato estándar</span>
+                                  </div>
                                 </div>
 
-                                <div className="space-y-1.5 pt-2 border-t border-stone-800/80 text-xs font-mono">
-                                  <div className="flex justify-between items-center text-stone-400">
-                                    <span className="text-[11px] font-sans">Costo Taller:</span>
-                                    <span className="font-semibold text-rose-300">${item.cost.toLocaleString('es-CO')}</span>
+                                {/* Desglose financiero */}
+                                <div className="space-y-2 pt-2.5 border-t border-stone-800/80">
+                                  <div className="flex justify-between items-center text-xs">
+                                    <span className="text-[11px] text-stone-400 font-medium">Costo Taller:</span>
+                                    <span className="font-mono text-stone-400 font-medium">${item.cost.toLocaleString('es-CO')}</span>
                                   </div>
-                                  <div className="flex justify-between items-center text-stone-200">
-                                    <span className="text-[11px] font-sans font-bold">A Precio Mío:</span>
-                                    <span className="font-bold text-amber-400">${item.price.toLocaleString('es-CO')}</span>
+
+                                  <div className="flex justify-between items-center text-xs">
+                                    <span className="text-[11px] text-stone-300 font-medium">PVP Cliente:</span>
+                                    <span className="font-mono font-bold text-amber-300">${item.price.toLocaleString('es-CO')}</span>
                                   </div>
-                                  <div className="flex justify-between items-center pt-1 border-t border-stone-800 text-emerald-400 font-bold bg-emerald-950/25 px-2 py-1 rounded-lg border border-emerald-500/20">
-                                    <span className="text-[10px] font-sans uppercase">Tu Ganancia:</span>
-                                    <span className="text-xs font-black">+${item.profit.toLocaleString('es-CO')}</span>
+
+                                  {/* Mini barra de margen visual */}
+                                  <div className="w-full bg-stone-800/80 rounded-full h-1.5 overflow-hidden flex my-1" title={`${item.marginPercent}% de utilidad`}>
+                                    <div 
+                                      className="bg-stone-700 h-full" 
+                                      style={{ width: `${Math.max(10, 100 - item.marginPercent)}%` }} 
+                                    />
+                                    <div 
+                                      className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-full" 
+                                      style={{ width: `${Math.min(90, item.marginPercent)}%` }} 
+                                    />
+                                  </div>
+
+                                  {/* Badge de Ganancia Neta */}
+                                  <div className="pt-1">
+                                    <div className="flex justify-between items-center px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-950/60 via-emerald-900/30 to-emerald-950/60 border border-emerald-500/25 group-hover:border-emerald-500/40 transition-colors">
+                                      <span className="text-[9px] uppercase font-bold tracking-wider text-emerald-300/80">
+                                        Ganancia
+                                      </span>
+                                      <span className="text-xs font-mono font-extrabold text-emerald-300">
+                                        +${item.profit.toLocaleString('es-CO')}
+                                      </span>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
@@ -4713,23 +4750,28 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                             if (totalActiveRetablos === 0) return null;
 
                             return (
-                              <div className="p-3 bg-gradient-to-r from-amber-950/40 via-stone-900 to-amber-950/40 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-base">🪵</span>
-                                  <span className="text-stone-300">
-                                    Tienes <strong className="text-white">{totalActiveRetablos} cuadro(s) en retablo</strong> encargados en tus reservas en agenda.
+                              <div className="p-4 bg-gradient-to-r from-amber-950/30 via-stone-900/80 to-emerald-950/30 border border-amber-500/20 rounded-2xl flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs shadow-inner">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-base shrink-0">
+                                    🪵
+                                  </div>
+                                  <span className="text-stone-300 text-xs sm:text-sm">
+                                    Tienes <strong className="text-amber-200 font-semibold">{totalActiveRetablos} cuadro(s) en retablo</strong> encargados en tus reservas en agenda.
                                   </span>
                                 </div>
-                                <div className="flex items-center gap-3 font-mono text-xs">
-                                  <span className="text-stone-400">
-                                    Venta: <strong className="text-amber-300">${totalActiveSelling.toLocaleString('es-CO')}</strong>
-                                  </span>
-                                  <span className="text-stone-400">
-                                    Costo Taller: <strong className="text-rose-300">${totalActiveCost.toLocaleString('es-CO')}</strong>
-                                  </span>
-                                  <span className="text-emerald-400 font-bold bg-emerald-950 px-2 py-0.5 rounded border border-emerald-500/30">
-                                    Ganancia Neta: +${totalActiveProfit.toLocaleString('es-CO')} COP
-                                  </span>
+                                <div className="flex flex-wrap items-center gap-2 sm:gap-3 font-mono text-xs">
+                                  <div className="px-3 py-1.5 rounded-xl bg-stone-900/90 border border-stone-800 text-stone-300 flex items-center gap-1.5">
+                                    <span className="text-[10px] text-stone-400 uppercase font-sans font-bold">Venta:</span>
+                                    <strong className="text-amber-300">${totalActiveSelling.toLocaleString('es-CO')}</strong>
+                                  </div>
+                                  <div className="px-3 py-1.5 rounded-xl bg-stone-900/90 border border-stone-800 text-stone-300 flex items-center gap-1.5">
+                                    <span className="text-[10px] text-stone-400 uppercase font-sans font-bold">Costo:</span>
+                                    <strong className="text-rose-300">${totalActiveCost.toLocaleString('es-CO')}</strong>
+                                  </div>
+                                  <div className="px-3 py-1.5 rounded-xl bg-emerald-950/80 border border-emerald-500/30 text-emerald-300 flex items-center gap-1.5 shadow-sm">
+                                    <span className="text-[10px] uppercase font-sans font-bold text-emerald-400">Utilidad Neta:</span>
+                                    <strong className="text-emerald-300 font-black">+${totalActiveProfit.toLocaleString('es-CO')} COP</strong>
+                                  </div>
                                 </div>
                               </div>
                             );
