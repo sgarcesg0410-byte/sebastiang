@@ -13,6 +13,7 @@
 import crypto from 'crypto';
 import { hashSHA256, secureCompare, setCachedPasswordVersion, getCachedPasswordVersion } from './security.js';
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
+import { isMongoConfigured, upsertMongoDoc, findMongoDocs } from './db/mongo.js';
 
 // Rate limiters en memoria por IP
 const resetRequestAttempts = new Map(); // ip -> { count, windowStart }
@@ -97,6 +98,20 @@ export async function saveResetChallenge({ supaUrl, supaKey, runtimeDB, challeng
     runtimeDB.settings.adminResetChallenge = challenge;
   }
 
+  // 1. Guardar en MongoDB Atlas si está configurado
+  if (isMongoConfigured()) {
+    try {
+      await upsertMongoDoc('security', { key: 'admin_reset_challenge' }, {
+        key: 'admin_reset_challenge',
+        ...challenge,
+        savedAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('[MongoDB] Advertencia guardando challenge:', e?.message || e);
+    }
+  }
+
+  // 2. Supabase como fallback secundario
   if (supaUrl && supaKey) {
     try {
       await fetch(`${supaUrl}/rest/v1/catalog`, {
@@ -122,9 +137,22 @@ export async function saveResetChallenge({ supaUrl, supaKey, runtimeDB, challeng
 }
 
 /**
- * Lee el challenge de reseteo activo desde Supabase o memoria
+ * Lee el challenge de reseteo activo desde MongoDB Atlas, Supabase o memoria
  */
 export async function getResetChallenge({ supaUrl, supaKey, runtimeDB }) {
+  // 1. Intentar primero desde MongoDB Atlas
+  if (isMongoConfigured()) {
+    try {
+      const docs = await findMongoDocs('security', { key: 'admin_reset_challenge' });
+      if (docs && docs[0] && docs[0].codeHash) {
+        return docs[0];
+      }
+    } catch (e) {
+      console.warn('[MongoDB] Advertencia leyendo challenge:', e?.message || e);
+    }
+  }
+
+  // 2. Intentar Supabase
   if (supaUrl && supaKey) {
     try {
       const res = await fetch(`${supaUrl}/rest/v1/catalog?id=eq.system_admin_reset_challenge&select=*`, {
@@ -151,7 +179,7 @@ export async function getResetChallenge({ supaUrl, supaKey, runtimeDB }) {
 }
 
 /**
- * Guarda la nueva clave y passwordVersion en Supabase y memoria
+ * Guarda la nueva clave y passwordVersion en MongoDB Atlas, Supabase y memoria
  */
 export async function updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, newScryptHash, newVersion }) {
   if (runtimeDB) {
@@ -161,6 +189,21 @@ export async function updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, 
   }
   setCachedPasswordVersion(newVersion);
 
+  // 1. Guardar en MongoDB Atlas
+  if (isMongoConfigured()) {
+    try {
+      await upsertMongoDoc('security', { key: 'admin_pin_hash' }, {
+        key: 'admin_pin_hash',
+        scryptHash: newScryptHash,
+        passwordVersion: newVersion,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('[MongoDB] Advertencia actualizando contraseña:', e?.message || e);
+    }
+  }
+
+  // 2. Supabase
   if (supaUrl && supaKey) {
     try {
       await fetch(`${supaUrl}/rest/v1/catalog`, {
@@ -193,6 +236,21 @@ export async function updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, 
  * Obtiene la versión actual de la contraseña (por defecto 1)
  */
 export async function getActivePasswordVersionFromStore({ supaUrl, supaKey, runtimeDB }) {
+  // 1. MongoDB Atlas
+  if (isMongoConfigured()) {
+    try {
+      const docs = await findMongoDocs('security', { key: 'admin_pin_hash' });
+      if (docs && docs[0]?.passwordVersion) {
+        const v = Number(docs[0].passwordVersion);
+        if (Number.isFinite(v) && v >= 1) {
+          setCachedPasswordVersion(v);
+          return v;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 2. Supabase
   if (supaUrl && supaKey) {
     try {
       const res = await fetch(`${supaUrl}/rest/v1/catalog?id=eq.system_admin_pin_hash&select=*`, {

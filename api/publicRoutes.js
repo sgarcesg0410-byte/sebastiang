@@ -12,6 +12,7 @@
 import { createReceiptToken, verifyReceiptToken, toPublicBooking } from './security.js';
 import { computeBookingPaymentStatus } from './financials.js';
 import { validateReferralCode } from './referrals.js';
+import { isMongoConfigured, findMongoDocs } from './db/mongo.js';
 
 /** Limitador simple en memoria para rutas públicas (por instancia del serverless). */
 function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000 } = {}) {
@@ -47,10 +48,22 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
   const publicLimiter = createPublicRateLimiter();
 
   /**
-   * Trae las reservas desde Supabase (tabla `bookings` + filas `booking_data`
-   * del catálogo), sin datos de administración. Devuelve [] si no hay nube.
+   * Trae las reservas desde MongoDB Atlas o Supabase, sin datos de administración.
    */
   async function fetchCloudBookings() {
+    // 1. Intentar desde MongoDB Atlas (primario)
+    if (isMongoConfigured()) {
+      try {
+        const mongoBookings = await findMongoDocs('bookings', {});
+        if (mongoBookings && mongoBookings.length > 0) {
+          return mongoBookings;
+        }
+      } catch (e) {
+        console.warn('[Público] No se pudo leer bookings de MongoDB:', e?.message || e);
+      }
+    }
+
+    // 2. Supabase (fallback secundario)
     const { url, key } = supabase;
     if (!url || !key) return [];
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
@@ -101,8 +114,20 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
     return [...results.values()];
   }
 
-  /** Pagos registrados (tabla payments + filas payment_data del catálogo). */
+  /** Pagos registrados (MongoDB Atlas o Supabase). */
   async function getPayments() {
+    // 1. Intentar desde MongoDB Atlas
+    if (isMongoConfigured()) {
+      try {
+        const mongoPayments = await findMongoDocs('payments', {});
+        if (mongoPayments && mongoPayments.length > 0) {
+          return mongoPayments;
+        }
+      } catch (e) {
+        console.warn('[Público] No se pudo leer payments de MongoDB:', e?.message || e);
+      }
+    }
+
     const { url, key } = supabase;
     if (!url || !key) return [];
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
@@ -160,10 +185,28 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
     return [...merged.values()];
   }
 
-  /** Sesiones (galerías) combinando memoria y nube. */
+  /** Sesiones (galerías) combinando memoria y nube (MongoDB Atlas primario, Supabase secundario). */
   async function getAllSessions() {
     const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
     const sessions = [...(Array.isArray(db.sessions) ? db.sessions : [])];
+
+    // 1. Intentar desde MongoDB Atlas
+    if (isMongoConfigured()) {
+      try {
+        const mongoSessions = await findMongoDocs('sessions', {});
+        if (mongoSessions && mongoSessions.length > 0) {
+          const map = new Map();
+          [...sessions, ...mongoSessions].forEach(s => {
+            if (s?.token) map.set(s.token, s);
+          });
+          return [...map.values()];
+        }
+      } catch (e) {
+        console.warn('[Público] No se pudo leer sessions de MongoDB:', e?.message || e);
+      }
+    }
+
+    // 2. Supabase fallback
     const { url, key } = supabase;
     if (url && key) {
       try {
