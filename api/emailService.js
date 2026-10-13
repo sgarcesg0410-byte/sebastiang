@@ -12,7 +12,7 @@ function getZohoConfig() {
   const host = process.env.ZOHO_SMTP_HOST || 'smtp.zoho.com';
   const port = parseInt(process.env.ZOHO_SMTP_PORT || '587', 10);
   const user = process.env.ZOHO_SMTP_USER || 'reservas@sebastiang.app';
-  const pass = process.env.ZOHO_SMTP_PASS || '***REMOVED***';
+  const pass = process.env.ZOHO_SMTP_PASS;
 
   if (!pass) {
     console.warn(
