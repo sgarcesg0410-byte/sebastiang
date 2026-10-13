@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { escapeHtml } from './security.js';
 
 // ==============================================================================
 // CONFIGURACIÓN SMTP CON ZOHO MAIL
@@ -113,9 +114,9 @@ export async function sendNewBookingEmails(booking, settings = {}) {
   }
 
   const rawName = (booking.clientName || 'Cliente').trim();
-  const firstName = rawName.split(' ')[0] || rawName;
+  const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
-  const loc = booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero');
+  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero'));
   const priceFormatted = Number(booking.totalPrice || 0).toLocaleString('es-CO');
 
   // A) Correo para Sebastián G (Notificación de negocio)
@@ -132,24 +133,24 @@ export async function sendNewBookingEmails(booking, settings = {}) {
       <table border="0" cellpadding="8" cellspacing="0" width="100%" style="background-color: #0c0a09; border-radius: 12px; margin: 15px 0; border: 1px solid #292524; color: #d6d3d1; font-size: 14px;">
         <tr>
           <td style="color: #a8a29e; width: 35%;">👤 Cliente:</td>
-          <td style="color: #ffffff; font-weight: bold;">${booking.clientName}</td>
+          <td style="color: #ffffff; font-weight: bold;">${escapeHtml(booking.clientName)}</td>
         </tr>
         <tr>
           <td style="color: #a8a29e;">📱 WhatsApp:</td>
-          <td><a href="https://wa.me/${(booking.clientWhatsApp || '').replace(/\D/g, '')}" style="color: #34d399; font-weight: bold; text-decoration: none;">${booking.clientWhatsApp} (Chatear)</a></td>
+          <td><a href="https://wa.me/${(booking.clientWhatsApp || '').replace(/\D/g, '')}" style="color: #34d399; font-weight: bold; text-decoration: none;">${escapeHtml(booking.clientWhatsApp)} (Chatear)</a></td>
         </tr>
         ${booking.clientEmail ? `
         <tr>
           <td style="color: #a8a29e;">✉️ Correo:</td>
-          <td style="color: #38bdf8;">${booking.clientEmail}</td>
+          <td style="color: #38bdf8;">${escapeHtml(booking.clientEmail)}</td>
         </tr>` : ''}
         <tr>
           <td style="color: #a8a29e;">📦 Paquete:</td>
-          <td style="color: #f59e0b; font-weight: bold;">${booking.packageName || 'Sesión Fotográfica'}</td>
+          <td style="color: #f59e0b; font-weight: bold;">${escapeHtml(booking.packageName || 'Sesión Fotográfica')}</td>
         </tr>
         <tr>
           <td style="color: #a8a29e;">🗓️ Fecha y Hora:</td>
-          <td style="color: #ffffff; font-weight: bold;">${booking.dateTime}</td>
+          <td style="color: #ffffff; font-weight: bold;">${escapeHtml(booking.dateTime)}</td>
         </tr>
         <tr>
           <td style="color: #a8a29e;">📍 Locación:</td>
@@ -162,7 +163,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
         ${booking.description ? `
         <tr>
           <td style="color: #a8a29e; vertical-align: top;">📝 Notas:</td>
-          <td style="color: #e7e5e4;">${booking.description}</td>
+          <td style="color: #e7e5e4;">${escapeHtml(booking.description)}</td>
         </tr>` : ''}
       </table>
       <div style="text-align: center; margin-top: 25px;">
@@ -198,14 +199,14 @@ export async function sendNewBookingEmails(booking, settings = {}) {
           <h3 style="color: #f59e0b; font-size: 14px; text-transform: uppercase; margin: 0 0 12px; letter-spacing: 1px;">
             📋 Resumen de tu Cita Agendada:
           </h3>
-          <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Paquete:</strong> ${booking.packageName}</p>
-          <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Fecha y Hora:</strong> ${booking.dateTime}</p>
+          <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Paquete:</strong> ${escapeHtml(booking.packageName)}</p>
+          <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Fecha y Hora:</strong> ${escapeHtml(booking.dateTime)}</p>
           <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Locación:</strong> ${loc}</p>
           <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;"><strong>Valor Total:</strong> $${priceFormatted} COP</p>
         </div>
         <div style="background-color: #292524; border-left: 4px solid #34d399; padding: 12px 16px; border-radius: 8px; margin: 20px 0;">
           <p style="margin: 0; color: #e7e5e4; font-size: 13px; line-height: 1.5;">
-            💡 <strong>Próximo paso:</strong> Te contactaremos por WhatsApp al número que registraste (<strong>${booking.clientWhatsApp}</strong>) para coordinar detalles de vestuario y confirmar definitivamente tu sesión.
+            💡 <strong>Próximo paso:</strong> Te contactaremos por WhatsApp al número que registraste (<strong>${escapeHtml(booking.clientWhatsApp)}</strong>) para coordinar detalles de vestuario y confirmar definitivamente tu sesión.
           </p>
         </div>
         <div style="text-align: center; margin-top: 25px;">
@@ -243,9 +244,9 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
   if (!transporter) return false;
 
   const rawName = (booking.clientName || 'Cliente').trim();
-  const firstName = rawName.split(' ')[0] || rawName;
+  const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
-  const loc = booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero');
+  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero'));
 
   try {
     const html = wrapEmailTemplate(`
@@ -261,14 +262,14 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
         Te confirmo con mucho agrado que tu <strong>Sesión Fotográfica Profesional con Sebastian G</strong> ha sido agendada de forma exclusiva en mi calendario de trabajo.
       </p>
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin: 20px 0;">
-        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">🗓️ <strong>Fecha y Hora:</strong> ${booking.dateTime}</p>
+        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">🗓️ <strong>Fecha y Hora:</strong> ${escapeHtml(booking.dateTime)}</p>
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📍 <strong>Locación:</strong> ${loc}</p>
-        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📦 <strong>Paquete:</strong> ${booking.packageName}</p>
+        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📦 <strong>Paquete:</strong> ${escapeHtml(booking.packageName)}</p>
       </div>
       ${customNotes && customNotes.trim() ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Nota de Sebastian G:</span>
-        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${customNotes.trim()}"</p>
+        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(customNotes.trim())}"</p>
       </div>` : ''}
       <div style="background-color: #172554; border-left: 4px solid #3b82f6; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #93c5fd; font-weight: bold; font-size: 13px;">💡 Consejos para el día de tu sesión:</span>
@@ -311,7 +312,7 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
   if (!transporter) return false;
 
   const rawName = (clientName || 'Cliente').trim();
-  const firstName = rawName.split(' ')[0] || rawName;
+  const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
 
   try {
     const html = wrapEmailTemplate(`
@@ -324,7 +325,7 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
         ¡Hola ${firstName}! 📸
       </h2>
       <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6;">
-        Hemos finalizado la edición y el retoque profesional de tus fotografías seleccionadas correspondientes a tu <strong>${packageName || 'Sesión Fotográfica'}</strong>.
+        Hemos finalizado la edición y el retoque profesional de tus fotografías seleccionadas correspondientes a tu <strong>${escapeHtml(packageName || 'Sesión Fotográfica')}</strong>.
       </p>
       <p style="color: #d6d3d1; font-size: 14px; line-height: 1.6;">
         Para que tus fotos conserven el 100% de nitidez, color y resolución original (sin la compresión que aplica WhatsApp), puedes descargarlas directamente en el siguiente botón:
@@ -337,7 +338,7 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
       ${customNotes && customNotes.trim() ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Nota de Sebastian G:</span>
-        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${customNotes.trim()}"</p>
+        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(customNotes.trim())}"</p>
       </div>` : ''}
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
         <p style="margin: 0; color: #a8a29e; font-size: 12px; line-height: 1.5;">
@@ -475,7 +476,7 @@ export async function sendPasswordChangedAlertEmail(targetEmail = process.env.AD
   try {
     const dest = (targetEmail || process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com').trim();
     const timestamp = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
-    const ip = details.ip ? `<p style="margin: 4px 0; color: #a8a29e; font-size: 13px;">🌐 Dirección IP: <strong>${details.ip}</strong></p>` : '';
+    const ip = details.ip ? `<p style="margin: 4px 0; color: #a8a29e; font-size: 13px;">🌐 Dirección IP: <strong>${escapeHtml(details.ip)}</strong></p>` : '';
 
     const html = wrapEmailTemplate(`
       <div style="background-color: #7f1d1d; border-left: 4px solid #ef4444; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px;">
