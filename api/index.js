@@ -369,6 +369,24 @@ function checkCheckoutRateLimit(ip) {
   return true;
 }
 
+// Rate limit genérico para escrituras públicas sin limiter propio (reseñas, bot de WhatsApp)
+const publicWriteAttempts = new Map(); // IP -> { count, windowStart }
+const PUBLIC_WRITE_WINDOW_MS = 10 * 60 * 1000;
+
+function checkPublicWriteRateLimit(ip, maxAttempts) {
+  const now = Date.now();
+  const record = publicWriteAttempts.get(ip);
+  if (!record || (now - record.windowStart > PUBLIC_WRITE_WINDOW_MS)) {
+    publicWriteAttempts.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (record.count >= maxAttempts) {
+    return false;
+  }
+  record.count += 1;
+  return true;
+}
+
 // Limpieza periódica de entradas antiguas del rate limiter (cada 10 min)
 const limpiezaPeriodica = setInterval(() => {
   const now = Date.now();
@@ -382,6 +400,11 @@ const limpiezaPeriodica = setInterval(() => {
   for (const [ip, record] of checkoutAttempts.entries()) {
     if (record && now - record.windowStart > CHECKOUT_WINDOW_MS * 2) {
       checkoutAttempts.delete(ip);
+    }
+  }
+  for (const [ip, record] of publicWriteAttempts.entries()) {
+    if (record && now - record.windowStart > PUBLIC_WRITE_WINDOW_MS * 2) {
+      publicWriteAttempts.delete(ip);
     }
   }
 }, 10 * 60 * 1000);
@@ -1918,6 +1941,9 @@ app.get('/api/reviews', async (req, res) => {
 });
 
 app.post('/api/reviews', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 20)) {
+    return res.status(429).json({ error: 'Demasiadas reseñas desde tu conexión. Intenta más tarde.' });
+  }
   const { clientName, rating, recommend, comment } = req.body || {};
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan nombre del cliente o comentario.' });
@@ -2036,6 +2062,9 @@ app.delete('/api/admin/reviews/:id', async (req, res) => {
 // WEBHOOK BOT WHATSAPP
 // ==============================================================================
 app.all('/api/bot-webhook', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 90)) {
+    return res.status(429).json({ error: 'Demasiadas solicitudes al bot.' });
+  }
   try {
     const rawMsg = (req.body?.query?.message || req.body?.message || req.query?.message || '').trim();
     const sender = (req.body?.query?.sender || req.body?.sender || req.query?.sender || 'Cliente').trim();

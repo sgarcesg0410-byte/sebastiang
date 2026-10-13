@@ -117,7 +117,7 @@ app.get('/api/packages', (req, res) => {
 });
 
 // Actualizar paquetes de fotos (precios, descripciones, etc.)
-app.post('/api/packages', (req, res) => {
+app.post('/api/packages', requireAdminAuth, (req, res) => {
   const { packages } = req.body;
   if (Array.isArray(packages)) {
     const db = readDB();
@@ -129,7 +129,7 @@ app.post('/api/packages', (req, res) => {
 });
 
 // Actualizar configuración general
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireAdminAuth, (req, res) => {
   const newSettings = req.body;
   if (newSettings && typeof newSettings === 'object') {
     const db = readDB();
@@ -573,8 +573,8 @@ app.post('/api/admin/pin/change', (req, res) => {
     return res.status(401).json({ error: 'El PIN actual no coincide.' });
   }
 
-  if (!newPin || String(newPin).trim().length < 4) {
-    return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 4 caracteres.' });
+  if (!newPin || String(newPin).trim().length < 8) {
+    return res.status(400).json({ error: 'El nuevo PIN debe tener mínimo 8 caracteres.' });
   }
 
   const newHash = crypto.createHash('sha256').update(String(newPin).trim()).digest('hex');
