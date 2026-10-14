@@ -17,6 +17,7 @@ import { resolveBookingPrice } from './pricingGuard.js';
 import {
   sendNewBookingEmails,
   sendBookingConfirmedEmail,
+  sendPaymentReceiptEmail,
   sendPhotoDeliveryEmail,
   sendTwoFactorCodeEmail,
   sendPasswordChangedAlertEmail
@@ -153,8 +154,8 @@ async function syncBookingToSupabaseServer(b) {
     }
   }
 
-  // 2. Supabase Cloud (Fallback secundario)
-  if (!SUPABASE_REST_KEY) return;
+  // 2. Supabase Cloud (Fallback secundario sólo si Mongo no está configurado)
+  if (isMongoConfigured() || !SUPABASE_REST_KEY) return;
   try {
     await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings`, {
       method: 'POST',
@@ -213,8 +214,8 @@ async function syncPaymentToSupabaseServer(p) {
     }
   }
 
-  // 2. Supabase Cloud (Fallback secundario)
-  if (!SUPABASE_REST_KEY) return;
+  // 2. Supabase Cloud (Fallback secundario sólo si Mongo no está configurado)
+  if (isMongoConfigured() || !SUPABASE_REST_KEY) return;
   try {
     await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
       method: 'POST',
@@ -834,6 +835,15 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
     } else if (type === 'photo_delivery') {
       const ok = await sendPhotoDeliveryEmail(data);
       return res.json({ success: ok, message: ok ? 'Fotos enviadas por correo al cliente' : 'No se pudo enviar el correo' });
+    } else if (type === 'payment_receipt') {
+      const result = await sendPaymentReceiptEmail(data);
+      return res.json({
+        success: Boolean(result?.sent),
+        ...result,
+        message: result?.sent
+          ? `Comprobante ${result.voucherNum || ''} enviado con éxito al correo del cliente`
+          : (result?.reason === 'no_email' ? 'El cliente no tiene correo registrado' : 'No se pudo enviar el correo')
+      });
     } else if (type === 'test') {
       const ok = await sendNewBookingEmails(data?.booking || {
         clientName: 'Cliente de Prueba',
@@ -1553,8 +1563,8 @@ app.post('/api/payments', async (req, res) => {
     }
   }
 
-  // 2. Sincronización serverless con Supabase (fallback secundario)
-  if (SUPABASE_REST_KEY) {
+  // 2. Sincronización serverless con Supabase (fallback secundario sólo si Mongo no está configurado)
+  if (!isMongoConfigured() && SUPABASE_REST_KEY) {
     try {
       await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
         method: 'POST',

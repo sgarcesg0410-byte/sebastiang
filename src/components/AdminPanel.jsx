@@ -1742,30 +1742,44 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const isOutside = b.locationType === 'outside_san_antero' || b.locationType === 'outside';
     const loc = b.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero');
     const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
+    const total = Number(b.totalPrice || 0);
+    const paid = Number(paidAmount || 0);
+    const balance = Math.max(0, total - paid);
+    const isFull = balance === 0 || (paid > 0 && paid >= total);
+    const voucherNum = `REC-${String(b.id || '001').replace(/\D/g, '').slice(-5).padStart(5, '0')}`;
+    const receiptUrl = `https://sebastiang.app/#recibo=${b.receiptToken || b.id}&paid=${paid}&method=${encodeURIComponent(paymentMethod)}`;
 
     return (
       `📸 *¡Hola ${formattedFirstName}! Te saluda Sebastian G.* ✨\n\n` +
-      `¡Excelente noticia! Te confirmo con mucho gusto tu *Sesión Fotográfica Profesional* para el día que reservaste:\n\n` +
+      `¡Excelente noticia! Te confirmo con mucho agrado tu *Sesión Fotográfica Profesional* y el registro de tu pago en agenda oficial:\n\n` +
       `🗓️ *Fecha y Hora:* ${formatDateTime12Hour(b.dateTime)}\n` +
       `📦 *Paquete Confirmado:* ${b.packageName || 'Sesión Fotográfica'}\n` +
-      `💵 *Valor Total:* $${Number(b.totalPrice || 0).toLocaleString('es-CO')} COP\n` +
       `📍 *Locación:* ${loc}\n\n` +
-      (customNotes && customNotes.trim() ? `📝 *Nota del Fotógrafo:* ${customNotes.trim()}\n\n` : '') +
-      `Ya tengo agendado tu espacio de manera exclusiva en mi calendario de trabajo. ✨\n\n` +
+      `────────────────────────\n` +
+      `💰 *Total del Contrato:* $${total.toLocaleString('es-CO')} COP\n` +
+      `✅ *Valor Recibido / Abonado Hoy:* $${paid.toLocaleString('es-CO')} COP (${paymentMethod})\n` +
+      (isFull
+        ? `🏆 *Estado:* ¡PAZ Y SALVO 100% SALDADO!\n`
+        : `⏳ *Saldo Pendiente para el Día de la Sesión:* $${balance.toLocaleString('es-CO')} COP\n`
+      ) +
+      `────────────────────────\n` +
+      (customNotes && customNotes.trim() ? `📝 *Nota de Sebastian G:* "${customNotes.trim()}"\n\n` : '') +
+      `⛅ *Garantía de Clima en ${loc}:* En caso de lluvia o clima adverso, tu sesión se reprograma sin ninguna penalidad ni costo adicional.\n\n` +
+      `📄 *CONSULTA O DESCARGA TU COMPROBANTE OFICIAL (PDF) AQUÍ:*\n${receiptUrl}\n\n` +
       `💡 *Recomendaciones para el día de tu sesión:*\n` +
-      `• Te sugiero llegar con 10 o 15 minutos de anticipación.\n` +
-      `• Trae tus cambios de vestuario y la mejor energía para tus fotos.\n\n` +
-      `¡Será un verdadero placer capturar tus mejores momentos frente al lente! Si tienes cualquier inquietud sobre vestuarios, poses o detalles, puedes responderme directamente a este WhatsApp (+57 ${myPhone}). 📸`
+      `• Llegar con 10 o 15 minutos de anticipación al punto de encuentro.\n` +
+      `• Trae tus cambios de vestuario listos y toda la energía frente al lente.\n\n` +
+      `¡Será un verdadero honor capturar tus mejores momentos! Si tienes alguna duda, puedes responderme directamente a este WhatsApp (+57 ${myPhone}). 📸✨`
     );
   };
 
-  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '', targetPhone = null, chosenLine = 'line1') => {
+  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '', targetPhone = null, chosenLine = 'line1', paidAmount = 0, paymentMethod = 'Nequi') => {
     if (!b) return '#';
     let cleanPhone = (targetPhone || b.clientWhatsApp || '').replace(/\D/g, '');
     if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
       cleanPhone = '57' + cleanPhone;
     }
-    const text = encodeURIComponent(getBookingConfirmationPlainText(b, customNotes, chosenLine));
+    const text = encodeURIComponent(getBookingConfirmationPlainText(b, customNotes, chosenLine, paidAmount, paymentMethod));
     return `https://wa.me/${cleanPhone}?text=${text}`;
   };
 
@@ -1786,7 +1800,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setIsConfirmingBookingStatus(true);
     try {
       const activePhone = (confirmPhone || '').trim() || confirmingBooking.clientWhatsApp;
-      // 1. Asegurar que el estado quede como 'confirmed' en Supabase y localmente
+      const total = Number(confirmingBooking.totalPrice || 0);
+
+      // 1. Calcular el monto a acreditar (abono o pago total)
+      const finConfirm = computeBookingPaymentStatus(confirmingBooking, payments || []);
+      const amountToCredit = confirmAutoRegisterPayment
+        ? (confirmPaymentType === 'deposit'
+            ? Math.min(finConfirm.remaining, Math.round(total * 0.5))
+            : finConfirm.remaining)
+        : Math.round(total * 0.5);
+
+      const concept = confirmPaymentType === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
+
+      // 2. Asegurar que el estado quede como 'confirmed' en base de datos y localmente
       const updatedObj = { ...confirmingBooking, status: 'confirmed', clientWhatsApp: activePhone };
       await updateAdminBooking(confirmingBooking.id, updatedObj);
       saveLocalBooking(updatedObj);
@@ -1799,56 +1825,70 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         return [updatedObj, ...list];
       });
 
-      // 2. Si el cliente suministró correo, enviar comprobante formal por email
-      if (confirmingBooking.clientEmail && confirmingBooking.clientEmail.includes('@')) {
-        sendEmailNotification({
-          type: 'booking_confirmation',
-          data: {
-            booking: updatedObj,
-            customNotes: confirmNote
-          }
-        }).catch(err => console.error('Error enviando correo de confirmación:', err));
-      }
-
-      // 3. Auto-registrar ingreso en saldo de fotografía si está activado
-      if (confirmAutoRegisterPayment) {
-        const total = Number(confirmingBooking.totalPrice || 0);
-        // Se topa SIEMPRE al saldo pendiente: antes se precargaba el 50% del total
-        // aunque el cliente ya hubiera abonado, lo que permitía cobrar dos veces.
-        const finConfirm = computeBookingPaymentStatus(confirmingBooking, payments || []);
-        const amountToCredit = confirmPaymentType === 'deposit'
-          ? Math.min(finConfirm.remaining, Math.round(total * 0.5))
-          : finConfirm.remaining;
-        const concept = confirmPaymentType === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
-        
+      // 3. Auto-registrar pago en caja si está activado
+      if (confirmAutoRegisterPayment && amountToCredit > 0) {
         try {
-          if (amountToCredit > 0) {
-            const resPay = await createPayment({
-              clientName: confirmingBooking.clientName,
-              clientWhatsApp: activePhone,
-              sessionToken: String(confirmingBooking.id),
-              packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
-              amount: amountToCredit,
-              method: confirmPaymentMethod,
-              reference: `Abono Reserva #${confirmingBooking.id}`,
-              concept: concept,
-              status: 'verified'
-            });
-            if (resPay && resPay.payment) {
-              setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
-            }
-          } else {
-            console.warn('[Caja] La reserva ya está pagada por completo: no se registra otro abono.');
+          const resPay = await createPayment({
+            clientName: confirmingBooking.clientName,
+            clientWhatsApp: activePhone,
+            sessionToken: String(confirmingBooking.id),
+            packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
+            amount: amountToCredit,
+            method: confirmPaymentMethod,
+            reference: `Abono Reserva #${confirmingBooking.id}`,
+            concept: concept,
+            status: 'verified'
+          });
+          if (resPay && resPay.payment) {
+            setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
           }
         } catch (payErr) {
           console.warn('Error al auto-registrar pago en saldo de fotos:', payErr);
         }
       }
 
-      // 4. Generar URL de WhatsApp y abrir de manera segura sin recargar ni navegar el WebView
-      const url = getBookingConfirmationWhatsAppUrl(confirmingBooking, confirmNote, activePhone, chosenLine);
+      // 4. Generar el PDF vectorial de alta resolución del comprobante
+      let receiptPdfRes = null;
+      try {
+        receiptPdfRes = await generateLuxuryReceiptPdf({
+          booking: updatedObj,
+          paidAmount: amountToCredit,
+          paymentMethod: confirmPaymentMethod,
+          notes: confirmNote || concept
+        });
+      } catch (pdfErr) {
+        console.warn('Error generando PDF de comprobante al confirmar reserva:', pdfErr);
+      }
+
+      // 5. Enviar comprobante oficial 100% automático por correo con PDF adjunto si tiene email
+      if (confirmingBooking.clientEmail && confirmingBooking.clientEmail.includes('@')) {
+        sendEmailNotification({
+          type: 'payment_receipt',
+          data: {
+            booking: updatedObj,
+            paidAmount: amountToCredit,
+            paymentMethod: confirmPaymentMethod,
+            notes: confirmNote,
+            pdfBase64: receiptPdfRes ? receiptPdfRes.getRawBase64() : null
+          }
+        }).then(resEmail => {
+          if (resEmail?.success) {
+            console.log('✓ Comprobante con PDF adjunto enviado automáticamente al correo:', confirmingBooking.clientEmail);
+          }
+        }).catch(err => console.error('Error enviando comprobante por correo:', err));
+      }
+
+      // 6. Generar URL de WhatsApp formateada con el enlace oficial al comprobante
+      const url = getBookingConfirmationWhatsAppUrl(
+        confirmingBooking,
+        confirmNote,
+        activePhone,
+        chosenLine,
+        amountToCredit,
+        confirmPaymentMethod
+      );
       const lineLabel = chosenLine === 'line2' ? 'Línea 2 (302 369 6513)' : 'Línea 1 (324 472 5167)';
-      setConfirmSuccessMsg(`✓ ¡Reserva confirmada con éxito! Abriendo WhatsApp desde tu ${lineLabel}...`);
+      setConfirmSuccessMsg(`✓ ¡Reserva y pago confirmados con éxito! Abriendo WhatsApp desde tu ${lineLabel}...`);
       setLastSentWhatsAppUrl(url);
 
       openWhatsAppSafely(url);
@@ -2849,6 +2889,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       if (receiptRes) {
         const safeFilename = `Comprobante-SebastianG-${voucherNum}.pdf`;
+
+        // 0. Envío 100% automático al correo del cliente con PDF adjunto si tiene email registrado
+        if (receiptBooking.clientEmail && receiptBooking.clientEmail.includes('@')) {
+          sendEmailNotification({
+            type: 'payment_receipt',
+            data: {
+              booking: receiptBooking,
+              paidAmount: isNowFull ? total : paid,
+              paymentMethod: receiptPaymentMethod,
+              notes: receiptNotes,
+              pdfBase64: receiptRes.getRawBase64()
+            }
+          }).then(resEmail => {
+            if (resEmail?.success) {
+              console.log('✓ Comprobante con PDF adjunto enviado automáticamente al correo:', receiptBooking.clientEmail);
+            }
+          }).catch(err => console.warn('Error enviando comprobante por correo desde modal:', err));
+        }
 
         // 1. Prioridad: Puente nativo exclusivo de la APK Android (adjunta el archivo PDF en WhatsApp)
         if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.sharePdfFile) {
@@ -6324,6 +6382,31 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           onClick={async () => {
                             const newStatus = payment.status === 'verified' ? 'pending' : 'verified';
                             await updatePaymentStatus(payment.id, newStatus);
+                            if (newStatus === 'verified') {
+                              // Disparar envío automático de comprobante PDF al cliente
+                              const bFound = (bookings || []).find(b => String(b.id) === String(payment.sessionToken));
+                              if (bFound && bFound.clientEmail && bFound.clientEmail.includes('@')) {
+                                generateLuxuryReceiptPdf({
+                                  booking: bFound,
+                                  paidAmount: Number(payment.amount || 0),
+                                  paymentMethod: payment.method || 'Nequi',
+                                  notes: payment.concept || 'Pago verificado en sistema'
+                                }).then(receiptRes => {
+                                  if (receiptRes) {
+                                    sendEmailNotification({
+                                      type: 'payment_receipt',
+                                      data: {
+                                        booking: bFound,
+                                        paidAmount: Number(payment.amount || 0),
+                                        paymentMethod: payment.method || 'Nequi',
+                                        notes: payment.concept || 'Pago verificado',
+                                        pdfBase64: receiptRes.getRawBase64()
+                                      }
+                                    }).catch(e => console.warn('Error auto-enviando comprobante:', e));
+                                  }
+                                }).catch(e => console.warn('Error generando PDF comprobante:', e));
+                              }
+                            }
                             loadAllAdminData();
                           }}
                           className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all ${
@@ -10823,10 +10906,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <span>{effectivePrev > 0 ? 'Saldo Recibido Hoy' : 'Monto Recibido'} ({receiptPaymentMethod}):</span>
                           <span className="font-mono">${paidNow.toLocaleString('es-CO')} COP</span>
                         </div>
-                        <div className="flex justify-between text-amber-400 font-bold px-2.5 py-1">
-                          <span>{isFull ? 'Saldo Pendiente:' : 'Saldo Pendiente de Pago:'}</span>
-                          <span className="font-mono">${balance.toLocaleString('es-CO')} COP</span>
-                        </div>
+                        {balance > 0 ? (
+                          <div className="bg-amber-950/25 border border-amber-500/30 rounded-lg p-2.5 space-y-1">
+                            <div className="flex justify-between text-amber-400 font-bold">
+                              <span>Saldo Pendiente para el Día de la Sesión:</span>
+                              <span className="font-mono text-sm">${balance.toLocaleString('es-CO')} COP</span>
+                            </div>
+                            <p className="text-[10px] text-amber-300/80">
+                              * El saldo restante de ${balance.toLocaleString('es-CO')} COP se cancelará al finalizar tu sesión fotográfica.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between text-emerald-400 font-bold bg-emerald-900/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/30">
+                            <span>Estado Financiero:</span>
+                            <span className="font-mono">PAZ Y SALVO TOTAL ($0 COP)</span>
+                          </div>
+                        )}
                       </>
                     );
                   })()}
@@ -10863,7 +10958,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     const alreadyPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
                     const isTotal = receiptType === 'total';
                     const effectivePrev = isTotal ? 0 : alreadyPaid;
+                    const totalPaid = isTotal ? total : Math.min(total, effectivePrev + paidNow);
                     const isFull = Math.max(0, total - (effectivePrev + paidNow)) === 0 || isTotal || (effectivePrev + paidNow) >= total;
+                    const pct = Math.min(100, Math.round((totalPaid / (total || 1)) * 100));
 
                     return (
                       <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -10871,7 +10968,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                           : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
                       }`}>
-                        {isFull ? '✓ PAGADO TOTAL (100%)' : '✓ ABONO CONFIRMADO (50%)'}
+                        {isFull ? '✓ SESIÓN SALDADA (PAZ Y SALVO 100%)' : `✦ ABONO CONFIRMADO (${pct}% PAGADO) ✦`}
                       </span>
                     );
                   })()}

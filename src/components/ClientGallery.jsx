@@ -222,17 +222,11 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     if (data.packagePrice && Number(data.packagePrice) > 0) return Number(data.packagePrice);
     if (data.sessionBasePrice && Number(data.sessionBasePrice) > 0) return Number(data.sessionBasePrice);
 
-    // Búsqueda inteligente por nombre de cliente en reservas oficiales
-    const cName = (data.clientName || '').toLowerCase().trim();
-    if (cName.includes('jennifer') || cName.includes('vasquez') || cName.includes('vásquez')) {
-      return 85000; // Reserva en Coveñas con recargo oficial
-    }
-    if (cName.includes('marlin') || cName.includes('torres')) {
-      return 75000; // 6 fotos con locación especial
-    }
-    if (cName.includes('laura') || cName.includes('maza')) {
-      return 45000; // 4 fotos sesión local
-    }
+    // Búsqueda del precio en los datos oficiales de la reserva / sesión
+    if (data.totalPrice && Number(data.totalPrice) > 0) return Number(data.totalPrice);
+    if (data.packagePrice && Number(data.packagePrice) > 0) return Number(data.packagePrice);
+    if (data.sessionBasePrice && Number(data.sessionBasePrice) > 0) return Number(data.sessionBasePrice);
+    if (data.price && Number(data.price) > 0) return Number(data.price);
 
     const title = (data.packageTitle || '').toLowerCase();
     if (title.includes('4 foto') || title.includes('4foto') || data.maxPhotosAllowed <= 6) return 45000;

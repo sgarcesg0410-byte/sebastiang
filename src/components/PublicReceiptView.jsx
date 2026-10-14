@@ -264,17 +264,29 @@ export default function PublicReceiptView({ bookingId, onBack }) {
                 );
               })()}
               <div className="border-t border-stone-800 pt-2 flex justify-between text-stone-200">
-                <span className="font-bold">Total Pactado:</span>
+                <span className="font-bold">Total del Contrato:</span>
                 <span className="font-mono font-bold">${total.toLocaleString('es-CO')} COP</span>
               </div>
               <div className="flex justify-between text-emerald-400 font-bold bg-emerald-950/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
-                <span>Monto Abonado / Recibido ({paymentMethod}):</span>
+                <span>Valor Recibido / Abonado Hoy ({paymentMethod}):</span>
                 <span className="font-mono">${actualPaid.toLocaleString('es-CO')} COP</span>
               </div>
-              <div className="flex justify-between text-amber-400 font-bold px-2.5 py-1">
-                <span>Saldo Pendiente de Pago en la Sesión:</span>
-                <span className="font-mono">${balance.toLocaleString('es-CO')} COP</span>
-              </div>
+              {balance > 0 ? (
+                <div className="bg-amber-950/25 border border-amber-500/30 rounded-lg p-2.5 space-y-1">
+                  <div className="flex justify-between text-amber-400 font-bold">
+                    <span>Saldo Pendiente para el Día de la Sesión:</span>
+                    <span className="font-mono text-sm">${balance.toLocaleString('es-CO')} COP</span>
+                  </div>
+                  <p className="text-[10px] text-amber-300/80">
+                    * El saldo de ${balance.toLocaleString('es-CO')} COP se cancelará al finalizar tu sesión fotográfica.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex justify-between text-emerald-400 font-bold bg-emerald-900/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/30">
+                  <span>Estado Financiero:</span>
+                  <span className="font-mono">PAZ Y SALVO TOTAL ($0 COP)</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -298,15 +310,20 @@ export default function PublicReceiptView({ bookingId, onBack }) {
               <p className="text-stone-400 text-[10px]">Fotógrafo Profesional Titular</p>
             </div>
             <div className="text-right">
-              <span
-                className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                  balance === 0
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                }`}
-              >
-                {balance === 0 ? '✓ PAGADO TOTAL (100%)' : '✓ ABONO REGISTRADO (50%)'}
-              </span>
+              {(() => {
+                const pct = Math.min(100, Math.round((actualPaid / (total || 1)) * 100));
+                return (
+                  <span
+                    className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      balance === 0
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                    }`}
+                  >
+                    {balance === 0 ? '✓ SESIÓN SALDADA (PAZ Y SALVO 100%)' : `✦ ABONO CONFIRMADO (${pct}% PAGADO) ✦`}
+                  </span>
+                );
+              })()}
             </div>
           </div>
           </div>

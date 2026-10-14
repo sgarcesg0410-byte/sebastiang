@@ -157,27 +157,27 @@ export async function generateLuxuryReceiptPdf({
   pdf.text('San Antero & Coveñas, Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app', textLeftX, 33);
 
   // Insignia de Número de Comprobante (Derecha)
-  const badgeW = 60;
+  const badgeW = 66;
   const badgeH = 18.5;
   const badgeX = pageWidth - margin - badgeW;
-  pdf.setFillColor(254, 243, 199); // amber-100
-  pdf.setDrawColor(245, 158, 11); // amber-500
+  pdf.setFillColor(isFull ? 236 : 254, isFull ? 253 : 243, isFull ? 245 : 199); // emerald-50 si es full, amber-100 si es abono
+  pdf.setDrawColor(isFull ? 5 : 245, isFull ? 150 : 158, isFull ? 105 : 11); // emerald-600 o amber-500
   pdf.setLineWidth(0.5);
   pdf.roundedRect(badgeX, 16.5, badgeW, badgeH, 2.5, 2.5, 'FD');
 
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(7);
-  pdf.setTextColor(146, 64, 14); // amber-800
-  pdf.text('COMPROBANTE OFICIAL DE RESERVA', badgeX + (badgeW / 2), 21.5, { align: 'center' });
+  pdf.setFontSize(6.5);
+  pdf.setTextColor(isFull ? 4 : 146, isFull ? 120 : 64, isFull ? 87 : 14);
+  pdf.text(isFull ? 'COMPROBANTE OFICIAL • PAGO 100%' : 'COMPROBANTE OFICIAL • ABONO', badgeX + (badgeW / 2), 21.5, { align: 'center' });
 
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(13);
-  pdf.setTextColor(180, 83, 9); // amber-700
-  pdf.text(voucherNum, badgeX + (badgeW / 2), 28, { align: 'center' });
+  pdf.setFontSize(12.5);
+  pdf.setTextColor(isFull ? 4 : 180, isFull ? 120 : 83, isFull ? 87 : 9);
+  pdf.text(`N° SG-${voucherNum}`, badgeX + (badgeW / 2), 28, { align: 'center' });
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7);
-  pdf.setTextColor(120, 53, 15);
+  pdf.setTextColor(isFull ? 4 : 120, isFull ? 120 : 53, isFull ? 87 : 15);
   pdf.text(`Emisión: ${emissionDate}`, badgeX + (badgeW / 2), 32.5, { align: 'center' });
 
   // Línea divisoria elegante
@@ -343,41 +343,58 @@ export async function generateLuxuryReceiptPdf({
 
   // ===== SECCIÓN 3: LEDGER FINANCIERO =====
   currentY += 1.5;
-  // Fila Total Pactado
+  // Fila 1: Total Pactado
   pdf.setFillColor(248, 250, 252);
   pdf.rect(margin, currentY, tableWidth, 8.5, 'F');
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(9.5);
   pdf.setTextColor(15, 23, 42);
-  pdf.text('TOTAL PACTADO:', margin + 4, currentY + 5.5);
+  pdf.text('TOTAL PACTADO DEL CONTRATO:', margin + 4, currentY + 5.5);
   pdf.text(`$${total.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, currentY + 5.5, { align: 'right' });
   currentY += 8.5;
   pdf.line(margin, currentY, pageWidth - margin, currentY);
 
-  // Fila Monto Recibido
+  // Fila 2: Monto Recibido
   pdf.setFillColor(236, 253, 245); // emerald-50
   pdf.rect(margin, currentY, tableWidth, 9, 'F');
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(9.5);
   pdf.setTextColor(4, 120, 87); // emerald-700
-  pdf.text(`VALOR RECIBIDO / ABONADO (${paymentMethod}):`, margin + 4, currentY + 6);
+  pdf.text(`VALOR RECIBIDO / ABONADO HOY (${paymentMethod}):`, margin + 4, currentY + 6);
   pdf.text(`$${actualPaid.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, currentY + 6, { align: 'right' });
   currentY += 9;
   pdf.line(margin, currentY, pageWidth - margin, currentY);
 
-  // Fila Saldo Pendiente
-  pdf.setFillColor(255, 251, 235); // amber-50
-  pdf.rect(margin, currentY, tableWidth, 9, 'F');
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9.5);
-  pdf.setTextColor(180, 83, 9); // amber-700
-  pdf.text('SALDO PENDIENTE POR PAGAR EN LA SESIÓN:', margin + 4, currentY + 6);
-  pdf.text(`$${balance.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, currentY + 6, { align: 'right' });
-  currentY += 9;
-  pdf.line(margin, currentY, pageWidth - margin, currentY);
+  // Fila 3: Saldo Pendiente
+  if (isFull) {
+    pdf.setFillColor(240, 253, 244); // green-50
+    pdf.rect(margin, currentY, tableWidth, 9, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(21, 128, 61); // green-700
+    pdf.text('ESTADO FINANCIERO:', margin + 4, currentY + 6);
+    pdf.text('PAZ Y SALVO TOTAL ($0 COP)', pageWidth - margin - 4, currentY + 6, { align: 'right' });
+    currentY += 9;
+    pdf.line(margin, currentY, pageWidth - margin, currentY);
+  } else {
+    pdf.setFillColor(255, 251, 235); // amber-50
+    pdf.rect(margin, currentY, tableWidth, 10.5, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(180, 83, 9); // amber-700
+    pdf.text('SALDO PENDIENTE POR PAGAR EL DÍA DE LA SESIÓN:', margin + 4, currentY + 5.5);
+    pdf.text(`$${balance.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, currentY + 5.5, { align: 'right' });
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(6.5);
+    pdf.setTextColor(146, 64, 14); // amber-800
+    pdf.text(`* El saldo restante de $${balance.toLocaleString('es-CO')} COP será liquidado al finalizar tu sesión fotográfica.`, margin + 4, currentY + 9);
+    currentY += 10.5;
+    pdf.line(margin, currentY, pageWidth - margin, currentY);
+  }
 
   // ===== SECCIÓN 4: GARANTÍAS Y CLÁUSULAS OFICIALES =====
-  currentY += 5;
+  currentY += 4;
   const guaranteeH = 20;
   pdf.setFillColor(254, 252, 243);
   pdf.setDrawColor(245, 158, 11);
@@ -395,7 +412,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.text(`• En caso de lluvia o clima adverso en ${location}, tu sesión se reprograma para una nueva fecha sin costo adicional.`, margin + 4, currentY + 10);
   pdf.text('• Tu anticipo y cupo quedan 100% protegidos y garantizados en agenda. Documento electrónico emitido en sebastiang.app.', margin + 4, currentY + 14.5);
 
-  currentY += guaranteeH + 6;
+  currentY += guaranteeH + 5;
 
   // ===== SECCIÓN 5: QR DE VERIFICACIÓN, SELLO DIGITAL Y FIRMA =====
   const authBoxH = 46;
@@ -418,24 +435,32 @@ export async function generateLuxuryReceiptPdf({
 
   // 5.2 Sello Oficial de Estado en el centro
   const stampX = margin + 43;
-  const stampW = 74;
-  const stampH = 12;
+  const stampW = 76;
+  const stampH = 13;
 
+  const pctPaid = Math.min(100, Math.round((actualPaid / (total || 1)) * 100));
   pdf.setFillColor(isFull ? 209 : 254, isFull ? 250 : 243, isFull ? 229 : 199);
   pdf.setDrawColor(isFull ? 16 : 245, isFull ? 185 : 158, isFull ? 129 : 11);
-  pdf.roundedRect(stampX, currentY + 6, stampW, stampH, 6, 6, 'FD');
+  pdf.setLineWidth(0.5);
+  pdf.roundedRect(stampX, currentY + 5.5, stampW, stampH, 4, 4, 'FD');
 
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9);
+  pdf.setFontSize(8.5);
   pdf.setTextColor(isFull ? 6 : 146, isFull ? 95 : 64, isFull ? 70 : 14);
-  const stampTitle = isFull ? '✓ SESIÓN SALDADA (PAGADO 100%)' : '✓ ABONO CONFIRMADO (50% CUPO)';
-  pdf.text(stampTitle, stampX + (stampW / 2), currentY + 13.5, { align: 'center' });
+  const stampTitle = isFull ? '✓ SESIÓN SALDADA (PAZ Y SALVO 100%)' : `✦ ABONO CONFIRMADO (${pctPaid}% PAGADO) ✦`;
+  pdf.text(stampTitle, stampX + (stampW / 2), currentY + 12.5, { align: 'center' });
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7);
   pdf.setTextColor(71, 85, 105);
   pdf.text('Este documento electrónico acredita que el cupo y fecha están', stampX, currentY + 23);
-  pdf.text('debidamente registrados en la agenda oficial de Sebastian G.', stampX, currentY + 27);
+  pdf.text(
+    isFull
+      ? 'saldados y registrados formalmente en la agenda de Sebastian G.'
+      : `reservados en agenda. Saldo pendiente: $${balance.toLocaleString('es-CO')} COP`,
+    stampX,
+    currentY + 27
+  );
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(6.5);
   pdf.setTextColor(100, 116, 139);

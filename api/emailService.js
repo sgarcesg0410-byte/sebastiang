@@ -233,6 +233,164 @@ export async function sendNewBookingEmails(booking, settings = {}) {
 }
 
 /**
+ * 2. Envía comprobante oficial de pago/abono con PDF adjunto en alta resolución
+ * directamente al correo registrado del cliente.
+ */
+export async function sendPaymentReceiptEmail({
+  booking,
+  paidAmount = 0,
+  paymentMethod = 'Nequi',
+  notes = '',
+  pdfBase64 = null
+}) {
+  if (!booking || !booking.clientEmail || !booking.clientEmail.includes('@')) {
+    return { sent: false, reason: 'no_email' };
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) {
+    return { sent: false, reason: 'smtp_not_configured' };
+  }
+
+  const total = Number(booking.totalPrice || 0);
+  const actualPaid = Number(paidAmount || 0);
+  const balance = Math.max(0, total - actualPaid);
+  const isFull = balance === 0;
+
+  const rawName = (booking.clientName || 'Cliente').trim();
+  const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
+  const voucherNum = `REC-${String(booking.id || '001').replace(/\\D/g, '').slice(-5).padStart(5, '0')}`;
+  const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
+  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero & Coveñas'));
+  const packageName = escapeHtml(booking.packageName || 'Sesión Fotográfica');
+  const dateTime = escapeHtml(booking.dateTime || 'Por coordinar');
+
+  const receiptUrl = `https://sebastiang.app/#recibo=${booking.receiptToken || booking.id}&paid=${actualPaid}&method=${encodeURIComponent(paymentMethod)}`;
+
+  const subject = isFull
+    ? `🏆 Comprobante Oficial de Pago (Paz y Salvo 100%) • ${voucherNum} • Sebastian G`
+    : `🧾 Comprobante Oficial de Abono • Reserva #${voucherNum} (${packageName}) • Sebastian G`;
+
+  const statusBadge = isFull
+    ? `<div style="background-color: #064e3b; border: 1px solid #059669; padding: 12px 16px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
+        <span style="color: #6ee7b7; font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
+          ✓ PAGO TOTAL CONFIRMADO • SESIÓN 100% SALDADA
+        </span>
+      </div>`
+    : `<div style="background-color: #78350f; border: 1px solid #d97706; padding: 12px 16px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
+        <span style="color: #fde68a; font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
+          ✦ ABONO DE RESERVA CONFIRMADO • CUPO ASEGURADO EN AGENDA ✦
+        </span>
+      </div>`;
+
+  const html = wrapEmailTemplate(`
+    ${statusBadge}
+    <h2 style="color: #f59e0b; margin-top: 0; font-size: 20px;">
+      ¡Hola ${firstName}! ✨
+    </h2>
+    <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6;">
+      ${isFull
+        ? 'Hemos verificado tu pago total con éxito. Tu sesión fotográfica profesional se encuentra en estado de <strong>PAZ Y SALVO oficial</strong>.'
+        : 'Hemos recibido y verificado tu abono con éxito. Tu cupo, fecha y horario quedan <strong>100% reservados y asegurados</strong> en la agenda oficial de Sebastian G.'
+      }
+    </p>
+
+    <!-- Resumen Financiero Destacado -->
+    <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 20px; margin: 20px 0;">
+      <h3 style="color: #f59e0b; font-size: 13px; text-transform: uppercase; margin: 0 0 14px; letter-spacing: 1px;">
+        💳 Desglose Financiero Oficial:
+      </h3>
+      <table border="0" cellpadding="6" cellspacing="0" width="100%" style="color: #d6d3d1; font-size: 14px;">
+        <tr>
+          <td style="color: #a8a29e;">N° de Comprobante:</td>
+          <td style="color: #f59e0b; font-weight: bold; font-family: monospace;">${voucherNum}</td>
+        </tr>
+        <tr>
+          <td style="color: #a8a29e;">Paquete Contratado:</td>
+          <td style="color: #ffffff; font-weight: bold;">${packageName}</td>
+        </tr>
+        <tr>
+          <td style="color: #a8a29e;">Valor Total del Contrato:</td>
+          <td style="color: #ffffff; font-weight: bold;">$${total.toLocaleString('es-CO')} COP</td>
+        </tr>
+        <tr style="background-color: #064e3b22;">
+          <td style="color: #34d399; font-weight: bold;">Valor Abonado / Recibido (${escapeHtml(paymentMethod)}):</td>
+          <td style="color: #34d399; font-weight: 800; font-size: 15px;">$${actualPaid.toLocaleString('es-CO')} COP</td>
+        </tr>
+        <tr style="background-color: ${isFull ? '#064e3b11' : '#78350f22'};">
+          <td style="color: ${isFull ? '#6ee7b7' : '#fbbf24'}; font-weight: bold;">
+            ${isFull ? 'Estado Financiero:' : 'Saldo Pendiente para el Día de la Sesión:'}
+          </td>
+          <td style="color: ${isFull ? '#6ee7b7' : '#fbbf24'}; font-weight: 900; font-size: 16px;">
+            ${isFull ? 'PAZ Y SALVO ($0 COP)' : `$${balance.toLocaleString('es-CO')} COP`}
+          </td>
+        </tr>
+      </table>
+      ${!isFull ? `
+      <p style="margin: 12px 0 0; color: #fde68a; font-size: 12px; line-height: 1.4; border-top: 1px dashed #44403c; padding-top: 8px;">
+        📌 <em>Nota: El saldo pendiente de <strong>$${balance.toLocaleString('es-CO')} COP</strong> se cancelará el día de tu sesión fotográfica.</em>
+      </p>` : ''}
+    </div>
+
+    <!-- Detalles de la Cita -->
+    <div style="background-color: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 16px; margin: 20px 0;">
+      <h3 style="color: #f59e0b; font-size: 13px; text-transform: uppercase; margin: 0 0 10px; letter-spacing: 1px;">
+        🗓️ Datos de tu Cita en Agenda:
+      </h3>
+      <p style="margin: 5px 0; color: #d6d3d1; font-size: 13px;"><strong>Fecha y Hora:</strong> ${dateTime}</p>
+      <p style="margin: 5px 0; color: #d6d3d1; font-size: 13px;"><strong>Locación:</strong> ${loc}</p>
+      <p style="margin: 5px 0; color: #d6d3d1; font-size: 13px;"><strong>WhatsApp Registrado:</strong> ${escapeHtml(booking.clientWhatsApp)}</p>
+    </div>
+
+    <!-- Garantía de Clima -->
+    <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 8px; margin: 20px 0;">
+      <span style="color: #f59e0b; font-weight: bold; font-size: 13px;">⛅ Garantía Oficial de Clima en ${loc}:</span>
+      <p style="margin: 6px 0 0; color: #e7e5e4; font-size: 12px; line-height: 1.5;">
+        Si se presentan lluvias o clima adverso en la locación, tu sesión se reprograma sin ninguna penalidad ni costo adicional. Tu anticipo y cupo quedan 100% protegidos.
+      </p>
+    </div>
+
+    <!-- Botón de Consulta Web -->
+    <div style="text-align: center; margin: 30px 0 15px;">
+      <a href="${receiptUrl}" style="display: inline-block; background: linear-gradient(135deg, #d97706, #b45309); color: #ffffff; font-weight: 800; font-size: 14px; padding: 14px 28px; border-radius: 10px; text-decoration: none; box-shadow: 0 4px 15px rgba(217, 119, 6, 0.35);">
+        📄 Ver Comprobante Digital Interactivo
+      </a>
+      <p style="color: #a8a29e; font-size: 12px; margin-top: 10px;">
+        📎 También hemos adjuntado a este correo tu comprobante oficial en formato PDF vectorial de alta calidad.
+      </p>
+    </div>
+  `);
+
+  const mailOptions = {
+    from: '"Sebastian G • Pagos & Reservas" <reservas@sebastiang.app>',
+    to: booking.clientEmail.trim(),
+    subject,
+    html
+  };
+
+  // Si recibimos el PDF en base64, lo adjuntamos directamente
+  if (pdfBase64) {
+    mailOptions.attachments = [
+      {
+        filename: `Comprobante-SebastianG-${voucherNum}.pdf`,
+        content: pdfBase64,
+        encoding: 'base64',
+        contentType: 'application/pdf'
+      }
+    ];
+  }
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`✓ Comprobante oficial enviado por correo a ${booking.clientEmail} (${voucherNum})`);
+    return { sent: true, voucherNum };
+  } catch (err) {
+    console.error('Error enviando comprobante de pago por correo:', err);
+    return { sent: false, error: err.message };
+  }
+}
+
+/**
  * 2. Envía confirmación oficial de sesión al cliente (cuando el fotógrafo la aprueba)
  */
 export async function sendBookingConfirmedEmail(booking, customNotes = '') {
