@@ -57,7 +57,7 @@ const BRAND_HEADER = `
       📸 SEBASTIAN G
     </h1>
     <p style="margin: 4px 0 0; color: #a8a29e; font-size: 13px; text-transform: uppercase; letter-spacing: 2px;">
-      Fotografía & Edición Profesional • San Antero
+      Fotografía & Edición Profesional • Colombia
     </p>
   </div>
 `;
@@ -69,7 +69,7 @@ const BRAND_FOOTER = `
       ✉️ <a href="mailto:reservas@sebastiang.app" style="color: #f59e0b; text-decoration: none;">reservas@sebastiang.app</a>
     </p>
     <p style="margin: 0; color: #78716c; font-size: 11px;">
-      © ${new Date().getFullYear()} Sebastian G. Todos los derechos reservados. San Antero, Córdoba, Colombia.
+      © ${new Date().getFullYear()} Sebastian G. Todos los derechos reservados. Colombia.
     </p>
   </div>
 `;
@@ -116,7 +116,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
   const rawName = (booking.clientName || 'Cliente').trim();
   const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
-  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero'));
+  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada'));
   const priceFormatted = Number(booking.totalPrice || 0).toLocaleString('es-CO');
 
   // A) Correo para Sebastián G (Notificación de negocio)
@@ -261,7 +261,7 @@ export async function sendPaymentReceiptEmail({
   const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
   const voucherNum = `REC-${String(booking.id || '001').replace(/\\D/g, '').slice(-5).padStart(5, '0')}`;
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
-  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero & Coveñas'));
+  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada'));
   const packageName = escapeHtml(booking.packageName || 'Sesión Fotográfica');
   const dateTime = escapeHtml(booking.dateTime || 'Por coordinar');
 
@@ -404,7 +404,7 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
   const rawName = (booking.clientName || 'Cliente').trim();
   const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
-  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero'));
+  const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada'));
 
   try {
     const html = wrapEmailTemplate(`

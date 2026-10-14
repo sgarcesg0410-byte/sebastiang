@@ -115,7 +115,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     const shareTitle = 'Sebastian G • Fotografía & Edición Profesional';
     const shareText = 
       `📸 *Sebastian G • Fotografía Profesional*\n` +
-      `Capturamos tus mejores momentos en Coveñas, San Antero y playas privadas.\n\n` +
+      `Capturamos tus mejores momentos en playa, exteriores y tus destinos favoritos.\n\n` +
       `✨ Mira el portafolio oficial completo, fotos en alta resolución y paquetes aquí:\n` +
       `👉 ${shareUrl}\n\n` +
       `📞 WhatsApp de reservas: +57 324 472 5167`;
@@ -450,7 +450,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
               </h3>
               <p className="text-[11px] text-stone-400 flex items-center justify-center sm:justify-start gap-1 mt-0.5 truncate">
                 <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                <span className="truncate">{previewPhoto.location || 'San Antero & Coveñas'}</span>
+                <span className="truncate">{previewPhoto.location || 'Colombia • Cobertura Nacional'}</span>
               </p>
             </div>
 

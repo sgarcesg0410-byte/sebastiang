@@ -15,7 +15,7 @@ export default function ProtectedCanvasImage({
   className = '',
   objectFit = 'cover', // 'cover' | 'contain'
   watermark = false,
-  watermarkText = 'Sebastian G • San Antero'
+  watermarkText = 'Sebastian G • Fotografía Profesional'
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);

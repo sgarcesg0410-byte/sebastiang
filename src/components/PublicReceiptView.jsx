@@ -137,7 +137,7 @@ export default function PublicReceiptView({ bookingId, onBack }) {
   const actualPaid = paidAmount !== null ? paidAmount : (booking.status === 'completed' ? total : Math.round(total * 0.5));
   const balance = Math.max(0, total - actualPaid);
   const voucherNum = `REC-${String(booking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
-  const loc = booking.specificLocation || (booking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+  const loc = booking.specificLocation || (booking.locationType === 'outside' ? 'Locación con Desplazamiento' : 'Locación Acordada');
 
   return (
     <div className="min-h-screen bg-stone-950 text-white py-8 px-4 sm:px-6 flex flex-col items-center">
@@ -185,7 +185,7 @@ export default function PublicReceiptView({ bookingId, onBack }) {
                 Fotografía & Retoque Profesional
               </p>
               <p className="text-[10px] text-stone-400 mt-0.5">
-                San Antero, Córdoba, Colombia • Tel: +57 324 4725167 • sebastiang.app
+                Colombia • Tel: +57 324 472 5167 • sebastiang.app
               </p>
             </div>
 

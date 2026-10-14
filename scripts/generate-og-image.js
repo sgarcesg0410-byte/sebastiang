@@ -139,7 +139,7 @@ const svgOgBanner = `
     font-weight="500"
     letter-spacing="2"
     fill="#a8a29e"
-  >SAN ANTERO &amp; COVEÑAS • COLOMBIA</text>
+  >COLOMBIA • COBERTURA NACIONAL</text>
 </svg>
 `;
 

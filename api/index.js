@@ -851,7 +851,7 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
         clientEmail: 'reservas@sebastiang.app',
         packageName: '8 Fotos Digitales',
         dateTime: 'Hoy a las 4:00 PM',
-        specificLocation: 'Playa San Antero',
+        specificLocation: 'Locación Acordada',
         totalPrice: 75000
       }, runtimeDB.settings);
       return res.json({ success: true, message: 'Correo de prueba enviado con éxito' });
@@ -2167,7 +2167,7 @@ app.post('/api/admin/catalog', async (req, res) => {
     title: title.trim(),
     category: (category || 'Retratos').trim(),
     url: url.trim(),
-    location: (location || 'San Antero').trim(),
+    location: (location || 'Colombia').trim(),
     createdAt: new Date().toISOString()
   };
   if (!runtimeDB.catalog) runtimeDB.catalog = [];

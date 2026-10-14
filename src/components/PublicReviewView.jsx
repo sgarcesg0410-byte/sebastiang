@@ -355,7 +355,7 @@ export default function PublicReviewView({ onBackToHome }) {
 
       {/* FOOTER */}
       <div className="text-center text-[11px] text-stone-500 mt-6 z-10">
-        <span>Sebastian G • Fotografía Profesional • San Antero & Coveñas</span>
+        <span>Sebastian G • Fotografía Profesional • Colombia</span>
       </div>
     </div>
   );

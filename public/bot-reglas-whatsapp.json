@@ -35,7 +35,7 @@
       "received": "2|reservar|apartar|agendar|fecha|separar|cupo|cita",
       "pattern_type": "pattern_similarity",
       "similarity": 0.6,
-      "reply": "🗓️ *¡EXCELENTE DECISIÓN! VAMOS A APARTAR TU FECHA:*\n\nPuedes apartarla de dos formas:\n\n🌐 *Opción 1 (Inmediata en la web):*\nElige fecha y hora exacta en nuestra agenda en vivo:\n👉 https://sebastiang.app/#reservar\n\n💬 *Opción 2 (Por este chat):*\nEnvíame en un solo mensaje:\n1. Tu *Nombre completo*\n2. *Fecha y hora* deseada\n3. *Paquete* que te gustó\n4. *Locación* (San Antero, Coveñas, etc.)\n\n📌 *Nota:* Para asegurar tu cupo en la agenda se abona únicamente *$20.000 COP* de anticipo por Nequi o DaviPlata. El saldo restante lo cancelas con total tranquilidad el mismo día de la sesión.",
+      "reply": "🗓️ *¡EXCELENTE DECISIÓN! VAMOS A APARTAR TU FECHA:*\n\nPuedes apartarla de dos formas:\n\n🌐 *Opción 1 (Inmediata en la web):*\nElige fecha y hora exacta en nuestra agenda en vivo:\n👉 https://sebastiang.app/#reservar\n\n💬 *Opción 2 (Por este chat):*\nEnvíame en un solo mensaje:\n1. Tu *Nombre completo*\n2. *Fecha y hora* deseada\n3. *Paquete* que te gustó\n4. *Locación* (Ciudad, playa o sector deseado)\n\n📌 *Nota:* Para asegurar tu cupo en la agenda se abona únicamente *$20.000 COP* de anticipo por Nequi o DaviPlata. El saldo restante lo cancelas con total tranquilidad el mismo día de la sesión.",
       "exact_match": false,
       "case_sensitive": false,
       "delay": 1,

@@ -112,7 +112,7 @@ export default function PackagesSection({ packages = [], onSelectPackage, settin
                     </span>
                   </div>
                   <p className="text-[11px] text-stone-400 mt-1 flex items-center gap-1 font-medium">
-                    <span>En San Antero • Sin registros previos</span>
+                    <span>Tarifa Oficial • Cobertura Flexible</span>
                   </p>
                 </div>
 

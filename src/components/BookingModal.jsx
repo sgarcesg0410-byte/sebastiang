@@ -330,7 +330,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         referralCode: formData.referralCode?.trim() || null,
         referralDiscountApplied: Boolean(isReferralEligible),
         locationType: formData.locationType,
-        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'San Antero (Playa / Sector)' : 'Locación Especial / Fuera'),
+        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'Locación Local / Base' : 'Locación con Desplazamiento'),
         dateTime: formattedDateTime,
         printedPhotosCount: paperPhotosCount,
         printedPhotos10x15Count: Number(formData.printedSizes?.['10x15'] ?? formData.printedPhotosCount ?? 0),
@@ -877,7 +877,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                             : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
                         }`}
                       >
-                        <span>📍 En San Antero</span>
+                        <span>📍 Locación Local / Base</span>
                       </button>
 
                       <button
@@ -889,7 +889,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                             : 'bg-stone-950 text-stone-400 border-stone-800 hover:border-stone-700'
                         }`}
                       >
-                        <span>🚗 Fuera (+ $10k)</span>
+                        <span>🚗 Desplazamiento (+ $10k)</span>
                       </button>
                     </div>
 
@@ -898,7 +898,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                       name="specificLocation"
                       value={formData.specificLocation}
                       onChange={handleInputChange}
-                      placeholder={formData.locationType === 'outside' ? 'Ej: Coveñas, Tolú, Finca o Municipio vecino' : 'Ej: Playa Blanca, Parque, Cabaña o Hotel'}
+                      placeholder={formData.locationType === 'outside' ? 'Ej: Otra ciudad, playa, hotel o cabaña con traslado' : 'Ej: Playa, parque, cabaña, hotel o punto acordado'}
                       className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
                     />
 

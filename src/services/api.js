@@ -1325,7 +1325,7 @@ export async function createBooking(data) {
       `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
       `📦 *Paquete:* ${newBooking.packageName || 'Sesión Fotográfica'} ($${Number(newBooking.totalPrice || 0).toLocaleString('es-CO')} COP)\n` +
       printedDetails +
-      `📍 *Lugar:* ${newBooking.specificLocation || 'San Antero'}\n` +
+      `📍 *Lugar:* ${newBooking.specificLocation || 'Locación Acordada'}\n` +
       `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
       `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
       `_Quedo atento a tu confirmación para agendarla definitivamente._`
@@ -2149,7 +2149,7 @@ export async function saveVipClient(clientData) {
       name: (clientData.name || clientData.clientName || 'Cliente').trim(),
       phone: (clientData.phone || clientData.clientWhatsApp || '').trim(),
       email: (clientData.email || clientData.clientEmail || '').trim(),
-      location: clientData.location || clientData.specificLocation || 'San Antero',
+      location: clientData.location || clientData.specificLocation || 'Colombia',
       totalSpent: Number(clientData.amountPaid || clientData.totalPrice) || 0,
       sessionsCount: 1,
       lastSessionDate: clientData.dateTime || new Date().toISOString(),
@@ -3053,7 +3053,7 @@ export async function addCatalogPhoto(photoData) {
     id: photoData.id || `cat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
     title: (photoData.title || '').trim(),
     category: (photoData.category || 'Retratos').trim(),
-    location: (photoData.location || 'San Antero').trim(),
+    location: (photoData.location || 'Colombia').trim(),
     url: cleanUrl,
     createdAt: new Date().toISOString()
   };
@@ -3200,7 +3200,7 @@ export async function syncLocalCatalogToCloud() {
           id: photo.id,
           title: photo.title || 'Foto de Catálogo',
           category: photo.category || 'Retratos',
-          location: photo.location || 'San Antero',
+          location: photo.location || 'Colombia',
           url: photo.url
         });
         if (!upsertErr) {
@@ -3260,7 +3260,7 @@ export async function forceSyncAllCatalogToCloud(itemsToSync = null) {
           id: photo.id,
           title: photo.title || 'Foto de Catálogo',
           category: photo.category || 'Retratos',
-          location: photo.location || 'San Antero',
+          location: photo.location || 'Colombia',
           url: photo.url
         });
         if (!error) count++;

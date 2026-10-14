@@ -1740,7 +1740,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
     const isOutside = b.locationType === 'outside_san_antero' || b.locationType === 'outside';
-    const loc = b.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'San Antero');
+    const loc = b.specificLocation || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada');
     const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
     const total = Number(b.totalPrice || 0);
     const paid = Number(paidAmount || 0);
@@ -2342,7 +2342,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
     const title = `📸 Sesión Fotográfica • ${booking.clientName}`;
     const details = `Cliente: ${booking.clientName}\nWhatsApp: ${booking.clientWhatsApp || 'N/A'}\nPaquete: ${booking.packageName}\nPrecio: $${Number(booking.totalPrice).toLocaleString('es-CO')} COP\nNotas: ${booking.description || 'Sin notas adicionales'}\n\nAgendado desde Sebastian G (sebastiang.app)`;
-    const loc = booking.specificLocation || 'Playa Blanca, San Antero, Córdoba';
+    const loc = booking.specificLocation || 'Locación Acordada';
 
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startIso}/${endIso}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(loc)}`;
   };
@@ -2354,7 +2354,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       clientPhone = '57' + clientPhone;
     }
     const dateFormatted = formatDateTime12Hour(booking.dateTime);
-    const loc = booking.specificLocation || (booking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+    const loc = booking.specificLocation || (booking.locationType === 'outside' ? 'tu locación seleccionada' : 'Locación Acordada');
     const rawName = (booking.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
@@ -2483,7 +2483,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const effectivePrev = isTotal ? 0 : prevPaid;
     const balance = Math.max(0, total - (effectivePrev + paid));
     const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
-    const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'Locación Especial' : 'San Antero');
+    const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'Locación con Desplazamiento' : 'Locación Acordada');
     const isFull = balance === 0 || isTotal || (effectivePrev + paid) >= total;
 
     const printHtml = `
@@ -2690,7 +2690,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div>
                 <h1 class="brand-title">SEBASTIAN G</h1>
                 <div class="brand-sub">Estudio de Fotografía & Retoque Profesional</div>
-                <p class="brand-info">San Antero & Coveñas, Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app</p>
+                <p class="brand-info">Colombia • Cobertura Nacional • WhatsApp: +57 324 472 5167 • sebastiang.app</p>
               </div>
             </div>
             <div>
@@ -2847,7 +2847,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const voucherNum = `REC-${String(receiptBooking.id).replace(/\D/g, '').slice(-5).padStart(5, '0') || '001'}`;
     const rawName = (receiptBooking.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
-    const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+    const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'Locación Acordada');
 
     const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.receiptToken || receiptBooking.id}&paid=${isNowFull ? total : paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
@@ -3120,7 +3120,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       : (b.packageTitle || '8 Fotos Digitales (+ 2 Fotos Gratis)');
     const maxPhotos = matchedPkg ? (matchedPkg.totalPhotos || (matchedPkg.photoCount + 2)) : 10;
     const finalPrice = Number(b.totalPrice) || (matchedPkg ? matchedPkg.price : 75000);
-    const loc = b.specificLocation || (b.locationType === 'out_of_san_antero' ? 'Fuera de San Antero' : 'San Antero');
+    const loc = b.specificLocation || (b.locationType === 'out_of_san_antero' ? 'Desplazamiento / Otra Ciudad' : 'Locación Acordada');
 
     setNewSessionForm(prev => ({
       ...prev,
@@ -3858,7 +3858,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
     const text = 
       `📸 *Sebastian G • Fotografía & Edición Profesional*\n` +
-      `¡Hola! Te comparto mi portafolio oficial y catálogo de sesiones fotográficas en Coveñas, San Antero y playas privadas.\n\n` +
+      `¡Hola! Te comparto mi portafolio oficial y catálogo de sesiones fotográficas profesionales.\n\n` +
       `✨ *Conoce mis paquetes, fotos en alta resolución y cotiza tu fecha aquí:*\n` +
       `👉 ${shareUrl}\n\n` +
       `📞 WhatsApp de reservas: +57 324 472 5167\n` +
@@ -5935,8 +5935,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     onChange={(e) => setNewBookingForm(prev => ({ ...prev, locationType: e.target.value }))}
                     className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white focus:border-amber-400 outline-none"
                   >
-                    <option value="san_antero">En San Antero (Tarifa estándar)</option>
-                    <option value="outside">Fuera de San Antero (+ Recargo transporte)</option>
+                    <option value="san_antero">Locación Base / Local (Tarifa estándar)</option>
+                    <option value="outside">Desplazamiento / Otra Ciudad (+ Viáticos)</option>
                   </select>
                 </div>
                 <div>
@@ -5945,7 +5945,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     type="text"
                     value={newBookingForm.specificLocation}
                     onChange={(e) => setNewBookingForm(prev => ({ ...prev, specificLocation: e.target.value }))}
-                    placeholder="Ej: Playa Blanca / Hotel / Cabaña"
+                    placeholder="Ej: Playa, Hotel, Cabaña o Ciudad acordada"
                     className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
                   />
                 </div>
@@ -7244,12 +7244,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <option value="">-- Sin vincular (Completar manualmente) --</option>
                 {(bookings || []).map(b => (
                   <option key={b.id} value={b.id}>
-                    {b.clientName} — ${(Number(b.totalPrice) || 75000).toLocaleString('es-CO')} COP ({b.specificLocation || (b.locationType === 'out_of_san_antero' ? 'Fuera de San Antero' : 'San Antero')}) [{b.status === 'confirmed' ? 'Confirmada' : b.status}]
+                    {b.clientName} — ${(Number(b.totalPrice) || 75000).toLocaleString('es-CO')} COP ({b.specificLocation || (b.locationType === 'out_of_san_antero' ? 'Desplazamiento' : 'Local')}) [{b.status === 'confirmed' ? 'Confirmada' : b.status}]
                   </option>
                 ))}
               </select>
               <p className="text-[11px] text-stone-400 mt-1.5">
-                Al seleccionar una reserva, se cargan automáticamente el nombre, WhatsApp y el <strong>valor total exacto contratado</strong> (ej: $85.000 para Coveñas).
+                Al seleccionar una reserva, se cargan automáticamente el nombre, WhatsApp y el <strong>valor total exacto contratado</strong> (ej: $85.000 con desplazamiento).
               </p>
             </div>
 
@@ -7748,7 +7748,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               Gestionar Catálogo Público
             </h3>
             <p className="text-xs text-stone-400 mt-1">
-              Sube tus mejores fotos para que aparezcan en la página principal, atraigan nuevos clientes y promocionen tus paquetes de fotos en San Antero.
+              Sube tus mejores fotos para que aparezcan en la página principal, atraigan nuevos clientes y promocionen tus paquetes de fotos y sesiones.
             </p>
           </div>
 
@@ -7776,7 +7776,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   required
                   value={newCatalogForm.title}
                   onChange={(e) => setNewCatalogForm({ ...newCatalogForm, title: e.target.value })}
-                  placeholder="Ej. Atardecer en Playa Blanca"
+                  placeholder="Ej. Atardecer en la Playa"
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -7790,6 +7790,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   onChange={(e) => setNewCatalogForm({ ...newCatalogForm, category: e.target.value })}
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
                 >
+                  <option value="Playas & Atardeceres">Playas & Atardeceres</option>
                   <option value="Playas San Antero">Playas San Antero</option>
                   <option value="Retratos">Retratos</option>
                   <option value="Parejas & Bodas">Parejas & Bodas</option>
@@ -7822,7 +7823,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   type="text"
                   value={newCatalogForm.location}
                   onChange={(e) => setNewCatalogForm({ ...newCatalogForm, location: e.target.value })}
-                  placeholder="Ej. Playa Blanca, San Antero"
+                  placeholder="Ej. Playa, Cabaña, Tolú o Tu Ciudad"
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -7969,7 +7970,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   <span>Fotos Publicadas en el Catálogo ({catalog.length})</span>
                 </h4>
                 <p className="text-xs text-stone-400 mt-0.5">
-                  Estas fotos se exhiben en la página principal para que los clientes vean tu portafolio en San Antero.
+                  Estas fotos se exhiben en la página principal para que los clientes vean tu portafolio oficial.
                 </p>
               </div>
 
@@ -8302,10 +8303,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                 <div>
                   <label className="block text-[11px] font-bold text-stone-300 uppercase mb-1">
-                    Recargo por Sesión Fuera de San Antero ($ COP)
+                    Recargo por Desplazamiento / Otra Ciudad ($ COP)
                   </label>
                   <p className="text-[11px] text-stone-400 mb-2">
-                    Se añade de manera silenciosa al precio si la locación es fuera del municipio.
+                    Se añade de manera silenciosa al precio si la locación requiere traslado especial o desplazamiento.
                   </p>
                   <div className="relative">
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 font-bold">$</span>
@@ -8926,7 +8927,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               {/* RECARGO FUERA DE SAN ANTERO */}
               <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
                 <label className="block text-xs font-bold text-amber-300 uppercase tracking-wider">
-                  Recargo Fuera de San Antero (Silencioso)
+                  Recargo por Desplazamiento / Otra Ciudad (Silencioso)
                 </label>
                 <div className="flex items-center gap-3">
                   <span className="text-xl font-bold text-amber-400">$</span>
@@ -10368,7 +10369,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div className="flex justify-between">
                 <span className="text-stone-400">📍 Locación:</span>
                 <span className="font-semibold text-stone-200">
-                  {confirmingBooking.specificLocation || (confirmingBooking.locationType === 'outside' ? 'Locación Fuera' : 'San Antero')}
+                  {confirmingBooking.specificLocation || (confirmingBooking.locationType === 'outside' ? 'Locación con Desplazamiento' : 'Locación Acordada')}
                 </span>
               </div>
               <div className="flex justify-between">
@@ -10482,7 +10483,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     🗓️ <strong>Fecha y Hora:</strong> {formatDateTime12Hour(confirmingBooking.dateTime)}<br />
                     📦 <strong>Paquete Confirmado:</strong> {confirmingBooking.packageName}<br />
                     💵 <strong>Valor Total:</strong> ${Number(confirmingBooking.totalPrice || 0).toLocaleString('es-CO')} COP<br />
-                    📍 <strong>Locación:</strong> {confirmingBooking.specificLocation || 'San Antero'}
+                    📍 <strong>Locación:</strong> {confirmingBooking.specificLocation || 'Locación Acordada'}
                     {confirmNote.trim() && (
                       <><br />📝 <strong>Nota del Fotógrafo:</strong> {confirmNote.trim()}</>
                     )}
@@ -10802,7 +10803,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <h2 className="text-xl font-serif font-black tracking-wide text-white">SEBASTIAN G</h2>
                   </div>
                   <p className="text-[11px] text-amber-400/90 font-medium tracking-widest uppercase">Fotografía & Retoque Profesional</p>
-                  <p className="text-[10px] text-stone-400 mt-0.5">San Antero, Córdoba, Colombia • Tel: +57 324 4725167 • sebastiang.app</p>
+                  <p className="text-[10px] text-stone-400 mt-0.5">Colombia • Tel: +57 324 472 5167 • sebastiang.app</p>
                 </div>
                 <div className="text-left sm:text-right">
                   <span className="inline-block px-3 py-1 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono text-xs font-black">
@@ -10828,7 +10829,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <div className="space-y-1 bg-stone-900/60 p-3 rounded-xl border border-stone-800/80">
                   <span className="text-[10px] uppercase font-bold text-amber-400/80 block">Detalles de la Cita</span>
                   <p className="font-bold text-stone-100">{formatDateTime12Hour(receiptBooking.dateTime)}</p>
-                  <p className="text-stone-300 truncate">Locación: <span className="text-stone-200">{receiptBooking.specificLocation || 'San Antero'}</span></p>
+                  <p className="text-stone-300 truncate">Locación: <span className="text-stone-200">{receiptBooking.specificLocation || 'Locación Acordada'}</span></p>
                   <p className="text-stone-300 truncate">Paquete: <span className="text-amber-300">{receiptBooking.packageName}</span></p>
                 </div>
               </div>
@@ -10930,7 +10931,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
               {/* Cláusula de Garantía de Clima Adaptada a la Locación */}
               {(() => {
-                const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'San Antero');
+                const loc = receiptBooking.specificLocation || (receiptBooking.locationType === 'outside' ? 'tu locación seleccionada' : 'Locación Acordada');
                 return (
                   <div className="p-3 bg-stone-900/40 rounded-xl border border-stone-800/60 text-[11px] space-y-1 text-stone-400">
                     <p className="text-amber-300 font-semibold flex items-center gap-1.5">

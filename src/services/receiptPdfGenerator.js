@@ -63,7 +63,7 @@ export async function generateLuxuryReceiptPdf({
   const clientName = (booking.clientName || 'Cliente Titular').trim();
   const clientPhone = (booking.clientWhatsApp || '').trim() || 'No registrado';
   const clientEmail = (booking.clientEmail || '').trim();
-  const location = booking.specificLocation || (booking.locationType === 'outside' ? 'Locación Especial / Fuera' : 'San Antero & Coveñas');
+  const location = booking.specificLocation || (booking.locationType === 'outside' ? 'Locación Especial / A Domicilio' : 'Locación Acordada');
   const packageName = booking.packageName || 'Sesión Fotográfica';
   const formattedDateTime = formatReadableDateTime(booking.dateTime);
   const emissionDate = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -154,7 +154,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7.5);
   pdf.setTextColor(100, 116, 139); // slate-500
-  pdf.text('San Antero & Coveñas, Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app', textLeftX, 33);
+  pdf.text('Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app', textLeftX, 33);
 
   // Insignia de Número de Comprobante (Derecha)
   const badgeW = 66;
@@ -404,12 +404,12 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   pdf.setTextColor(180, 83, 9);
-  pdf.text(`⛅ GARANTÍA OFICIAL DE CLIMA EN ${location.toUpperCase()}:`, margin + 4, currentY + 5);
+  pdf.text('⛅ GARANTÍA OFICIAL DE BUEN CLIMA:', margin + 4, currentY + 5);
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7.5);
   pdf.setTextColor(71, 85, 105);
-  pdf.text(`• En caso de lluvia o clima adverso en ${location}, tu sesión se reprograma para una nueva fecha sin costo adicional.`, margin + 4, currentY + 10);
+  pdf.text(`• En caso de lluvia o clima adverso en la locación acordada (${location}), tu sesión se reprograma sin costo adicional.`, margin + 4, currentY + 10);
   pdf.text('• Tu anticipo y cupo quedan 100% protegidos y garantizados en agenda. Documento electrónico emitido en sebastiang.app.', margin + 4, currentY + 14.5);
 
   currentY += guaranteeH + 5;
@@ -482,7 +482,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFontSize(6.5);
   pdf.setTextColor(100, 116, 139);
   pdf.text('Fotógrafo Titular & Director', sigX, currentY + 29, { align: 'center' });
-  pdf.text('San Antero & Coveñas', sigX, currentY + 33, { align: 'center' });
+  pdf.text('Colombia • Cobertura Nacional', sigX, currentY + 33, { align: 'center' });
 
   // ===== PIE DE PÁGINA =====
   const footerY = pageHeight - margin - 2;

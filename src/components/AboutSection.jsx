@@ -32,7 +32,7 @@ export default function AboutSection({ onNavigateToPackages, onOpenBooking }) {
                 ¡Ey, qué tal! Soy <strong className="text-amber-400 font-bold">Sebastian G</strong>. Para mí, la fotografía va mucho más allá de una pose forzada o acartonada: se trata de capturar tu <strong className="text-white font-semibold">auténtica vibra</strong>, esa risa espontánea, la complicidad con tu pareja o ese flow único que surge cuando disfrutas de verdad.
               </p>
               <p>
-                En las playas de <span className="text-amber-300 font-medium">San Antero, Coveñas</span> o cualquier rincón especial, convertimos cada instante en fotografías con <strong className="text-white font-semibold">estética cinematográfica</strong>, iluminación de revista y listas para romperla en tu <strong className="text-pink-400 font-semibold">Instagram & TikTok</strong> con máxima nitidez 4K.
+                En playas, atardeceres o <span className="text-amber-300 font-medium">cualquier rincón o destino de Colombia</span>, convertimos cada instante en fotografías con <strong className="text-white font-semibold">estética cinematográfica</strong>, iluminación de revista y listas para romperla en tu <strong className="text-pink-400 font-semibold">Instagram & TikTok</strong> con máxima nitidez 4K.
               </p>
               <p className="text-xs sm:text-sm text-slate-400 italic">
                 "Cero estrés frente a la cámara: te guío con naturalidad, buena música y la mejor energía caribeña para que vivas una experiencia inolvidable. ¡Capturamos momentos, creamos recuerdos! ♡"
@@ -132,10 +132,10 @@ export default function AboutSection({ onNavigateToPackages, onOpenBooking }) {
             <div className="mt-6 text-center space-y-1">
               <span className="inline-flex items-center gap-1.5 text-xs text-amber-300/90 font-medium">
                 <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                <span>San Antero & Coveñas, Colombia</span>
+                <span>Colombia • Cobertura Nacional y Destinos</span>
               </span>
               <p className="text-[11px] text-slate-400 font-light">
-                Disponible para sesiones en la playa, parejas, urbanas y eventos.
+                Disponible para sesiones en playa, atardeceres, parejas, urbanas y eventos.
               </p>
             </div>
           </div>

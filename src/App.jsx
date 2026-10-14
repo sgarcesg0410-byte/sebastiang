@@ -715,36 +715,24 @@ export default function App() {
               {/* COLUMNA 3 (2 cols): Locaciones */}
               <div className="lg:col-span-2 space-y-3">
                 <span className="text-xs font-bold text-amber-400 uppercase tracking-widest block">
-                  Locaciones
+                  Cobertura & Destinos
                 </span>
                 <ul className="space-y-2 text-xs text-stone-400">
-                  <li>
-                    <a
-                      href="/sesiones-playa-san-antero/"
-                      className="flex items-center gap-1.5 hover:text-amber-300 transition-colors"
-                      title="Sesiones de fotos en la playa San Antero"
-                    >
-                      <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                      <span>San Antero (Playa Blanca)</span>
-                    </a>
-                  </li>
-                  <li>
-                    <a
-                      href="/fotografo-covenas/"
-                      className="flex items-center gap-1.5 hover:text-amber-300 transition-colors"
-                      title="Fotógrafo profesional en Coveñas"
-                    >
-                      <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                      <span>Coveñas (Playas & Atardecer)</span>
-                    </a>
+                  <li className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                    <span>Playas & Atardeceres</span>
                   </li>
                   <li className="flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                    <span>Santiago de Tolú</span>
+                    <span>Cabañas, Hoteles & Fincas</span>
                   </li>
                   <li className="flex items-center gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
-                    <span>Playas Privadas & Ensenadas</span>
+                    <span>Sesiones Urbanas & Exteriores</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400/70 shrink-0" />
+                    <span>Colombia • Cobertura Nacional</span>
                   </li>
                 </ul>
                 <div className="pt-1">
@@ -779,7 +767,7 @@ export default function App() {
             {/* 3. SUB-FOOTER INFERIOR: COPYRIGHT & ACCESO ADMINISTRATIVO DISCRETO */}
             <div className="pt-6 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-stone-500">
               <div className="text-center sm:text-left">
-                <span>© {new Date().getFullYear()} {settings.photographerName || 'Sebastian G'}. Todos los derechos reservados. San Antero & Coveñas, Colombia.</span>
+                <span>© {new Date().getFullYear()} {settings.photographerName || 'Sebastian G'}. Todos los derechos reservados. Colombia • Cobertura Nacional y Destinos.</span>
               </div>
 
               <div className="flex items-center gap-3">

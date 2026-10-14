@@ -7,7 +7,7 @@ export default function HowItWorksSection({ onOpenBooking, onNavigateToPackages 
       step: '01',
       title: 'Reserva con solo $20.000 COP',
       subtitle: 'Abono inicial flexible',
-      description: 'Eliges tu fecha, temática y locación en San Antero o Coveñas. Separas tu cupo exclusivo con solo $20.000 COP de anticipo. El saldo restante lo cancelas con calma el día de la sesión.',
+      description: 'Eliges tu fecha, temática y locación preferida. Separas tu cupo exclusivo con solo $20.000 COP de anticipo. El saldo restante lo cancelas con calma el día de la sesión.',
       icon: CalendarCheck2,
       accent: 'amber',
       tag: 'Abono Mínimo $20.000',
@@ -122,10 +122,10 @@ export default function HowItWorksSection({ onOpenBooking, onNavigateToPackages 
                 <span>Tranquilidad 100% Protegida</span>
               </div>
               <h3 className="text-xl sm:text-2xl font-serif font-bold text-white">
-                Garantía de Clima Flexible en el Caribe
+                Garantía Total de Buen Clima
               </h3>
               <p className="text-xs sm:text-sm text-stone-300 font-light leading-relaxed">
-                Sabemos que en las playas de San Antero y Coveñas el clima puede cambiar de repente. Si el día de tu sesión llueve o el cielo no favorece las tomas, <strong className="text-white font-semibold">reprogramamos tu fecha u horario sin ningún costo ni penalidad</strong>. ¡Tus recuerdos merecen la luz perfecta!
+                Sabemos que en sesiones al aire libre el clima puede variar de repente. Si el día de tu sesión llueve o el cielo no favorece las tomas, <strong className="text-white font-semibold">reprogramamos tu fecha u horario sin ningún costo ni penalidad</strong>. ¡Tus recuerdos merecen la luz perfecta!
               </p>
             </div>
           </div>

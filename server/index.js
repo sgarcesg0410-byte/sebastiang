@@ -205,7 +205,7 @@ app.post('/api/bookings', (req, res) => {
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
     `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice.toLocaleString('es-CO')} COP)\n` +
-    `📍 *Lugar:* ${newBooking.locationType === 'outside_san_antero' ? 'Fuera de San Antero (' + newBooking.specificLocation + ')' : 'En San Antero (' + newBooking.specificLocation + ')'}\n` +
+    `📍 *Lugar:* ${newBooking.specificLocation || 'Locación Acordada'}\n` +
     `🗓️ *Fecha y Hora:* ${newBooking.dateTime}\n` +
     `📝 *Detalles:* ${newBooking.description || 'Sin notas adicionales'}\n\n` +
     `_Quedo atento a tu confirmación para agendarla definitivamente._`
@@ -528,7 +528,7 @@ app.post('/api/admin/catalog', (req, res) => {
     title: title.trim(),
     category: (category || 'Retratos').trim(),
     url: url.trim(),
-    location: (location || 'San Antero').trim(),
+    location: (location || 'Colombia').trim(),
     createdAt: new Date().toISOString()
   };
   if (!db.catalog) db.catalog = [];
@@ -639,7 +639,7 @@ app.all('/api/bot-webhook', async (req, res) => {
     }
     // 2. Reservar Fecha
     else if (cleanMsg === '2' || cleanMsg.includes('reserva') || cleanMsg.includes('apartar') || cleanMsg.includes('agendar') || cleanMsg.includes('fecha') || cleanMsg.includes('separar') || cleanMsg.includes('cupo')) {
-      replyText = `🗓️ *¡EXCELENTE DECISIÓN! VAMOS A APARTAR TU FECHA:*\n\nPuedes apartarla de dos formas:\n\n🌐 *Opción 1 (Inmediata en la web):*\nElige fecha y hora exacta en nuestra agenda en vivo:\n👉 https://sebastiang.app/#reservar\n\n💬 *Opción 2 (Por este chat):*\nEnvíame en un solo mensaje:\n1. Tu *Nombre completo*\n2. *Fecha y hora* deseada\n3. *Paquete* que te gustó\n4. *Locación* (San Antero, Coveñas, etc.)\n\n📌 *Nota:* Para asegurar tu cupo en la agenda se abona el 50% por Nequi o DaviPlata. El saldo se cancela el día de la sesión.`;
+      replyText = `🗓️ *¡EXCELENTE DECISIÓN! VAMOS A APARTAR TU FECHA:*\n\nPuedes apartarla de dos formas:\n\n🌐 *Opción 1 (Inmediata en la web):*\nElige fecha y hora exacta en nuestra agenda en vivo:\n👉 https://sebastiang.app/#reservar\n\n💬 *Opción 2 (Por este chat):*\nEnvíame en un solo mensaje:\n1. Tu *Nombre completo*\n2. *Fecha y hora* deseada\n3. *Paquete* que te gustó\n4. *Locación* (Ciudad, playa o sector deseado)\n\n📌 *Nota:* Para asegurar tu cupo en la agenda se abona el 50% por Nequi o DaviPlata. El saldo se cancela el día de la sesión.`;
     }
     // 3. Portafolio / Fotos de muestra
     else if (cleanMsg === '3' || cleanMsg.includes('foto') || cleanMsg.includes('portafolio') || cleanMsg.includes('muestra') || cleanMsg.includes('ejemplo') || cleanMsg.includes('trabajo')) {
