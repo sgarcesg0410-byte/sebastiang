@@ -154,10 +154,14 @@ async function syncBookingToSupabaseServer(b) {
     }
   }
 
-  // 2. Supabase Cloud (Fallback secundario sólo si Mongo no está configurado)
-  if (isMongoConfigured() || !SUPABASE_REST_KEY) return;
+  // 2. Supabase Cloud (siempre que haya clave, EN PARALELO a MongoDB):
+  //    - alimenta el canal Realtime y las lecturas directas del navegador (APK/PWA),
+  //    - actúa como respaldo redundante si MongoDB fallara.
+  // Antes se omitía Supabase cuando Mongo estaba configurado, lo que dejaba muertas
+  // las notificaciones en tiempo real (Realtime escucha la tabla `catalog` de Supabase).
+  if (!SUPABASE_REST_KEY) return;
   try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings`, {
+    const r1 = await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings`, {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_REST_KEY,
@@ -180,7 +184,8 @@ async function syncBookingToSupabaseServer(b) {
         status: b.status || 'pending'
       })
     });
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+    if (!r1.ok) console.warn(`[Supabase] Fallo al escribir en bookings (HTTP ${r1.status}):`, (await r1.text()).slice(0, 200));
+    const r2 = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_REST_KEY,
@@ -196,6 +201,7 @@ async function syncBookingToSupabaseServer(b) {
         url: JSON.stringify(b)
       })
     });
+    if (!r2.ok) console.warn(`[Supabase] Fallo al escribir en catalog (HTTP ${r2.status}):`, (await r2.text()).slice(0, 200));
   } catch (e) {
     console.warn('Sync server -> Supabase:', e);
   }
@@ -214,10 +220,14 @@ async function syncPaymentToSupabaseServer(p) {
     }
   }
 
-  // 2. Supabase Cloud (Fallback secundario sólo si Mongo no está configurado)
-  if (isMongoConfigured() || !SUPABASE_REST_KEY) return;
+  // 2. Supabase Cloud (siempre que haya clave, EN PARALELO a MongoDB):
+  //    - alimenta el canal Realtime y las lecturas directas del navegador (APK/PWA),
+  //    - actúa como respaldo redundante si MongoDB fallara.
+  // Antes se omitía Supabase cuando Mongo estaba configurado, lo que dejaba muertas
+  // las notificaciones en tiempo real (Realtime escucha la tabla `catalog` de Supabase).
+  if (!SUPABASE_REST_KEY) return;
   try {
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
+    const r1 = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_REST_KEY,
@@ -233,7 +243,8 @@ async function syncPaymentToSupabaseServer(p) {
         url: JSON.stringify(p)
       })
     });
-    await fetch(`${SUPABASE_REST_URL}/rest/v1/payments`, {
+    if (!r1.ok) console.warn(`[Supabase] Fallo al escribir pago en catalog (HTTP ${r1.status}):`, (await r1.text()).slice(0, 200));
+    const r2 = await fetch(`${SUPABASE_REST_URL}/rest/v1/payments`, {
       method: 'POST',
       headers: {
         'apikey': SUPABASE_REST_KEY,
@@ -251,7 +262,8 @@ async function syncPaymentToSupabaseServer(p) {
         status: p.status || 'pending',
         reference: p.reference || ''
       })
-    }).catch(() => {});
+    });
+    if (!r2.ok) console.warn(`[Supabase] Fallo al escribir pago en payments (HTTP ${r2.status}):`, (await r2.text()).slice(0, 200));
   } catch (e) {
     console.warn('Sync payment server -> Supabase:', e);
   }
@@ -1400,15 +1412,50 @@ app.get('/api/admin/bookings', async (req, res) => {
 
 app.patch('/api/admin/bookings/:id', async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
-  let booking = (runtimeDB.bookings || []).find(b => b.id === id);
+  const updates = req.body || {};
+  const supaId = id.startsWith('book-') ? id : `book-${id}`;
+
+  let booking = (runtimeDB.bookings || []).find(b => b.id === id || b.id === supaId);
+
+  // Si no está en memoria (cold start u otra instancia de serverless), recuperarla
+  // del almacén persistente ANTES de fusionar. Esto evita que una actualización
+  // parcial (p. ej. { status: 'confirmed' }) cree una reserva rota sin nombre ni
+  // precio y sobrescriba la reserva real en la base de datos.
+  if (!booking && isMongoConfigured()) {
+    try {
+      const doc = await findMongoDoc('bookings', { $or: [{ id }, { id: supaId }, { supaId }] });
+      if (doc) {
+        const { _id, supaId: _s, ...cleanBooking } = doc;
+        booking = cleanBooking;
+      }
+    } catch (eMongo) {
+      console.warn('⚠️ [MongoDB] Error buscando reserva para actualizar:', eMongo?.message || eMongo);
+    }
+  }
+
+  if (!booking && SUPABASE_REST_KEY) {
+    try {
+      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}&select=*`, {
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      if (supaRes.ok) {
+        const rows = await supaRes.json();
+        if (Array.isArray(rows) && rows.length > 0 && rows[0].url) {
+          try { booking = JSON.parse(rows[0].url); } catch (e) {}
+        }
+      }
+    } catch (e) {}
+  }
+
   if (!booking) {
+    // No existe en ningún almacén: se crea con lo que llegue (comportamiento previo).
     booking = { id, ...updates, isReal: true };
     if (!runtimeDB.bookings) runtimeDB.bookings = [];
     runtimeDB.bookings.unshift(booking);
   } else {
     Object.assign(booking, updates, { isReal: true });
   }
+
   await syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
   res.json({ success: true, booking });
 });
