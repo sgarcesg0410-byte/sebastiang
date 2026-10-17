@@ -142,6 +142,16 @@ export default function HowItWorksSection({ onOpenBooking, onNavigateToPackages 
                 <ArrowRight className="w-4 h-4 text-stone-950" />
               </button>
             )}
+
+            {onNavigateToPackages && (
+              <button
+                type="button"
+                onClick={onNavigateToPackages}
+                className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-stone-900 hover:bg-stone-800 border border-stone-700 text-stone-200 hover:text-white text-xs sm:text-sm font-semibold transition-all active:scale-95 cursor-pointer"
+              >
+                Ver Paquetes & Tarifas
+              </button>
+            )}
           </div>
         </div>
       </div>

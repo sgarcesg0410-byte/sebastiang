@@ -74,13 +74,23 @@ export default function AboutSection({ onNavigateToPackages, onOpenBooking }) {
 
             {/* Botones de Acción */}
             <div className="flex flex-col sm:flex-row items-center gap-3 pt-3">
+              {onNavigateToPackages && (
+                <button
+                  type="button"
+                  onClick={onNavigateToPackages}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 fill-stone-950 text-stone-950" />
+                  <span>Conocer Paquetes & Sesiones</span>
+                </button>
+              )}
+
               {onOpenBooking && (
                 <button
                   type="button"
                   onClick={() => onOpenBooking(null)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 active:scale-95 transition-all cursor-pointer"
+                  className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-stone-900/90 hover:bg-stone-800 border border-stone-700/80 text-stone-200 hover:text-white font-bold text-xs sm:text-sm transition-all"
                 >
-                  <Sparkles className="w-4 h-4 fill-stone-950 text-stone-950" />
                   <span>Agendar Mi Sesión</span>
                 </button>
               )}

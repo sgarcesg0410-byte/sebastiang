@@ -719,6 +719,29 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
+  const handleShareStandalonePackagesWhatsApp = () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
+    const packagesUrl = `${origin}/paquetes`;
+    const shareText = `¡Hola! 👋 Con mucho gusto te comparto nuestro catálogo oficial de paquetes fotográficos, cuadros en retablo de madera y fotos impresas:\n\n${packagesUrl}\n\n🎁 *Promo 2026:* Todos los paquetes digitales incluyen *+2 Fotos Gratis* de obsequio.\n\nRevisa los paquetes y me avisas cuál te gusta más para consultar disponibilidad de fecha. ¡Quedo muy atento! 😊📸`;
+
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
+      window.AndroidNotificationBridge.shareToWhatsApp(shareText);
+      return;
+    }
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
+    window.open(url, '_blank');
+  };
+
+  const handleCopyStandalonePackagesLink = () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
+    const packagesUrl = `${origin}/paquetes`;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(packagesUrl);
+      setAdminQuoteToast('¡Enlace de Paquetes & Precios copiado listo para WhatsApp!');
+      setTimeout(() => setAdminQuoteToast(''), 3500);
+    }
+  };
+
   // Datos del sistema inicializados con respaldo real para carga instantánea
   const [bookings, setBookings] = useState(REAL_DEFAULT_BOOKINGS);
   const [editingBooking, setEditingBooking] = useState(null);
@@ -4649,6 +4672,59 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       {/* PESTAÑA 1: RESERVAS DE CLIENTES (VISTA LISTA & CALENDARIO INTERACTIVO) */}
       {activeTab === 'bookings' && (
         <div className="space-y-6">
+          {/* BANNER / TARJETA DE ACCESO RÁPIDO PARA ENVIAR PAQUETES & PRECIOS POR WHATSAPP */}
+          <div className="bg-gradient-to-r from-amber-500/10 via-stone-900 to-stone-900 border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <Sparkles className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-white font-serif">
+                    Link de Paquetes & Precios para Clientes
+                  </h4>
+                  <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.2 rounded-full">
+                    WhatsApp
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-300">
+                  Envía el enlace por WhatsApp a clientes que no conocen tu página web o que piden precios por aparte.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
+              <button
+                type="button"
+                onClick={handleCopyStandalonePackagesLink}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 border border-amber-500/40 text-amber-300 font-bold text-xs transition-all active:scale-95 cursor-pointer"
+                title="Copiar enlace directo de paquetes"
+              >
+                <Copy className="w-3.5 h-3.5 text-amber-400" />
+                <span>Copiar Link</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleShareStandalonePackagesWhatsApp}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer shadow-md shadow-emerald-600/20"
+                title="Enviar por WhatsApp"
+              >
+                <MessageCircle className="w-3.5 h-3.5 fill-white" />
+                <span>Enviar WhatsApp</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('pricing-manager')}
+                className="p-2 rounded-xl bg-stone-950 hover:bg-stone-800 border border-stone-800 text-stone-400 hover:text-white transition-colors cursor-pointer"
+                title="Abrir cotizador personalizado"
+              >
+                <Tag className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h3 className="text-xl font-serif font-bold text-white flex items-center gap-2">
@@ -8373,14 +8449,69 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         <div className="max-w-4xl mx-auto space-y-8">
           <div>
             <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-              Herramienta Exclusiva de Administrador
+              Tarifas & Enlaces de WhatsApp
             </span>
             <h3 className="text-2xl font-serif font-bold text-white">
-              Cotizador & Gestión de Tarifas
+              Paquetes, Precios & Cotizador
             </h3>
             <p className="text-xs text-stone-400 mt-1">
-              Cotiza combos con fotos digitales, cuadros en retablo y fotos impresas para tus clientes sin hacer públicos los precios en la web. Envía la cotización directamente por WhatsApp o copia el enlace privado.
+              Enlace directo para compartir tus tarifas oficiales por WhatsApp y cotizador interactivo para armar combos personalizados con fotos digitales, cuadros en retablo y fotos impresas.
             </p>
+          </div>
+
+          {/* TARJETA DESTACADA: ENLACE OFICIAL DE PAQUETES PARA WHATSAPP */}
+          <div className="bg-gradient-to-r from-amber-500/15 via-stone-900 to-stone-900 border border-amber-500/40 rounded-3xl p-5 sm:p-6 space-y-4 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Enlace Directo para Clientes</span>
+                </span>
+                <h4 className="text-base sm:text-lg font-serif font-bold text-white mt-0.5">
+                  Catálogo Oficial de Paquetes & Precios
+                </h4>
+                <p className="text-xs text-stone-300">
+                  Usa este link para enviarlo por WhatsApp a los clientes que te pregunten por precios o que aún no conocen tu página web.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap sm:flex-nowrap">
+                <button
+                  type="button"
+                  onClick={handleCopyStandalonePackagesLink}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs transition-all active:scale-95 cursor-pointer shadow-md"
+                >
+                  <Copy className="w-3.5 h-3.5 text-stone-950" />
+                  <span>Copiar Enlace</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleShareStandalonePackagesWhatsApp}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer shadow-md shadow-emerald-600/20"
+                >
+                  <MessageCircle className="w-3.5 h-3.5 fill-white" />
+                  <span>Enviar por WhatsApp</span>
+                </button>
+
+                <a
+                  href="/paquetes"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white transition-colors cursor-pointer"
+                  title="Abrir página de paquetes en nueva pestaña"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 bg-stone-950/80 border border-stone-800 rounded-xl px-3.5 py-2">
+              <span className="text-xs text-stone-500 font-mono select-none">URL:</span>
+              <span className="text-xs text-amber-300 font-mono font-medium truncate">
+                {typeof window !== 'undefined' ? `${window.location.origin}/paquetes` : 'https://sebastiang.app/paquetes'}
+              </span>
+            </div>
           </div>
 
           {/* SELECTOR DE MODO: COTIZADOR VS EDITOR DE PRECIOS */}

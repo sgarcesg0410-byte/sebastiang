@@ -67,15 +67,19 @@ export default function App() {
         return 'admin';
       }
       if (
+        path === '/tarifas' || path === '/tarifas/' ||
+        path === '/precios' || path === '/precios/' ||
+        path === '/paquetes' || path === '/paquetes/' ||
         path === '/propuesta' || path === '/propuesta/' || path.startsWith('/propuesta/') ||
         path === '/paquetes-cliente' || path === '/paquetes-cliente/' ||
-        hash === '#propuesta' || urlParams.get('propuesta')
+        hash === '#tarifas' || hash === '#precios' || hash === '#paquetes' || hash === '#propuesta' ||
+        urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta')
       ) {
-        return 'proposal';
+        return 'packages';
       }
     }
     return 'home';
-  }); // 'home' | 'gallery' | 'admin' | 'receipt' | 'review' | 'proposal'
+  }); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt' | 'review'
 
   const [activeGalleryToken, setActiveGalleryToken] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -93,18 +97,21 @@ export default function App() {
   const [selectedPhotoForBooking, setSelectedPhotoForBooking] = useState(null);
   const [selectedDateForBooking, setSelectedDateForBooking] = useState('');
 
-  // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin y propuesta directa)
+  // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin y tarifas/paquetes directos)
   const [showIntro, setShowIntro] = useState(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname;
       const hash = window.location.hash || '';
       const urlParams = new URLSearchParams(window.location.search);
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+      const isPricingRoute = ['/tarifas', '/tarifas/', '/precios', '/precios/', '/paquetes', '/paquetes/'].includes(path) ||
+        path.startsWith('/propuesta') || path.startsWith('/paquetes-cliente') ||
+        hash.includes('tarifas') || hash.includes('precios') || hash.includes('paquetes') || hash.includes('propuesta') ||
+        urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta');
 
       if (path.startsWith('/galeria/')) return false;
       if (path.startsWith('/calificar') || path.startsWith('/opiniones') || urlParams.get('calificar')) return false;
-      if (path.startsWith('/propuesta') || path.startsWith('/paquetes-cliente') || hash === '#propuesta' || urlParams.get('propuesta')) return false;
-      if (isStandalone || urlParams.get('mode') === 'admin') return false;
+      if (isPricingRoute || isStandalone || urlParams.get('mode') === 'admin') return false;
     }
     return true;
   });
@@ -195,11 +202,15 @@ export default function App() {
     } else if (path === '/admin' || path === '/admin/' || urlParams.get('mode') === 'admin') {
       setCurrentView('admin');
     } else if (
+      path === '/tarifas' || path === '/tarifas/' ||
+      path === '/precios' || path === '/precios/' ||
+      path === '/paquetes' || path === '/paquetes/' ||
       path === '/propuesta' || path === '/propuesta/' || path.startsWith('/propuesta/') ||
       path === '/paquetes-cliente' || path === '/paquetes-cliente/' ||
-      window.location.hash === '#propuesta' || urlParams.get('propuesta')
+      window.location.hash === '#tarifas' || window.location.hash === '#precios' || window.location.hash === '#paquetes' || window.location.hash === '#propuesta' ||
+      urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta')
     ) {
-      setCurrentView('proposal');
+      setCurrentView('packages');
     }
 
     const handlePopState = () => {
@@ -217,11 +228,15 @@ export default function App() {
       } else if (p === '/admin' || p === '/admin/' || params.get('mode') === 'admin') {
         setCurrentView('admin');
       } else if (
+        p === '/tarifas' || p === '/tarifas/' ||
+        p === '/precios' || p === '/precios/' ||
+        p === '/paquetes' || p === '/paquetes/' ||
         p === '/propuesta' || p === '/propuesta/' || p.startsWith('/propuesta/') ||
         p === '/paquetes-cliente' || p === '/paquetes-cliente/' ||
-        h === '#propuesta' || params.get('propuesta')
+        h === '#tarifas' || h === '#precios' || h === '#paquetes' || h === '#propuesta' ||
+        params.get('tarifas') || params.get('precios') || params.get('paquetes') || params.get('propuesta')
       ) {
-        setCurrentView('proposal');
+        setCurrentView('packages');
       } else {
         setCurrentView('home');
       }
@@ -345,8 +360,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (currentView === 'proposal') {
-      document.title = "Propuesta de Paquetes & Impresiones • Sebastian G";
+    if (currentView === 'packages' || currentView === 'proposal') {
+      document.title = "Tarifas y Paquetes • Sebastian G Fotografía";
     } else if (currentView === 'home') {
       document.title = "Sebastian G • Fotografía & Edición Profesional | Cobertura Nacional";
     } else if (currentView === 'admin') {
@@ -392,7 +407,9 @@ export default function App() {
             } else {
               setCurrentView(view);
               if (typeof window !== 'undefined') {
-                if (view === 'home') {
+                if (view === 'packages') {
+                  window.history.pushState(null, '', '/paquetes');
+                } else if (view === 'home') {
                   window.history.pushState(null, '', '/');
                 }
               }
@@ -417,10 +434,20 @@ export default function App() {
                 onNavigateToAdmin={() => { setCurrentView('admin'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
               />
               <AboutSection
+                onNavigateToPackages={() => {
+                  setCurrentView('packages');
+                  if (typeof window !== 'undefined') window.history.pushState(null, '', '/paquetes');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
                 onOpenBooking={(photo) => handleOpenBooking(photo)}
               />
               <HowItWorksSection
                 onOpenBooking={() => handleOpenBooking(null)}
+                onNavigateToPackages={() => {
+                  setCurrentView('packages');
+                  if (typeof window !== 'undefined') window.history.pushState(null, '', '/paquetes');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
               />
               <div id="testimonials-section">
                 <TestimonialsSection />
@@ -470,9 +497,9 @@ export default function App() {
             </React.Suspense>
           )}
 
-          {currentView === 'proposal' && (
+          {(currentView === 'packages' || currentView === 'proposal') && (
             <div className="pt-2 sm:pt-6">
-              <React.Suspense fallback={<ModuleLoader message="Cargando propuesta personalizada..." />}>
+              <React.Suspense fallback={<ModuleLoader message="Cargando tarifas y paquetes..." />}>
                 <PackagesSection
                   packages={packages}
                   settings={settings}
