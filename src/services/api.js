@@ -142,6 +142,7 @@ export const DEFAULT_PACKAGES = [
 export const DEFAULT_REAL_CATALOG = [
   { id: 'cat-verano-salsero', title: 'Verano salsero', category: 'Retratos', location: 'Playas de Coveñas', url: '/catalog/verano-salsero.jpg' },
   { id: 'cat-1789878355199', title: 'Amor al  campo', category: 'Retratos', location: 'Torrente -Coveñas', url: '/catalog/cat-1789878355199.jpg' },
+  { id: 'cat-1789878484787', title: 'Sesión en Torrente, Coveñas', category: 'Retratos', location: 'Torrente - Coveñas', url: '/catalog/cat-1789878484787.jpg' },
   { id: 'cat-1789902452640', title: 'Atardecer', category: 'Retratos', location: 'Playas el Edén - Coveñas', url: '/catalog/cat-1789902452640.jpg' },
   { id: 'cat-1789916017066', title: 'Feliz cumpleaños  Thiago', category: 'Retratos', location: 'Nuevo Agrado', url: '/catalog/cat-1789916017066.jpg' },
   { id: 'cat-1789916075257', title: 'Atardeceres', category: 'Retratos', location: 'Malecón , San Antero', url: '/catalog/cat-1789916075257.jpg' },

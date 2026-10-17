@@ -4,6 +4,7 @@ import { getMongoDB, isMongoConfigured, upsertMongoDoc } from '../api/db/mongo.j
 const REAL_CATALOG = [
   { id: 'cat-verano-salsero', title: 'Verano salsero', category: 'Retratos', location: 'Playas de Coveñas', url: '/catalog/verano-salsero.jpg' },
   { id: 'cat-1789878355199', title: 'Amor al  campo', category: 'Retratos', location: 'Torrente -Coveñas', url: '/catalog/cat-1789878355199.jpg' },
+  { id: 'cat-1789878484787', title: 'Sesión en Torrente, Coveñas', category: 'Retratos', location: 'Torrente - Coveñas', url: '/catalog/cat-1789878484787.jpg' },
   { id: 'cat-1789902452640', title: 'Atardecer', category: 'Retratos', location: 'Playas el Edén - Coveñas', url: '/catalog/cat-1789902452640.jpg' },
   { id: 'cat-1789916017066', title: 'Feliz cumpleaños  Thiago', category: 'Retratos', location: 'Nuevo Agrado', url: '/catalog/cat-1789916017066.jpg' },
   { id: 'cat-1789916075257', title: 'Atardeceres', category: 'Retratos', location: 'Malecón , San Antero', url: '/catalog/cat-1789916075257.jpg' },
@@ -103,12 +104,16 @@ async function seed() {
     process.exit(1);
   }
 
-  console.log('🌱 Poblando MongoDB Atlas con el portafolio real (39 fotos)...');
+  console.log('🌱 Poblando MongoDB Atlas con el portafolio real (40 fotos)...');
   let photoCount = 0;
-  for (const photo of REAL_CATALOG) {
+  for (let index = 0; index < REAL_CATALOG.length; index++) {
+    const photo = REAL_CATALOG[index];
     await upsertMongoDoc('catalog', { id: photo.id }, {
       ...photo,
-      createdAt: photo.createdAt || new Date().toISOString()
+      // createdAt decreciente (la primera foto del arreglo queda con la fecha más
+      // reciente) para que /api/catalog, que ordena por createdAt descendente,
+      // respete el orden curado del portafolio en vez de invertirlo.
+      createdAt: new Date(Date.now() - index * 1000).toISOString()
     });
     photoCount++;
   }

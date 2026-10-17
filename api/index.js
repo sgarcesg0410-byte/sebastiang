@@ -665,7 +665,9 @@ app.get('/api/catalog', async (req, res) => {
 
   let cleanCatalog = filterPhotos(runtimeDB.catalog);
 
-  if (isMongoConfigured() && cleanCatalog.length === 0) {
+  // MongoDB Atlas es la fuente canónica: recargar SIEMPRE para que los cambios
+  // (fotos nuevas o reordenamientos) se reflejen sin esperar un cold start.
+  if (isMongoConfigured()) {
     try {
       const mongoCatalog = await findMongoDocs('catalog', {}, { createdAt: -1 });
       if (mongoCatalog && mongoCatalog.length > 0) {
