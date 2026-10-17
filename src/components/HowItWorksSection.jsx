@@ -138,18 +138,8 @@ export default function HowItWorksSection({ onOpenBooking, onNavigateToPackages 
                 onClick={onOpenBooking}
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
               >
-                <span>Reservar con $20.000 COP</span>
+                <span>Reservar Sesión con $20.000 COP</span>
                 <ArrowRight className="w-4 h-4 text-stone-950" />
-              </button>
-            )}
-
-            {onNavigateToPackages && (
-              <button
-                type="button"
-                onClick={onNavigateToPackages}
-                className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-stone-900 hover:bg-stone-800 border border-stone-700 text-stone-200 hover:text-white text-xs sm:text-sm font-semibold transition-all active:scale-95"
-              >
-                Ver Paquetes & Tarifas
               </button>
             )}
           </div>

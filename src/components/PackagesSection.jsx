@@ -45,19 +45,58 @@ export default function PackagesSection({
   const paperSizes = getPaperPrintSizes(settings);
   const retabloSizes = getRetabloSizes(settings);
 
-  // Estados interactivos para el cotizador / armador de combo
-  const [selectedPackageId, setSelectedPackageId] = useState('pkg-8fotos');
-  const [retabloCounts, setRetabloCounts] = useState({
-    '20x30': 0,
-    '30x45': 0,
-    '40x50': 0,
-    '50x70': 0,
-    '70x50': 0,
-    '70x100': 0
+  // Estados interactivos para el cotizador / armador de combo con lectura de parámetros de URL
+  const [clientName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      return p.get('cliente') || p.get('c') || '';
+    }
+    return '';
   });
-  const [paperCounts, setPaperCounts] = useState({
-    '10x15': 0,
-    '15x20': 0
+
+  const [selectedPackageId, setSelectedPackageId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      const pkgParam = p.get('pkg');
+      if (pkgParam) return pkgParam;
+    }
+    return 'pkg-8fotos';
+  });
+
+  const [retabloCounts, setRetabloCounts] = useState(() => {
+    const initial = {
+      '20x30': 0, '30x45': 0, '40x50': 0, '50x70': 0, '70x50': 0, '70x100': 0
+    };
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      const retParam = p.get('retablos');
+      if (retParam) {
+        retParam.split(',').forEach(item => {
+          const [size, qty] = item.split(':');
+          if (size && initial[size] !== undefined) {
+            initial[size] = Math.max(0, parseInt(qty, 10) || 0);
+          }
+        });
+      }
+    }
+    return initial;
+  });
+
+  const [paperCounts, setPaperCounts] = useState(() => {
+    const initial = { '10x15': 0, '15x20': 0 };
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      const paperParam = p.get('papel');
+      if (paperParam) {
+        paperParam.split(',').forEach(item => {
+          const [size, qty] = item.split(':');
+          if (size && initial[size] !== undefined) {
+            initial[size] = Math.max(0, parseInt(qty, 10) || 0);
+          }
+        });
+      }
+    }
+    return initial;
   });
 
   const [activeCategoryTab, setActiveCategoryTab] = useState('all'); // 'all' | 'packages' | 'retablos' | 'paper'
@@ -120,12 +159,13 @@ export default function PackagesSection({
   // Generador de mensaje pre-armado para WhatsApp
   const generateWhatsAppUrl = () => {
     const cleanPhone = photographerPhone.replace(/\D/g, '');
+    const clientGreeting = clientName ? `Soy ${clientName}. ` : '';
     if (!hasAnySelection) {
-      const defaultMsg = `¡Hola ${photographerName}! 👋 Estuve revisando tu página de tarifas y paquetes en sebastiang.app/tarifas.\n\nMe gustaría consultar disponibilidad para una sesión fotográfica y conocer más detalles. ¿Qué fechas tienes disponibles?`;
+      const defaultMsg = `¡Hola ${photographerName}! 👋 ${clientGreeting}Estuve revisando la propuesta de paquetes, cuadros en retablo y fotos impresas.\n\nMe gustaría consultar disponibilidad para una sesión fotográfica. ¿Qué fechas tienes disponibles?`;
       return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(defaultMsg)}`;
     }
 
-    let msg = `¡Hola ${photographerName}! 👋 Estuve viendo tus tarifas en sebastiang.app/tarifas y me gustaría cotizar / apartar el siguiente combo:\n\n`;
+    let msg = `¡Hola ${photographerName}! 👋 ${clientGreeting}Estuve revisando la propuesta y me gustaría cotizar / apartar el siguiente combo:\n\n`;
 
     if (selectedPackage) {
       msg += `📸 *PAQUETE DIGITAL:*\n`;
@@ -164,7 +204,7 @@ export default function PackagesSection({
 
   // Copiar enlace de tarifas para compartir
   const handleCopyLink = () => {
-    const url = 'https://sebastiang.app/tarifas';
+    const url = typeof window !== 'undefined' ? window.location.href : 'https://sebastiang.app/propuesta';
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(url);
       setCopiedToast(true);
@@ -174,7 +214,8 @@ export default function PackagesSection({
 
   // Compartir directamente por WhatsApp web / app
   const handleShareWhatsApp = () => {
-    const shareText = `¡Hola! Aquí tienes la lista oficial de paquetes de fotos, cuadros en retablo y fotos impresas de ${photographerName}: https://sebastiang.app/tarifas`;
+    const url = typeof window !== 'undefined' ? window.location.href : 'https://sebastiang.app/propuesta';
+    const shareText = `¡Hola! Aquí tienes la propuesta de paquetes de fotos, cuadros en retablo y fotos impresas de ${photographerName}: ${url}`;
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`, '_blank');
   };
 
@@ -227,7 +268,7 @@ export default function PackagesSection({
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
           <div className="text-xs sm:text-sm font-medium">
             <strong className="text-emerald-400 block font-bold">¡Enlace copiado con éxito!</strong>
-            Listo para enviar por WhatsApp: <span className="font-mono text-stone-300">sebastiang.app/tarifas</span>
+            Listo para enviar por WhatsApp al cliente.
           </div>
         </div>
       )}
@@ -269,13 +310,20 @@ export default function PackagesSection({
 
       {/* CABECERA PRINCIPAL CON ESTILO DE LUJO */}
       <div className="text-center max-w-3xl mx-auto mb-10">
-        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-amber-500/20 via-amber-400/30 to-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-black uppercase tracking-widest mb-4 shadow-lg shadow-amber-500/10">
-          <Sparkles className="w-4 h-4 fill-amber-400 animate-spin text-amber-400" />
-          <span>PROMO 2026: TODOS LOS PAQUETES INCLUYEN +2 FOTOS GRATIS</span>
-        </div>
+        {clientName ? (
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs sm:text-sm font-semibold mb-4 shadow-lg shadow-amber-500/5">
+            <span>✨ Propuesta personalizada para:</span>
+            <span className="font-bold text-white underline decoration-amber-400">{clientName}</span>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-gradient-to-r from-amber-500/20 via-amber-400/30 to-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-black uppercase tracking-widest mb-4 shadow-lg shadow-amber-500/10">
+            <Sparkles className="w-4 h-4 fill-amber-400 animate-spin text-amber-400" />
+            <span>PROMO 2026: TODOS LOS PAQUETES INCLUYEN +2 FOTOS GRATIS</span>
+          </div>
+        )}
 
         <h1 className="text-3xl sm:text-5xl font-serif font-bold text-white mb-3 tracking-tight">
-          Tarifas y Servicios • Sebastian G
+          {clientName ? `Propuesta Fotográfica • ${clientName}` : 'Paquetes, Retablos e Impresiones • Sebastian G'}
         </h1>
         
         <p className="text-amber-400/90 font-serif italic text-lg sm:text-xl font-medium mb-3">

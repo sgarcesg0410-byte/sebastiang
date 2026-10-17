@@ -95,15 +95,6 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
           </button>
 
           <button
-            onClick={() => navigateTo('packages')}
-            className={`text-sm font-medium transition-colors ${
-              currentView === 'packages' ? 'text-amber-400' : 'text-stone-300 hover:text-stone-100'
-            }`}
-          >
-            Paquetes & Precios
-          </button>
-
-          <button
             onClick={() => navigateTo('demo-gallery')}
             className={`text-sm font-medium flex items-center gap-1.5 transition-colors ${
               currentView === 'gallery' ? 'text-amber-400' : 'text-amber-200/80 hover:text-amber-300'
@@ -172,12 +163,6 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
             className="block w-full text-left py-2 text-stone-200 font-medium text-base hover:text-amber-400"
           >
             Cómo Funciona (4 Pasos & Clima)
-          </button>
-          <button
-            onClick={() => navigateTo('packages')}
-            className="block w-full text-left py-2 text-stone-200 font-medium text-base hover:text-amber-400"
-          >
-            Paquetes & Precios
           </button>
           <button
             onClick={() => navigateTo('demo-gallery')}

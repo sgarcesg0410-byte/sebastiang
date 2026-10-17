@@ -18,6 +18,7 @@ import {
   Eye,
   EyeOff,
   Trash2,
+  Minus,
   Share2,
   Upload,
   UploadCloud,
@@ -498,6 +499,225 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [showRetabloCostWidget, setShowRetabloCostWidget] = useState(true);
   const [isSavingPrices, setIsSavingPrices] = useState(false);
   const [priceSaveSuccess, setPriceSaveSuccess] = useState('');
+
+  // Cotizador y Envío de Paquetes a Clientes vía WhatsApp (Herramienta Exclusiva de Administrador)
+  const [adminPriceTabMode, setAdminPriceTabMode] = useState('cotizador'); // 'cotizador' | 'editor'
+  const [adminQuoteClientName, setAdminQuoteClientName] = useState('');
+  const [adminQuoteClientPhone, setAdminQuoteClientPhone] = useState('');
+  const [adminQuoteSelectedPkgId, setAdminQuoteSelectedPkgId] = useState('pkg-8fotos');
+  const [adminQuoteRetabloCounts, setAdminQuoteRetabloCounts] = useState({
+    '20x30': 0, '30x45': 0, '40x50': 0, '50x70': 0, '70x50': 0, '70x100': 0
+  });
+  const [adminQuotePaperCounts, setAdminQuotePaperCounts] = useState({
+    '10x15': 0, '15x20': 0
+  });
+  const [adminQuoteToast, setAdminQuoteToast] = useState('');
+
+  const handleUpdateAdminRetabloQty = (id, delta) => {
+    setAdminQuoteRetabloCounts(prev => ({
+      ...prev,
+      [id]: Math.max(0, (Number(prev[id] || 0) + delta))
+    }));
+  };
+
+  const handleUpdateAdminPaperQty = (id, delta) => {
+    setAdminQuotePaperCounts(prev => ({
+      ...prev,
+      [id]: Math.max(0, (Number(prev[id] || 0) + delta))
+    }));
+  };
+
+  const handleResetAdminQuote = () => {
+    setAdminQuoteClientName('');
+    setAdminQuoteClientPhone('');
+    setAdminQuoteSelectedPkgId('pkg-8fotos');
+    setAdminQuoteRetabloCounts({
+      '20x30': 0, '30x45': 0, '40x50': 0, '50x70': 0, '70x50': 0, '70x100': 0
+    });
+    setAdminQuotePaperCounts({
+      '10x15': 0, '15x20': 0
+    });
+  };
+
+  const getAdminQuoteTotals = () => {
+    const pkg = adminQuoteSelectedPkgId !== 'none' ? (editablePackages || []).find(p => p.id === adminQuoteSelectedPkgId) : null;
+    const pkgPrice = pkg ? Number(pkg.price || 0) : 0;
+
+    const retabloSizesMap = [
+      { id: '20x30', dimensions: '20x30 cm', label: 'Retablo 20x30', tag: 'Retablo HD', price: Number(editablePrintedPhoto20x30Price || 30000) },
+      { id: '30x45', dimensions: '30x45 cm', label: 'Retablo 30x45', tag: 'Retablo Mediano', price: Number(editablePrintedPhoto30x45Price || 60000) },
+      { id: '40x50', dimensions: '40x50 cm', label: 'Retablo 40x50', tag: 'Retablo Galería', price: Number(editablePrintedPhoto40x50Price || 85000) },
+      { id: '50x70', dimensions: '50x70 cm', label: 'Retablo 50x70', tag: 'Gran Formato', price: Number(editablePrintedPhoto50x70Price || 110000) },
+      { id: '70x50', dimensions: '70x50 cm', label: 'Retablo 70x50', tag: 'Panorámico de Lujo', price: Number(editablePrintedPhoto70x50Price || 120000) },
+      { id: '70x100', dimensions: '70x100 cm', label: 'Retablo 70x100', tag: 'Gigante 1 Metro', price: Number(editablePrintedPhoto70x100Price || 200000) }
+    ];
+
+    const paperSizesMap = [
+      { id: '10x15', dimensions: '10x15 cm', label: 'Foto en Papel 10x15', tag: 'Estándar / Álbum', price: Number(editablePrintedPhotoPrice || 7000) },
+      { id: '15x20', dimensions: '15x20 cm', label: 'Foto en Papel 15x20', tag: 'Portarretrato', price: Number(editablePrintedPhoto15x20Price || 8000) }
+    ];
+
+    const retablosTotal = retabloSizesMap.reduce((acc, r) => acc + ((adminQuoteRetabloCounts[r.id] || 0) * r.price), 0);
+    const retablosCount = retabloSizesMap.reduce((acc, r) => acc + (adminQuoteRetabloCounts[r.id] || 0), 0);
+
+    const paperTotal = paperSizesMap.reduce((acc, p) => acc + ((adminQuotePaperCounts[p.id] || 0) * p.price), 0);
+    const paperCount = paperSizesMap.reduce((acc, p) => acc + (adminQuotePaperCounts[p.id] || 0), 0);
+
+    const grandTotal = pkgPrice + retablosTotal + paperTotal;
+
+    return {
+      pkg,
+      pkgPrice,
+      retabloSizesMap,
+      paperSizesMap,
+      retablosTotal,
+      retablosCount,
+      paperTotal,
+      paperCount,
+      grandTotal
+    };
+  };
+
+  const buildClientProposalUrl = (includeCombo = true) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
+    const params = new URLSearchParams();
+    if (adminQuoteClientName.trim()) {
+      params.set('cliente', adminQuoteClientName.trim());
+    }
+    if (includeCombo) {
+      if (adminQuoteSelectedPkgId && adminQuoteSelectedPkgId !== 'none') {
+        params.set('pkg', adminQuoteSelectedPkgId);
+      }
+      const retabloEntries = Object.entries(adminQuoteRetabloCounts).filter(([_, qty]) => Number(qty) > 0);
+      if (retabloEntries.length > 0) {
+        params.set('retablos', retabloEntries.map(([size, qty]) => `${size}:${qty}`).join(','));
+      }
+      const paperEntries = Object.entries(adminQuotePaperCounts).filter(([_, qty]) => Number(qty) > 0);
+      if (paperEntries.length > 0) {
+        params.set('papel', paperEntries.map(([size, qty]) => `${size}:${qty}`).join(','));
+      }
+    }
+    const qs = params.toString();
+    return `${origin}/propuesta${qs ? `?${qs}` : ''}`;
+  };
+
+  const handleCopyClientProposalUrl = (includeCombo = true) => {
+    const url = buildClientProposalUrl(includeCombo);
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(url);
+      setAdminQuoteToast(includeCombo ? '¡Enlace exclusivo del cliente copiado!' : '¡Enlace del catálogo copiado!');
+      setTimeout(() => setAdminQuoteToast(''), 3500);
+    }
+  };
+
+  const buildAdminQuoteWhatsAppMessage = (fullCatalog = false) => {
+    const { pkg, retabloSizesMap, paperSizesMap, grandTotal } = getAdminQuoteTotals();
+    const cleanClientName = adminQuoteClientName.trim();
+    const greeting = cleanClientName ? `¡Hola ${cleanClientName}! ` : '¡Hola! ';
+
+    if (fullCatalog) {
+      let text = `📸 *SEBASTIAN G • FOTOGRAFÍA & EDICIÓN PROFESIONAL*\n` +
+        `${greeting}Con mucho gusto te comparto la lista oficial de paquetes fotográficos, cuadros en retablo y fotos impresas:\n\n` +
+        `🎁 *PROMO ESPECIAL:* ¡Todos los paquetes digitales incluyen +2 FOTOS GRATIS de regalo!\n\n`;
+
+      (editablePackages || []).forEach(p => {
+        const star = p.popular ? ' ⭐ *MÁS ELEGIDO*' : '';
+        text += `📸 *${p.photoCount} Fotos Digitales* (+2 GRATIS = Total ${p.totalPhotos || p.photoCount + 2} fotos)${star}\n`;
+        text += `• Inversión: *$${Number(p.price).toLocaleString('es-CO')} COP*\n`;
+        text += `• Duración estimada: ${p.duration || 'Flexible'} (${p.outfits || 'Cambios incluidos'})\n`;
+        text += `• Incluye: Edición y retoque profesional detallado, entrega en alta calidad mediante enlace privado protegido de WhatsApp para elegir tus favoritas.\n\n`;
+      });
+
+      text += `🪵 *CUADROS EN RETABLO DE MADERA (MDF macizo, cantos pulidos, laminado UV antirreflejo y antipolvo, listos para colgar):*\n`;
+      retabloSizesMap.forEach(r => {
+        text += `• Retablo ${r.dimensions}: *$${r.price.toLocaleString('es-CO')} COP*\n`;
+      });
+      text += `\n`;
+
+      text += `🖼️ *FOTOS IMPRESAS (Papel fotográfico profesional de laboratorio 300 DPI, máxima fidelidad y duración):*\n`;
+      paperSizesMap.forEach(p => {
+        text += `• ${p.dimensions}: *$${p.price.toLocaleString('es-CO')} COP* c/u\n`;
+      });
+      text += `\n`;
+
+      text += `🔗 *Ver fotos de muestra, retablos e impresiones en el enlace privado:*\n${buildClientProposalUrl(false)}\n\n`;
+      text += `📌 *Para apartar tu fecha:* Se reserva con un anticipo de solo $20.000 COP por Nequi o DaviPlata. El saldo restante se cancela el día de la sesión.\n`;
+      text += `🌊 *Cobertura:* Sesiones en playas, exteriores, fincas o locaciones de tu preferencia.\n\n`;
+      text += `¿Qué fecha tienes pensada para tu sesión? ¡Quedo muy atento para agendarte! 😊📸`;
+
+      return text;
+    }
+
+    // Cotización personalizada del combo actual
+    let text = `📸 *SEBASTIAN G • COTIZACIÓN PERSONALIZADA*\n` +
+      `${greeting}Te comparto el detalle de la cotización que preparamos para tu sesión:\n\n`;
+
+    if (pkg) {
+      text += `📸 *PAQUETE DIGITAL:*\n`;
+      text += `• *${pkg.photoCount} Fotos Digitales* (+2 GRATIS = Total ${pkg.totalPhotos || pkg.photoCount + 2} fotos)\n`;
+      text += `• Inversión: *$${Number(pkg.price).toLocaleString('es-CO')} COP*\n`;
+      text += `• Duración estimada: ${pkg.duration || 'Flexible'} (${pkg.outfits || 'Cambios incluidos'})\n`;
+      text += `• Entrega: Enlace privado de WhatsApp en alta resolución para selección.\n\n`;
+    }
+
+    const selectedRetablos = retabloSizesMap.filter(r => (adminQuoteRetabloCounts[r.id] || 0) > 0);
+    if (selectedRetablos.length > 0) {
+      text += `🪵 *CUADROS EN RETABLO (Madera + UV):*\n`;
+      selectedRetablos.forEach(r => {
+        const q = adminQuoteRetabloCounts[r.id];
+        const sub = q * r.price;
+        text += `• ${q}x Retablo ${r.dimensions} = *$${sub.toLocaleString('es-CO')} COP* ($${r.price.toLocaleString('es-CO')} c/u)\n`;
+      });
+      text += `\n`;
+    }
+
+    const selectedPaper = paperSizesMap.filter(p => (adminQuotePaperCounts[p.id] || 0) > 0);
+    if (selectedPaper.length > 0) {
+      text += `🖼️ *FOTOS IMPRESAS (Papel de Laboratorio):*\n`;
+      selectedPaper.forEach(p => {
+        const q = adminQuotePaperCounts[p.id];
+        const sub = q * p.price;
+        text += `• ${q}x Foto en papel ${p.dimensions} = *$${sub.toLocaleString('es-CO')} COP* ($${p.price.toLocaleString('es-CO')} c/u)\n`;
+      });
+      text += `\n`;
+    }
+
+    text += `💰 *TOTAL ESTIMADO:* *$${grandTotal.toLocaleString('es-CO')} COP*\n\n`;
+    text += `🔗 *Revisa tu propuesta y fotos de muestra en tu enlace privado:*\n${buildClientProposalUrl(true)}\n\n`;
+    text += `📌 *Para apartar tu fecha:* Se reserva con un anticipo de solo $20.000 COP por Nequi o DaviPlata. El restante se cancela el día de la sesión.\n\n`;
+    text += `¿Te gustaría apartar tu fecha o tienes alguna pregunta? Con gusto te atiendo. 😊📸`;
+
+    return text;
+  };
+
+  const handleSendAdminQuoteWhatsApp = (fullCatalog = false) => {
+    const text = buildAdminQuoteWhatsAppMessage(fullCatalog);
+    const rawPhone = adminQuoteClientPhone.replace(/\D/g, '');
+    let targetPhone = '';
+    if (rawPhone.length >= 10) {
+      targetPhone = rawPhone.startsWith('57') ? rawPhone : `57${rawPhone}`;
+    }
+
+    if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
+      window.AndroidNotificationBridge.shareToWhatsApp(text);
+      return;
+    }
+
+    const url = targetPhone 
+      ? `https://api.whatsapp.com/send?phone=${targetPhone}&text=${encodeURIComponent(text)}`
+      : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+
+    window.open(url, '_blank');
+  };
+
+  const handleCopyAdminQuoteText = (fullCatalog = false) => {
+    const text = buildAdminQuoteWhatsAppMessage(fullCatalog);
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setAdminQuoteToast(fullCatalog ? '¡Catálogo completo copiado!' : '¡Cotización personalizada copiada!');
+      setTimeout(() => setAdminQuoteToast(''), 3500);
+    }
+  };
 
   // Datos del sistema inicializados con respaldo real para carga instantánea
   const [bookings, setBookings] = useState(REAL_DEFAULT_BOOKINGS);
@@ -8148,29 +8368,449 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         </div>
       )}
 
-      {/* PESTAÑA 5: ACTUALIZAR PRECIOS DE FOTOS Y PAQUETES */}
+      {/* PESTAÑA 5: GESTIÓN DE TARIFAS Y COTIZADOR WHATSAPP PARA CLIENTES */}
       {activeTab === 'pricing-manager' && (
         <div className="max-w-4xl mx-auto space-y-8">
           <div>
             <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-              Tarifas Oficiales
+              Herramienta Exclusiva de Administrador
             </span>
             <h3 className="text-2xl font-serif font-bold text-white">
-              Actualizar Precios de Fotos & Paquetes
+              Cotizador & Gestión de Tarifas
             </h3>
             <p className="text-xs text-stone-400 mt-1">
-              Modifica los valores cobrados por cada paquete fotográfico y servicios adicionales. Los cambios se guardan y se sincronizan al instante en la página web.
+              Cotiza combos con fotos digitales, cuadros en retablo y fotos impresas para tus clientes sin hacer públicos los precios en la web. Envía la cotización directamente por WhatsApp o copia el enlace privado.
             </p>
           </div>
 
-          {priceSaveSuccess && (
+          {/* SELECTOR DE MODO: COTIZADOR VS EDITOR DE PRECIOS */}
+          <div className="flex items-center p-1.5 bg-stone-900 border border-stone-800 rounded-2xl max-w-md mx-auto">
+            <button
+              type="button"
+              onClick={() => setAdminPriceTabMode('cotizador')}
+              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                adminPriceTabMode === 'cotizador'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-md font-extrabold'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>📲 Cotizador WhatsApp</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminPriceTabMode('editor')}
+              className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                adminPriceTabMode === 'editor'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-md font-extrabold'
+                  : 'text-stone-400 hover:text-white'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              <span>⚙️ Configurar Precios</span>
+            </button>
+          </div>
+
+          {/* TOAST FLOTANTE DE ACCIÓN COPIADA */}
+          {adminQuoteToast && (
+            <div className="p-3.5 bg-emerald-950/90 border border-emerald-500/60 rounded-2xl text-emerald-200 text-xs flex items-center justify-between gap-3 shadow-xl">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-semibold">{adminQuoteToast}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminQuoteToast('')}
+                className="text-emerald-400 hover:text-emerald-200 text-xs underline cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
+          )}
+
+          {priceSaveSuccess && adminPriceTabMode === 'editor' && (
             <div className="p-4 bg-emerald-950/80 border border-emerald-500/50 rounded-2xl text-emerald-200 text-xs flex items-center gap-2.5 shadow-lg">
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
               <span className="font-semibold">{priceSaveSuccess}</span>
             </div>
           )}
 
-          {/* FORMULARIO DE EDICIÓN DE PRECIOS */}
+          {/* MODO 1: COTIZADOR WHATSAPP & ENLACE DE CLIENTES */}
+          {adminPriceTabMode === 'cotizador' && (
+            <div className="space-y-6">
+              {/* DATOS DEL CLIENTE */}
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2 font-serif">
+                    <Users className="w-4 h-4 text-amber-400" />
+                    <span>Datos del Cliente a Cotizar</span>
+                  </h4>
+
+                  {/* Dropdown de autollenado con reservas recientes */}
+                  {bookings && bookings.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-stone-400">Autollenar:</span>
+                      <select
+                        onChange={(e) => {
+                          const b = bookings.find(item => item.id === e.target.value);
+                          if (b) {
+                            setAdminQuoteClientName(b.clientName || '');
+                            setAdminQuoteClientPhone(b.clientWhatsApp || '');
+                            if (b.packageId) setAdminQuoteSelectedPkgId(b.packageId);
+                          }
+                        }}
+                        defaultValue=""
+                        className="bg-stone-950 border border-stone-700 rounded-xl text-stone-300 text-xs px-2.5 py-1.5 focus:border-amber-400 focus:outline-none cursor-pointer"
+                      >
+                        <option value="" disabled>Seleccionar cliente reciente...</option>
+                        {bookings.slice(0, 10).map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.clientName || 'Sin nombre'} {b.clientWhatsApp ? `(${b.clientWhatsApp})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-300 uppercase tracking-wider mb-1.5">
+                      Nombre del Cliente
+                    </label>
+                    <input
+                      type="text"
+                      value={adminQuoteClientName}
+                      onChange={(e) => setAdminQuoteClientName(e.target.value)}
+                      placeholder="Ej: Camila Restrepo"
+                      className="w-full bg-stone-950 border border-stone-800 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-white text-xs placeholder-stone-600 focus:outline-none transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-300 uppercase tracking-wider mb-1.5">
+                      WhatsApp del Cliente (opcional para envío directo)
+                    </label>
+                    <input
+                      type="tel"
+                      value={adminQuoteClientPhone}
+                      onChange={(e) => setAdminQuoteClientPhone(e.target.value)}
+                      placeholder="Ej: 3201234567"
+                      className="w-full bg-stone-950 border border-stone-800 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-white text-xs placeholder-stone-600 focus:outline-none transition-colors"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SELECCIÓN DE PAQUETE DIGITAL */}
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2 font-serif">
+                    <ImageIcon className="w-4 h-4 text-amber-400" />
+                    <span>1. Paquete de Fotos Digitales</span>
+                  </h4>
+                  <span className="text-[11px] text-amber-400 font-semibold">
+                    🎁 Todos incluyen +2 Fotos Gratis de Regalo
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {editablePackages.map(pkg => {
+                    const isSelected = adminQuoteSelectedPkgId === pkg.id;
+                    return (
+                      <div
+                        key={pkg.id}
+                        onClick={() => setAdminQuoteSelectedPkgId(pkg.id)}
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer relative flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-amber-500/10 border-amber-400 ring-2 ring-amber-400/30'
+                            : 'bg-stone-950/70 border-stone-800 hover:border-stone-700'
+                        }`}
+                      >
+                        {pkg.popular && (
+                          <span className="absolute -top-2.5 right-3 bg-amber-500 text-stone-950 text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase">
+                            Más Elegido
+                          </span>
+                        )}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-serif font-bold text-white text-sm">
+                              {pkg.name || `${pkg.photoCount} Fotos`}
+                            </span>
+                            <span className="text-xs text-amber-400 font-black">
+                              +2 GRATIS
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-stone-400 block mb-3">
+                            Total {pkg.totalPhotos || pkg.photoCount + 2} fotos editadas
+                          </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-stone-800/80 flex items-center justify-between">
+                          <span className="text-xs font-black text-amber-300">
+                            ${Number(pkg.price || 0).toLocaleString('es-CO')}
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${
+                            isSelected ? 'bg-amber-400 text-stone-950 font-extrabold' : 'bg-stone-800 text-stone-400'
+                          }`}>
+                            {isSelected ? 'Elegido' : 'Elegir'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-1 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setAdminQuoteSelectedPkgId('none')}
+                    className={`text-xs px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                      adminQuoteSelectedPkgId === 'none'
+                        ? 'bg-stone-800 border-amber-400 text-white font-bold'
+                        : 'bg-stone-950 border-stone-800 text-stone-400 hover:text-stone-300'
+                    }`}
+                  >
+                    Sin paquete digital (solo cuadros en retablo o fotos impresas)
+                  </button>
+                </div>
+              </div>
+
+              {/* SELECCIÓN DE CUADROS EN RETABLO */}
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2 font-serif">
+                    <Maximize2 className="w-4 h-4 text-amber-400" />
+                    <span>2. Cuadros en Retablo de Madera (MDF + Laminado UV)</span>
+                  </h4>
+                  <span className="text-[11px] text-stone-400">
+                    Listos para colgar • Acabado mate antirreflejo
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[
+                    { id: '20x30', dim: '20x30 cm', label: 'Retablo 20x30', tag: 'Retablo HD', price: Number(editablePrintedPhoto20x30Price || 30000) },
+                    { id: '30x45', dim: '30x45 cm', label: 'Retablo 30x45', tag: 'Retablo Mediano', price: Number(editablePrintedPhoto30x45Price || 60000) },
+                    { id: '40x50', dim: '40x50 cm', label: 'Retablo 40x50', tag: 'Retablo Galería', price: Number(editablePrintedPhoto40x50Price || 85000) },
+                    { id: '50x70', dim: '50x70 cm', label: 'Retablo 50x70', tag: 'Gran Formato', price: Number(editablePrintedPhoto50x70Price || 110000) },
+                    { id: '70x50', dim: '70x50 cm', label: 'Retablo 70x50', tag: 'Panorámico de Lujo', price: Number(editablePrintedPhoto70x50Price || 120000) },
+                    { id: '70x100', dim: '70x100 cm', label: 'Retablo 70x100', tag: 'Gigante 1 Metro', price: Number(editablePrintedPhoto70x100Price || 200000) }
+                  ].map(item => {
+                    const count = adminQuoteRetabloCounts[item.id] || 0;
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-3.5 rounded-2xl border transition-all ${
+                          count > 0 ? 'bg-amber-500/10 border-amber-400/60' : 'bg-stone-950/70 border-stone-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-bold text-white font-serif">{item.dim}</span>
+                          <span className="text-[10px] text-amber-400 font-semibold">{item.tag}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-stone-800/80">
+                          <span className="text-xs font-mono font-bold text-stone-300">
+                            ${item.price.toLocaleString('es-CO')}
+                          </span>
+                          <div className="flex items-center gap-1.5 bg-stone-900 border border-stone-700/80 rounded-xl p-1">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateAdminRetabloQty(item.id, -1)}
+                              disabled={count === 0}
+                              className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 disabled:opacity-30 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <span className="w-6 text-center text-xs font-bold text-white font-mono">
+                              {count}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateAdminRetabloQty(item.id, 1)}
+                              className="w-6 h-6 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3 font-bold" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* SELECCIÓN DE FOTOS IMPRESAS EN PAPEL */}
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2 font-serif">
+                    <Printer className="w-4 h-4 text-amber-400" />
+                    <span>3. Fotos Impresas en Papel de Laboratorio (300 DPI)</span>
+                  </h4>
+                  <span className="text-[11px] text-stone-400">
+                    Papel fotográfico profesional • Para álbumes o portarretratos
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {[
+                    { id: '10x15', dim: '10x15 cm', label: 'Foto en Papel 10x15', tag: 'Estándar / Álbum', price: Number(editablePrintedPhotoPrice || 7000) },
+                    { id: '15x20', dim: '15x20 cm', label: 'Foto en Papel 15x20', tag: 'Portarretrato', price: Number(editablePrintedPhoto15x20Price || 8000) }
+                  ].map(item => {
+                    const count = adminQuotePaperCounts[item.id] || 0;
+                    return (
+                      <div
+                        key={item.id}
+                        className={`p-3.5 rounded-2xl border transition-all ${
+                          count > 0 ? 'bg-amber-500/10 border-amber-400/60' : 'bg-stone-950/70 border-stone-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-bold text-white font-serif">{item.dim}</span>
+                          <span className="text-[10px] text-amber-400 font-semibold">{item.tag}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-stone-800/80">
+                          <span className="text-xs font-mono font-bold text-stone-300">
+                            ${item.price.toLocaleString('es-CO')} c/u
+                          </span>
+                          <div className="flex items-center gap-1.5 bg-stone-900 border border-stone-700/80 rounded-xl p-1">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateAdminPaperQty(item.id, -1)}
+                              disabled={count === 0}
+                              className="w-6 h-6 rounded-lg bg-stone-800 hover:bg-stone-700 disabled:opacity-30 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <span className="w-6 text-center text-xs font-bold text-white font-mono">
+                              {count}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateAdminPaperQty(item.id, 1)}
+                              className="w-6 h-6 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 flex items-center justify-center transition-colors cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3 font-bold" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* RESUMEN DEL COMBO Y BOTONES DE ENVÍO */}
+              {(() => {
+                const totals = getAdminQuoteTotals();
+                return (
+                  <div className="bg-gradient-to-br from-stone-900 via-stone-900 to-amber-950/30 border border-amber-500/40 rounded-3xl p-6 sm:p-7 space-y-6 shadow-2xl">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-800">
+                      <div>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
+                          Resumen de la Cotización
+                        </span>
+                        <h4 className="text-xl font-serif font-bold text-white mt-0.5">
+                          {adminQuoteClientName.trim() ? `Cotización para ${adminQuoteClientName.trim()}` : 'Cotización Personalizada'}
+                        </h4>
+                      </div>
+
+                      <div className="text-right sm:text-right">
+                        <span className="text-[11px] text-stone-400 block">Total a Cobrar</span>
+                        <span className="text-3xl font-serif font-black text-amber-400">
+                          ${totals.grandTotal.toLocaleString('es-CO')}
+                          <span className="text-xs text-amber-200 font-sans ml-1">COP</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Desglose de lo seleccionado */}
+                    <div className="space-y-2 text-xs">
+                      {totals.pkg ? (
+                        <div className="flex items-center justify-between text-stone-300">
+                          <span>📸 Paquete Digital: {totals.pkg.name || `${totals.pkg.photoCount} Fotos`} (+2 Gratis = {totals.pkg.totalPhotos || totals.pkg.photoCount + 2})</span>
+                          <span className="font-mono font-bold text-white">${totals.pkgPrice.toLocaleString('es-CO')} COP</span>
+                        </div>
+                      ) : (
+                        <div className="text-stone-500 italic">Sin paquete digital seleccionado</div>
+                      )}
+
+                      {totals.retablosCount > 0 && (
+                        <div className="flex items-center justify-between text-stone-300">
+                          <span>🪵 {totals.retablosCount} Cuadro(s) en Retablo de Madera</span>
+                          <span className="font-mono font-bold text-white">${totals.retablosTotal.toLocaleString('es-CO')} COP</span>
+                        </div>
+                      )}
+
+                      {totals.paperCount > 0 && (
+                        <div className="flex items-center justify-between text-stone-300">
+                          <span>🖼️ {totals.paperCount} Foto(s) Impresa(s) en Papel</span>
+                          <span className="font-mono font-bold text-white">${totals.paperTotal.toLocaleString('es-CO')} COP</span>
+                        </div>
+                      )}
+
+                      <div className="pt-2 border-t border-stone-800 text-[11px] text-stone-400 flex items-center justify-between">
+                        <span>Anticipo para apartar fecha (Nequi / DaviPlata):</span>
+                        <span className="text-emerald-400 font-bold">$20.000 COP</span>
+                      </div>
+                    </div>
+
+                    {/* BOTONES DE ACCIÓN PARA ENVIAR AL CLIENTE */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSendAdminQuoteWhatsApp(false)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4 fill-white" />
+                        <span>📲 Enviar por WhatsApp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyClientProposalUrl(true)}
+                        className="w-full bg-stone-900 hover:bg-stone-800 border border-amber-500/50 hover:border-amber-400 text-amber-300 hover:text-amber-200 font-bold text-xs py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                        title="Copia el link exclusivo para que el cliente lo abra en su celular"
+                      >
+                        <LinkIcon className="w-4 h-4 text-amber-400" />
+                        <span>🔗 Copiar Enlace Cliente</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyAdminQuoteText(false)}
+                        className="w-full bg-stone-900 hover:bg-stone-800 border border-stone-700 hover:border-stone-600 text-stone-200 font-bold text-xs py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <Copy className="w-4 h-4 text-stone-400" />
+                        <span>📋 Copiar Texto WhatsApp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyAdminQuoteText(true)}
+                        className="w-full bg-stone-900 hover:bg-stone-800 border border-stone-700 hover:border-stone-600 text-stone-200 font-bold text-xs py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer sm:col-span-2"
+                      >
+                        <FileText className="w-4 h-4 text-amber-400" />
+                        <span>📋 Copiar Catálogo Completo (WhatsApp)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleResetAdminQuote}
+                        className="w-full bg-stone-950 hover:bg-stone-900 border border-stone-800 text-stone-400 hover:text-stone-300 font-semibold text-xs py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>🔄 Limpiar</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* MODO 2: FORMULARIO DE EDICIÓN DE PRECIOS BASE Y COSTOS */}
+          {adminPriceTabMode === 'editor' && (
           <form onSubmit={handleSaveAllPrices} className="space-y-6">
             
             {/* GRID DE PAQUETES */}
@@ -8862,6 +9502,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </button>
             </div>
           </form>
+          )}
         </div>
       )}
 
