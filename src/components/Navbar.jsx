@@ -7,6 +7,13 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
   const navigateTo = (view) => {
     setCurrentView(view);
     setMobileMenuOpen(false);
+    if (typeof window !== 'undefined') {
+      if (view === 'packages') {
+        window.history.pushState(null, '', '/tarifas');
+      } else if (view === 'home') {
+        window.history.pushState(null, '', '/');
+      }
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 

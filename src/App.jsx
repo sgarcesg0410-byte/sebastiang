@@ -66,6 +66,15 @@ export default function App() {
       if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/' || hash === '#admin') {
         return 'admin';
       }
+      if (
+        path === '/tarifas' || path === '/tarifas/' ||
+        path === '/precios' || path === '/precios/' ||
+        path === '/paquetes' || path === '/paquetes/' ||
+        hash === '#tarifas' || hash === '#precios' || hash === '#paquetes' ||
+        urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes')
+      ) {
+        return 'packages';
+      }
     }
     return 'home';
   }); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt' | 'review'
@@ -82,17 +91,24 @@ export default function App() {
   });
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
+  const [selectedComboForBooking, setSelectedComboForBooking] = useState(null);
   const [selectedPhotoForBooking, setSelectedPhotoForBooking] = useState(null);
   const [selectedDateForBooking, setSelectedDateForBooking] = useState('');
 
-  // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin)
+  // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin y tarifas directas)
   const [showIntro, setShowIntro] = useState(() => {
     if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      const hash = window.location.hash || '';
       const urlParams = new URLSearchParams(window.location.search);
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-      if (window.location.pathname.startsWith('/galeria/') || window.location.pathname.startsWith('/calificar') || window.location.pathname.startsWith('/opiniones') || isStandalone || urlParams.get('mode') === 'admin' || urlParams.get('calificar')) {
-        return false;
-      }
+      const isPricingRoute = ['/tarifas', '/tarifas/', '/precios', '/precios/', '/paquetes', '/paquetes/'].includes(path) ||
+        hash.includes('tarifas') || hash.includes('precios') || hash.includes('paquetes') ||
+        urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes');
+
+      if (path.startsWith('/galeria/')) return false;
+      if (path.startsWith('/calificar') || path.startsWith('/opiniones') || urlParams.get('calificar')) return false;
+      if (isPricingRoute || isStandalone || urlParams.get('mode') === 'admin') return false;
     }
     return true;
   });
@@ -169,7 +185,7 @@ export default function App() {
     // Registrar visita en analítica en tiempo real
     trackPageVisit();
 
-    // Detectar si la URL contiene una ruta de galería tipo /galeria/token o privada /admin
+    // Detectar si la URL contiene una ruta de galería tipo /galeria/token o privada /admin o pública /tarifas
     const path = window.location.pathname;
     const urlParams = new URLSearchParams(window.location.search);
     if (path.startsWith('/galeria/')) {
@@ -182,6 +198,14 @@ export default function App() {
       setCurrentView('review');
     } else if (path === '/admin' || path === '/admin/' || urlParams.get('mode') === 'admin') {
       setCurrentView('admin');
+    } else if (
+      path === '/tarifas' || path === '/tarifas/' ||
+      path === '/precios' || path === '/precios/' ||
+      path === '/paquetes' || path === '/paquetes/' ||
+      window.location.hash === '#tarifas' || window.location.hash === '#precios' || window.location.hash === '#paquetes' ||
+      urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes')
+    ) {
+      setCurrentView('packages');
     }
 
     const handlePopState = () => {
@@ -198,6 +222,14 @@ export default function App() {
         setCurrentView('review');
       } else if (p === '/admin' || p === '/admin/' || params.get('mode') === 'admin') {
         setCurrentView('admin');
+      } else if (
+        p === '/tarifas' || p === '/tarifas/' ||
+        p === '/precios' || p === '/precios/' ||
+        p === '/paquetes' || p === '/paquetes/' ||
+        h === '#tarifas' || h === '#precios' || h === '#paquetes' ||
+        params.get('tarifas') || params.get('precios') || params.get('paquetes')
+      ) {
+        setCurrentView('packages');
       } else {
         setCurrentView('home');
       }
@@ -307,8 +339,9 @@ export default function App() {
     }
   };
 
-  const handleOpenBooking = (pkgOrPhoto = null) => {
+  const handleOpenBooking = (pkgOrPhoto = null, preselectedCombo = null) => {
     setSelectedDateForBooking('');
+    setSelectedComboForBooking(preselectedCombo || null);
     if (pkgOrPhoto && (pkgOrPhoto.url || pkgOrPhoto.category)) {
       setSelectedPhotoForBooking(pkgOrPhoto);
       setSelectedPackageForBooking(null);
@@ -318,6 +351,18 @@ export default function App() {
     }
     setIsBookingOpen(true);
   };
+
+  useEffect(() => {
+    if (currentView === 'packages') {
+      document.title = "Tarifas y Paquetes • Sebastian G Fotografía";
+    } else if (currentView === 'home') {
+      document.title = "Sebastian G • Fotografía & Edición Profesional | Cobertura Nacional";
+    } else if (currentView === 'admin') {
+      document.title = "Panel Administrativo • Sebastian G";
+    } else if (currentView === 'gallery') {
+      document.title = "Galería Privada • Sebastian G";
+    }
+  }, [currentView]);
 
   const handleReserveDate = (dateKey) => {
     setSelectedPackageForBooking(null);
@@ -354,6 +399,13 @@ export default function App() {
               setCurrentView('gallery');
             } else {
               setCurrentView(view);
+              if (typeof window !== 'undefined') {
+                if (view === 'packages') {
+                  window.history.pushState(null, '', '/tarifas');
+                } else if (view === 'home') {
+                  window.history.pushState(null, '', '/');
+                }
+              }
             }
           }}
           onOpenBooking={() => handleOpenBooking(null)}
@@ -377,6 +429,7 @@ export default function App() {
               <AboutSection
                 onNavigateToPackages={() => {
                   setCurrentView('packages');
+                  if (typeof window !== 'undefined') window.history.pushState(null, '', '/tarifas');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
                 onOpenBooking={(photo) => handleOpenBooking(photo)}
@@ -385,6 +438,7 @@ export default function App() {
                 onOpenBooking={() => handleOpenBooking(null)}
                 onNavigateToPackages={() => {
                   setCurrentView('packages');
+                  if (typeof window !== 'undefined') window.history.pushState(null, '', '/tarifas');
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
               />
@@ -395,11 +449,18 @@ export default function App() {
           )}
 
           {currentView === 'packages' && (
-            <div className="pt-8">
+            <div className="pt-2 sm:pt-6">
               <PackagesSection
                 packages={packages}
                 settings={settings}
-                onSelectPackage={(pkg) => handleOpenBooking(pkg)}
+                onSelectPackage={(pkg, combo) => handleOpenBooking(pkg, combo)}
+                onBackToHome={() => {
+                  setCurrentView('home');
+                  if (typeof window !== 'undefined') {
+                    window.history.pushState(null, '', '/');
+                  }
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
               />
             </div>
           )}
@@ -470,11 +531,13 @@ export default function App() {
           setIsBookingOpen(false);
           setSelectedPhotoForBooking(null);
           setSelectedPackageForBooking(null);
+          setSelectedComboForBooking(null);
         }}
         packages={packages}
         preselectedPackage={selectedPackageForBooking}
         preselectedPhoto={selectedPhotoForBooking}
         preselectedDate={selectedDateForBooking}
+        preselectedCombo={selectedComboForBooking}
         settings={settings}
       />
       )}

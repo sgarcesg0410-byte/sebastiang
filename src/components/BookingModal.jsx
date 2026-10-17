@@ -4,7 +4,7 @@ import confetti from 'canvas-confetti';
 import { createBooking, checkClientLoyalty, checkReferralCode, createWompiCheckout, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
 import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
 
-export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', settings = {} }) {
+export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', preselectedCombo = null, settings = {} }) {
   const scrollRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
   const paperSizes = getPaperPrintSizes(settings);
@@ -173,6 +173,18 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
       setFormData(prev => ({ ...prev, packageId: preselectedPackage.id }));
     }
   }, [preselectedPackage]);
+
+  useEffect(() => {
+    if (preselectedCombo) {
+      setFormData(prev => ({
+        ...prev,
+        packageId: preselectedCombo.packageId || (preselectedPackage ? preselectedPackage.id : prev.packageId),
+        printedSizes: preselectedCombo.printedSizes ? { ...preselectedCombo.printedSizes } : prev.printedSizes,
+        printedPhotosCount: preselectedCombo.printedPhotosCount !== undefined ? Number(preselectedCombo.printedPhotosCount) : prev.printedPhotosCount,
+        printedPhotos15x20Count: preselectedCombo.printedPhotos15x20Count !== undefined ? Number(preselectedCombo.printedPhotos15x20Count) : prev.printedPhotos15x20Count
+      }));
+    }
+  }, [preselectedCombo, preselectedPackage]);
 
   useEffect(() => {
     if (preselectedPhoto) {

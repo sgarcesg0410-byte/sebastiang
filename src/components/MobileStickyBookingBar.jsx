@@ -2,8 +2,8 @@ import React from 'react';
 import { Calendar, Sparkles, ArrowRight } from 'lucide-react';
 
 export default function MobileStickyBookingBar({ onOpenBooking, currentView }) {
-  // Solo se muestra en las vistas públicas principales (Home y Paquetes) y no en Admin o Galería privada
-  if (currentView !== 'home' && currentView !== 'packages') {
+  // Solo se muestra en la portada (Home); en Paquetes/Tarifas se utiliza la barra de cotización y WhatsApp especializada
+  if (currentView !== 'home') {
     return null;
   }
 
