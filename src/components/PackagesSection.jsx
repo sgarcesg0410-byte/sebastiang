@@ -9,22 +9,11 @@ import {
   Heart, 
   ShieldCheck, 
   UserCheck, 
-  Zap, 
   Maximize2, 
-  MessageCircle, 
-  Copy, 
-  Share2, 
-  Calendar, 
-  Plus, 
-  Minus, 
-  RotateCcw, 
   HelpCircle, 
-  ExternalLink, 
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clock,
-  Layers,
   Award
 } from 'lucide-react';
 import { getPaperPrintSizes, getRetabloSizes } from '../services/api';
@@ -35,9 +24,6 @@ export default function PackagesSection({
   onBackToHome,
   settings = {} 
 }) {
-  const photographerPhone = settings.photographerWhatsApp || '+573244725167';
-  const photographerName = settings.photographerName || 'Sebastian G';
-
   const formatPrice = (price) => {
     return Number(price || 0).toLocaleString('es-CO');
   };
@@ -45,7 +31,7 @@ export default function PackagesSection({
   const paperSizes = getPaperPrintSizes(settings);
   const retabloSizes = getRetabloSizes(settings);
 
-  // Estados interactivos para el cotizador / armador de combo con lectura de parámetros de URL
+  // Lectura de parámetro opcional de cliente para propuestas personalizadas
   const [clientName] = useState(() => {
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search);
@@ -54,165 +40,8 @@ export default function PackagesSection({
     return '';
   });
 
-  const [selectedPackageId, setSelectedPackageId] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const p = new URLSearchParams(window.location.search);
-      const pkgParam = p.get('pkg');
-      if (pkgParam) return pkgParam;
-    }
-    return 'pkg-8fotos';
-  });
-
-  const [retabloCounts, setRetabloCounts] = useState(() => {
-    const initial = {
-      '20x30': 0, '30x45': 0, '40x50': 0, '50x70': 0, '70x50': 0, '70x100': 0
-    };
-    if (typeof window !== 'undefined') {
-      const p = new URLSearchParams(window.location.search);
-      const retParam = p.get('retablos');
-      if (retParam) {
-        retParam.split(',').forEach(item => {
-          const [size, qty] = item.split(':');
-          if (size && initial[size] !== undefined) {
-            initial[size] = Math.max(0, parseInt(qty, 10) || 0);
-          }
-        });
-      }
-    }
-    return initial;
-  });
-
-  const [paperCounts, setPaperCounts] = useState(() => {
-    const initial = { '10x15': 0, '15x20': 0 };
-    if (typeof window !== 'undefined') {
-      const p = new URLSearchParams(window.location.search);
-      const paperParam = p.get('papel');
-      if (paperParam) {
-        paperParam.split(',').forEach(item => {
-          const [size, qty] = item.split(':');
-          if (size && initial[size] !== undefined) {
-            initial[size] = Math.max(0, parseInt(qty, 10) || 0);
-          }
-        });
-      }
-    }
-    return initial;
-  });
-
   const [activeCategoryTab, setActiveCategoryTab] = useState('all'); // 'all' | 'packages' | 'retablos' | 'paper'
   const [expandedFaq, setExpandedFaq] = useState(null);
-
-  // Cálculos en tiempo real
-  const selectedPackage = packages.find(p => p.id === selectedPackageId);
-  const packagePrice = selectedPackage ? Number(selectedPackage.price || 0) : 0;
-
-  const retablosTotal = retabloSizes.reduce((acc, r) => {
-    const q = Number(retabloCounts[r.id] || 0);
-    return acc + (q * Number(r.price || 0));
-  }, 0);
-  const retablosCount = retabloSizes.reduce((acc, r) => acc + Number(retabloCounts[r.id] || 0), 0);
-
-  const paperTotal = paperSizes.reduce((acc, p) => {
-    const q = Number(paperCounts[p.id] || 0);
-    return acc + (q * Number(p.price || 0));
-  }, 0);
-  const paperCount = paperSizes.reduce((acc, p) => acc + Number(paperCounts[p.id] || 0), 0);
-
-  const grandTotal = packagePrice + retablosTotal + paperTotal;
-  const hasAnySelection = Boolean(selectedPackage || retablosCount > 0 || paperCount > 0);
-  const totalItemCount = (selectedPackage ? 1 : 0) + retablosCount + paperCount;
-
-  // Manejo de cantidades de retablos
-  const updateRetabloQty = (id, delta) => {
-    setRetabloCounts(prev => ({
-      ...prev,
-      [id]: Math.max(0, (Number(prev[id] || 0) + delta))
-    }));
-  };
-
-  // Manejo de cantidades de fotos en papel
-  const updatePaperQty = (id, delta) => {
-    setPaperCounts(prev => ({
-      ...prev,
-      [id]: Math.max(0, (Number(prev[id] || 0) + delta))
-    }));
-  };
-
-  // Reiniciar combo
-  const handleResetCombo = () => {
-    setSelectedPackageId(null);
-    setRetabloCounts({
-      '20x30': 0,
-      '30x45': 0,
-      '40x50': 0,
-      '50x70': 0,
-      '70x50': 0,
-      '70x100': 0
-    });
-    setPaperCounts({
-      '10x15': 0,
-      '15x20': 0
-    });
-  };
-
-  // Generador de mensaje pre-armado para WhatsApp
-  const generateWhatsAppUrl = () => {
-    const cleanPhone = photographerPhone.replace(/\D/g, '');
-    const clientGreeting = clientName ? `Soy ${clientName}. ` : '';
-    if (!hasAnySelection) {
-      const defaultMsg = `¡Hola ${photographerName}! 👋 ${clientGreeting}Estuve revisando la propuesta de paquetes, cuadros en retablo y fotos impresas.\n\nMe gustaría consultar disponibilidad para una sesión fotográfica. ¿Qué fechas tienes disponibles?`;
-      return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(defaultMsg)}`;
-    }
-
-    let msg = `¡Hola ${photographerName}! 👋 ${clientGreeting}Estuve revisando la propuesta y me gustaría cotizar / apartar el siguiente combo:\n\n`;
-
-    if (selectedPackage) {
-      msg += `📸 *PAQUETE DIGITAL:*\n`;
-      msg += `• ${selectedPackage.photoCount} Fotos Digitales (+${selectedPackage.freePhotos || 2} GRATIS - Total: ${selectedPackage.totalPhotos || (selectedPackage.photoCount + 2)} fotos)\n`;
-      msg += `• Tarifa: $${formatPrice(selectedPackage.price)} COP\n`;
-      msg += `• Duración: ${selectedPackage.duration || 'Flexible'}\n\n`;
-    }
-
-    const chosenRetablos = retabloSizes.filter(r => (retabloCounts[r.id] || 0) > 0);
-    if (chosenRetablos.length > 0) {
-      msg += `🪵 *CUADROS EN RETABLO (Madera + UV):*\n`;
-      chosenRetablos.forEach(r => {
-        const q = retabloCounts[r.id];
-        const sub = q * r.price;
-        msg += `• ${q}x Retablo ${r.dimensions} = $${formatPrice(sub)} COP ($${formatPrice(r.price)} c/u)\n`;
-      });
-      msg += `\n`;
-    }
-
-    const chosenPaper = paperSizes.filter(p => (paperCounts[p.id] || 0) > 0);
-    if (chosenPaper.length > 0) {
-      msg += `🖼️ *FOTOS IMPRESAS EN PAPEL DE LABORATORIO:*\n`;
-      chosenPaper.forEach(p => {
-        const q = paperCounts[p.id];
-        const sub = q * p.price;
-        msg += `• ${q}x Foto en papel ${p.dimensions} = $${formatPrice(sub)} COP ($${formatPrice(p.price)} c/u)\n`;
-      });
-      msg += `\n`;
-    }
-
-    msg += `💰 *TOTAL ESTIMADO:* $${formatPrice(grandTotal)} COP\n\n`;
-    msg += `¿Tienes disponibilidad de fechas para apartar esta sesión? ¡Muchas gracias!`;
-
-    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
-  };
-
-  // Iniciar reserva en línea con el combo seleccionado
-  const handleBookWithCombo = () => {
-    if (onSelectPackage) {
-      const combo = {
-        packageId: selectedPackage?.id || packages[0]?.id,
-        printedSizes: { ...retabloCounts },
-        printedPhotosCount: paperCounts['10x15'] || 0,
-        printedPhotos15x20Count: paperCounts['15x20'] || 0
-      };
-      onSelectPackage(selectedPackage || packages[0], combo);
-    }
-  };
 
   const faqList = [
     {
@@ -242,7 +71,7 @@ export default function PackagesSection({
   ];
 
   return (
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 relative pb-32">
+    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 relative pb-16">
       
       {/* CABECERA PRINCIPAL CON ESTILO DE LUJO */}
       <div className="text-center max-w-3xl mx-auto mb-10">
@@ -267,7 +96,7 @@ export default function PackagesSection({
         </p>
 
         <p className="text-stone-300 text-xs sm:text-sm font-light max-w-2xl mx-auto leading-relaxed">
-          Encuentra en este único enlace nuestros <strong>paquetes de fotos digitales</strong>, <strong>cuadros en retablo de madera</strong> y <strong>fotos impresas de laboratorio</strong>. Puedes armar tu propio combo personalizado o cotizar directo a mi WhatsApp con un solo toque.
+          Encuentra nuestros <strong>paquetes de fotos digitales</strong>, <strong>cuadros en retablo de madera</strong> y <strong>fotos impresas de laboratorio químico</strong>. Elige el paquete que más te guste para agendar tu fecha en línea.
         </p>
       </div>
 
@@ -321,46 +150,43 @@ export default function PackagesSection({
           }`}
         >
           <Printer className="w-3.5 h-3.5" />
-          <span>🖼️ Fotos en Papel ({paperSizes.length})</span>
+          <span>🖼️ Fotos Impresas ({paperSizes.length})</span>
         </button>
       </div>
 
-      {/* 1. SECCIÓN: PAQUETES DE FOTOS DIGITALES */}
+      {/* 1. SECCIÓN: PAQUETES DIGITALES */}
       {(activeCategoryTab === 'all' || activeCategoryTab === 'packages') && (
         <div className="mb-16">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-6 pb-3 border-b border-stone-800">
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] font-bold uppercase tracking-wider mb-2">
                 <Image className="w-3.5 h-3.5" />
-                <span>Paso 1: Selecciona tu Paquete de Fotos</span>
+                <span>Paso 1: Paquetes Digitales</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white">
-                Paquetes de Fotografía Digital
+                Elige tu Paquete de Fotos
               </h2>
             </div>
             <p className="text-xs text-stone-400 max-w-sm sm:text-right">
-              Toca el paquete deseado para marcarlo en tu combo. Todos incluyen edición profesional y entrega en alta calidad.
+              Todos los paquetes incluyen galería privada online, descarga en alta resolución y retoque profesional.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {packages.map((pkg) => {
-              const isSelected = selectedPackageId === pkg.id;
-              const isPopular = Boolean(pkg.popular);
+              const isPopular = pkg.id === 'pkg-12fotos' || pkg.photoCount === 12;
 
               return (
                 <div
                   key={pkg.id}
-                  onClick={() => setSelectedPackageId(isSelected ? null : pkg.id)}
+                  onClick={() => onSelectPackage ? onSelectPackage(pkg) : null}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedPackageId(isSelected ? null : pkg.id); }}
+                  onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onSelectPackage) onSelectPackage(pkg); }}
                   className={`group relative rounded-3xl p-6 flex flex-col justify-between cursor-pointer select-none touch-manipulation transition-all duration-300 ease-out hover:-translate-y-2 ${
-                    isSelected
-                      ? 'bg-gradient-to-b from-stone-900 via-stone-900 to-amber-950/40 border-2 border-amber-400 ring-4 ring-amber-400/20 shadow-[0_12px_40px_rgba(245,158,11,0.3)]'
-                      : isPopular
-                        ? 'bg-gradient-to-b from-stone-900 via-stone-900 to-stone-950 border-2 border-amber-400/60 shadow-[0_8px_30px_rgba(245,158,11,0.15)] hover:border-amber-400'
-                        : 'bg-stone-900/90 border border-stone-800 hover:border-stone-600 shadow-xl'
+                    isPopular
+                      ? 'bg-gradient-to-b from-stone-900 via-stone-900 to-stone-950 border-2 border-amber-400/60 shadow-[0_8px_30px_rgba(245,158,11,0.15)] hover:border-amber-400'
+                      : 'bg-stone-900/90 border border-stone-800 hover:border-stone-600 shadow-xl'
                   }`}
                 >
                   {/* Badge de Popular */}
@@ -377,9 +203,7 @@ export default function PackagesSection({
                     {/* Encabezado del paquete */}
                     <div className="mb-4 pt-1 flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-                          isSelected ? 'bg-amber-400 text-stone-950 shadow-md shadow-amber-400/30' : 'bg-amber-500/10 border border-amber-500/30 text-amber-400'
-                        }`}>
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center transition-all bg-amber-500/10 border border-amber-500/30 text-amber-400">
                           <Image className="w-5 h-5" />
                         </div>
                         <div>
@@ -398,9 +222,7 @@ export default function PackagesSection({
                     </div>
 
                     {/* Total de fotos reales recibidas */}
-                    <div className={`p-2.5 rounded-xl border text-center mb-5 transition-colors ${
-                      isSelected ? 'bg-amber-500/15 border-amber-400/50' : 'bg-stone-950/80 border-stone-800'
-                    }`}>
+                    <div className="p-2.5 rounded-xl border text-center mb-5 transition-colors bg-stone-950/80 border-stone-800">
                       <span className="text-xs text-stone-300">
                         Recibes un total de <strong className="text-amber-400 text-sm font-extrabold">{pkg.totalPhotos || (pkg.photoCount + 2)} fotos</strong>
                       </span>
@@ -439,33 +261,22 @@ export default function PackagesSection({
                     </div>
                   </div>
 
-                  {/* Botón de selección interactivo */}
+                  {/* Botón para reservar paquete */}
                   <div className="relative z-10 pt-2">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedPackageId(isSelected ? null : pkg.id);
+                        if (onSelectPackage) onSelectPackage(pkg);
                       }}
-                      className={`w-full py-3 px-4 rounded-xl font-extrabold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-amber-400 text-stone-950 shadow-lg shadow-amber-400/40 ring-2 ring-amber-300'
-                          : isPopular
-                            ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-md shadow-amber-500/20 hover:from-amber-400 hover:to-amber-300'
-                            : 'bg-stone-800 text-white border border-stone-700 hover:border-amber-400 hover:text-amber-300'
+                      className={`w-full py-3.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all duration-300 cursor-pointer ${
+                        isPopular
+                          ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 hover:from-amber-400 hover:to-amber-300 hover:shadow-amber-500/40'
+                          : 'bg-stone-800 text-white border border-stone-700 hover:border-amber-400 hover:text-amber-300'
                       }`}
                     >
-                      {isSelected ? (
-                        <>
-                          <CheckCircle2 className="w-4 h-4 fill-stone-950 text-amber-400" />
-                          <span>✓ Paquete Seleccionado</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Seleccionar Paquete</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </>
-                      )}
+                      <span>Elegir Paquete</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -482,7 +293,7 @@ export default function PackagesSection({
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] font-bold uppercase tracking-wider mb-2">
                 <Maximize2 className="w-3.5 h-3.5" />
-                <span>Paso 2: Añade Cuadros en Retablo (Madera + UV)</span>
+                <span>Madera de Lujo • Listos para Colgar</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white">
                 Cuadros en Retablo de Madera
@@ -494,91 +305,52 @@ export default function PackagesSection({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {retabloSizes.map((item) => {
-              const count = Number(retabloCounts[item.id] || 0);
-              const isAdded = count > 0;
-
-              return (
-                <div
-                  key={item.id}
-                  className={`group relative rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 ${
-                    isAdded
-                      ? 'bg-stone-900 border-2 border-amber-400 ring-2 ring-amber-400/20 shadow-[0_8px_25px_rgba(245,158,11,0.2)]'
-                      : 'bg-stone-900/80 hover:bg-stone-900 border border-amber-500/20 hover:border-amber-400/60 shadow-lg'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                        {item.tag}
-                      </span>
-                      <div className="flex items-center gap-1 text-stone-400 text-[11px] font-mono">
-                        <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Madera UV</span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1 mb-3">
-                      <h3 className="text-2xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
-                        {item.dimensions}
-                      </h3>
-                      <p className="text-xs text-stone-400 leading-snug">
-                        {item.desc}
-                      </p>
-                    </div>
-
-                    <div className="py-2 flex items-baseline justify-between border-t border-stone-800">
-                      <div>
-                        <span className="text-2xl font-black font-mono text-amber-400">
-                          ${formatPrice(item.price)}
-                        </span>
-                        <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / Cuadro</span>
-                      </div>
-                      {isAdded && (
-                        <span className="text-xs font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/30">
-                          Subtotal: ${formatPrice(count * item.price)}
-                        </span>
-                      )}
-                    </div>
+            {retabloSizes.map((item) => (
+              <div
+                key={item.id}
+                onClick={() => onSelectPackage ? onSelectPackage(packages[0] || null) : null}
+                className="group relative bg-stone-900/90 hover:bg-stone-900 border border-amber-500/20 hover:border-amber-400/80 rounded-2xl p-5 flex flex-col justify-between shadow-lg hover:shadow-xl hover:shadow-amber-500/15 hover:-translate-y-1.5 transition-all duration-300 cursor-pointer"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 group-hover:bg-amber-400 group-hover:text-stone-950 transition-colors">
+                      {item.tag}
+                    </span>
+                    <Maximize2 className="w-4 h-4 text-amber-500/60 group-hover:text-amber-400 transition-colors" />
                   </div>
 
-                  {/* Controles interactivos de cantidad */}
-                  <div className="pt-3 border-t border-stone-800 flex items-center justify-between gap-3">
-                    <span className="text-xs font-semibold text-stone-300">
-                      Cantidad:
-                    </span>
-                    <div className="flex items-center gap-2 bg-stone-950 px-2 py-1 rounded-xl border border-stone-700">
-                      <button
-                        type="button"
-                        onClick={() => updateRetabloQty(item.id, -1)}
-                        disabled={count <= 0}
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm transition-colors cursor-pointer ${
-                          count > 0 ? 'bg-stone-800 text-stone-200 hover:bg-stone-700' : 'text-stone-600 cursor-not-allowed'
-                        }`}
-                        aria-label={`Restar ${item.dimensions}`}
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="w-8 text-center font-mono font-bold text-sm text-white">
-                        {count}
+                  <div className="space-y-1 mb-3">
+                    <h3 className="text-2xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
+                      {item.dimensions}
+                    </h3>
+                    <p className="text-xs text-stone-400 leading-snug">
+                      {item.desc}
+                    </p>
+                  </div>
+
+                  <div className="py-2 flex items-baseline justify-between border-t border-stone-800">
+                    <div>
+                      <span className="text-2xl font-black font-mono text-amber-400 group-hover:text-amber-300 transition-colors">
+                        ${formatPrice(item.price)}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => updateRetabloQty(item.id, 1)}
-                        className="w-7 h-7 rounded-lg bg-amber-500 text-stone-950 hover:bg-amber-400 flex items-center justify-center font-bold text-sm transition-colors cursor-pointer shadow-sm"
-                        aria-label={`Sumar ${item.dimensions}`}
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                      </button>
+                      <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / Cuadro</span>
                     </div>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="pt-3 border-t border-stone-800/80 flex items-center justify-between">
+                  <span className="text-xs text-stone-400 font-medium">Madera maciza + UV</span>
+                  <span className="text-xs font-bold text-amber-400/90 group-hover:text-amber-300 flex items-center gap-1">
+                    <span>Pedir Retablo</span>
+                    <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Banner de Calidad de los Retablos */}
-          <div className="mt-6 p-4 rounded-2xl bg-stone-900/60 border border-stone-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-stone-300">
+          <div className="mt-6 p-4 sm:p-5 rounded-2xl bg-stone-900/60 border border-stone-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-stone-300">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
                 <Award className="w-5 h-5" />
@@ -592,6 +364,13 @@ export default function PackagesSection({
                 </p>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => onSelectPackage ? onSelectPackage(packages[0] || null) : null}
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-stone-950 font-black text-xs uppercase tracking-wider shrink-0 hover:from-amber-300 hover:to-amber-400 transition-all shadow-md active:scale-95 cursor-pointer"
+            >
+              Agendar con Retablos
+            </button>
           </div>
         </div>
       )}
@@ -603,10 +382,10 @@ export default function PackagesSection({
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] font-bold uppercase tracking-wider mb-2">
                 <Printer className="w-3.5 h-3.5" />
-                <span>Paso 3: Fotos Impresas en Papel Fotográfico</span>
+                <span>Laboratorio Químico Profesional</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white">
-                Impresiones de Laboratorio Químico
+                Impresiones en Papel Fotográfico
               </h2>
             </div>
             <p className="text-xs text-stone-400 max-w-sm sm:text-right">
@@ -615,188 +394,53 @@ export default function PackagesSection({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 max-w-3xl mx-auto gap-5">
-            {paperSizes.map((item) => {
-              const count = Number(paperCounts[item.id] || 0);
-              const isAdded = count > 0;
-
-              return (
-                <div
-                  key={item.id}
-                  className={`group relative rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 ${
-                    isAdded
-                      ? 'bg-stone-900 border-2 border-amber-400 ring-2 ring-amber-400/20 shadow-[0_8px_25px_rgba(245,158,11,0.2)]'
-                      : 'bg-stone-900/80 hover:bg-stone-900 border border-stone-800 hover:border-amber-400/60 shadow-lg'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-stone-800 text-stone-200 border border-stone-700">
-                        {item.tag}
-                      </span>
-                      <Printer className="w-4 h-4 text-stone-500 group-hover:text-amber-400 transition-colors" />
-                    </div>
-
-                    <div className="space-y-1 mb-3">
-                      <h3 className="text-2xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
-                        {item.dimensions}
-                      </h3>
-                      <p className="text-xs text-stone-400 leading-snug">
-                        {item.desc}
-                      </p>
-                    </div>
-
-                    <div className="py-2 flex items-baseline justify-between border-t border-stone-800">
-                      <div>
-                        <span className="text-2xl font-black font-mono text-amber-400">
-                          ${formatPrice(item.price)}
-                        </span>
-                        <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / Foto en papel</span>
-                      </div>
-                      {isAdded && (
-                        <span className="text-xs font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/30">
-                          Subtotal: ${formatPrice(count * item.price)}
-                        </span>
-                      )}
-                    </div>
+            {paperSizes.map((item) => (
+              <div
+                key={item.id}
+                onClick={() => onSelectPackage ? onSelectPackage(packages[0] || null) : null}
+                className="group relative bg-stone-900/90 hover:bg-stone-900 border border-amber-500/20 hover:border-amber-400/80 rounded-2xl p-5 flex flex-col justify-between shadow-lg hover:shadow-xl hover:shadow-amber-500/15 hover:-translate-y-1.5 transition-all duration-300 cursor-pointer"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 group-hover:bg-amber-400 group-hover:text-stone-950 transition-colors">
+                      {item.tag}
+                    </span>
+                    <Printer className="w-4 h-4 text-amber-500/60 group-hover:text-amber-400 transition-colors" />
                   </div>
 
-                  {/* Controles interactivos de cantidad */}
-                  <div className="pt-3 border-t border-stone-800 flex items-center justify-between gap-3">
-                    <span className="text-xs font-semibold text-stone-300">
-                      Cantidad de copias:
-                    </span>
-                    <div className="flex items-center gap-2 bg-stone-950 px-2 py-1 rounded-xl border border-stone-700">
-                      <button
-                        type="button"
-                        onClick={() => updatePaperQty(item.id, -1)}
-                        disabled={count <= 0}
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm transition-colors cursor-pointer ${
-                          count > 0 ? 'bg-stone-800 text-stone-200 hover:bg-stone-700' : 'text-stone-600 cursor-not-allowed'
-                        }`}
-                        aria-label={`Restar ${item.dimensions}`}
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="w-8 text-center font-mono font-bold text-sm text-white">
-                        {count}
+                  <div className="space-y-1 mb-3">
+                    <h3 className="text-2xl font-bold font-mono text-white group-hover:text-amber-300 transition-colors">
+                      {item.dimensions}
+                    </h3>
+                    <p className="text-xs text-stone-400 leading-snug">
+                      {item.desc}
+                    </p>
+                  </div>
+
+                  <div className="py-2 flex items-baseline justify-between border-t border-stone-800">
+                    <div>
+                      <span className="text-2xl font-black font-mono text-amber-400 group-hover:text-amber-300 transition-colors">
+                        ${formatPrice(item.price)}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => updatePaperQty(item.id, 1)}
-                        className="w-7 h-7 rounded-lg bg-amber-500 text-stone-950 hover:bg-amber-400 flex items-center justify-center font-bold text-sm transition-colors cursor-pointer shadow-sm"
-                        aria-label={`Sumar ${item.dimensions}`}
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                      </button>
+                      <span className="text-[10px] text-stone-500 uppercase block font-medium">COP / Foto en papel</span>
                     </div>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="pt-3 border-t border-stone-800/80 flex items-center justify-between">
+                  <span className="text-xs text-stone-400 font-medium">Papel fotográfico 300 DPI</span>
+                  <span className="text-xs font-bold text-amber-400/90 group-hover:text-amber-300 flex items-center gap-1">
+                    <span>Pedir Foto Impresa</span>
+                    <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* 4. PANEL RESUMEN DEL COMBO Y COTIZADOR DIRECTO */}
-      <div className="mb-16 p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-stone-900 via-stone-900 to-stone-950 border-2 border-amber-500/40 shadow-2xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Resumen de tu Cotización en Vivo</span>
-            </div>
-
-            <h3 className="text-2xl sm:text-3xl font-serif font-bold text-white">
-              ¿Listo para consultar disponibilidad o apartar?
-            </h3>
-
-            {/* Desglose de lo seleccionado */}
-            <div className="space-y-1.5 text-xs sm:text-sm text-stone-300 bg-stone-950/70 p-4 rounded-2xl border border-stone-800">
-              {selectedPackage ? (
-                <div className="flex items-center justify-between font-medium">
-                  <span className="flex items-center gap-1.5 text-stone-200">
-                    <Image className="w-4 h-4 text-amber-400" />
-                    Paquete: {selectedPackage.photoCount} Fotos (+2 Gratis = {selectedPackage.totalPhotos || (selectedPackage.photoCount + 2)})
-                  </span>
-                  <span className="font-mono font-bold text-white">${formatPrice(selectedPackage.price)} COP</span>
-                </div>
-              ) : (
-                <div className="text-stone-500 italic">
-                  • Sin paquete digital marcado (puedes cotizar solo retablos o impresiones).
-                </div>
-              )}
-
-              {retablosCount > 0 && (
-                <div className="flex items-center justify-between font-medium">
-                  <span className="flex items-center gap-1.5 text-stone-200">
-                    <Maximize2 className="w-4 h-4 text-amber-400" />
-                    {retablosCount}x {retablosCount === 1 ? 'Cuadro en Retablo' : 'Cuadros en Retablo'}
-                  </span>
-                  <span className="font-mono font-bold text-white">${formatPrice(retablosTotal)} COP</span>
-                </div>
-              )}
-
-              {paperCount > 0 && (
-                <div className="flex items-center justify-between font-medium">
-                  <span className="flex items-center gap-1.5 text-stone-200">
-                    <Printer className="w-4 h-4 text-amber-400" />
-                    {paperCount}x {paperCount === 1 ? 'Foto Impresa en Papel' : 'Fotos Impresas en Papel'}
-                  </span>
-                  <span className="font-mono font-bold text-white">${formatPrice(paperTotal)} COP</span>
-                </div>
-              )}
-
-              <div className="pt-2 mt-2 border-t border-stone-800 flex items-center justify-between text-base sm:text-lg font-bold">
-                <span className="text-amber-400">Total Estimado del Combo:</span>
-                <span className="text-2xl sm:text-3xl font-mono font-extrabold text-white">
-                  ${formatPrice(grandTotal)} <span className="text-xs text-stone-400 font-sans font-normal">COP</span>
-                </span>
-              </div>
-            </div>
-
-            {hasAnySelection && (
-              <button
-                type="button"
-                onClick={handleResetCombo}
-                className="inline-flex items-center gap-1.5 text-xs text-stone-400 hover:text-stone-200 transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span>Reiniciar selección y empezar de nuevo</span>
-              </button>
-            )}
-          </div>
-
-          {/* Botones de Acción */}
-          <div className="flex flex-col gap-3 min-w-[280px]">
-            <a
-              href={generateWhatsAppUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-stone-950 font-black text-sm uppercase tracking-wider flex items-center justify-center gap-2.5 shadow-xl shadow-emerald-500/25 active:scale-98 transition-all cursor-pointer"
-            >
-              <MessageCircle className="w-5 h-5 fill-stone-950" />
-              <span>Enviar Cotización a WhatsApp</span>
-            </a>
-
-            <button
-              type="button"
-              onClick={handleBookWithCombo}
-              className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-stone-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-98 transition-all cursor-pointer"
-            >
-              <Calendar className="w-4 h-4 text-stone-950" />
-              <span>Agendar Fecha en Línea</span>
-            </button>
-
-            <p className="text-[11px] text-stone-400 text-center">
-              Anticipo de solo $20.000 COP para apartar fecha. Saldo restante el día de la sesión.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* 5. 4 PILARES Y GARANTÍAS DE CALIDAD */}
+      {/* 4. PILARES Y GARANTÍAS DE CALIDAD */}
       <div className="mb-16 grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
         <div className="bg-stone-900/60 hover:bg-stone-900 border border-stone-800 hover:border-amber-500/50 rounded-2xl p-4 flex flex-col items-center transition-all cursor-default">
           <Sparkles className="w-6 h-6 text-amber-400 mb-2" />
@@ -823,7 +467,7 @@ export default function PackagesSection({
         </div>
       </div>
 
-      {/* 6. SECCIÓN DE PREGUNTAS FRECUENTES (FAQ) */}
+      {/* 5. SECCIÓN DE PREGUNTAS FRECUENTES (FAQ) */}
       <div className="max-w-3xl mx-auto">
         <div className="text-center mb-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-stone-900 border border-stone-800 text-stone-300 text-xs font-semibold mb-2">
@@ -866,45 +510,6 @@ export default function PackagesSection({
           })}
         </div>
       </div>
-
-      {/* BARRA FLOTANTE STICKY INFERIOR PARA MÓVILES (PERMITE COTIZAR AL INSTANTE MIENTRAS SE HACE SCROLL) */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-stone-950/95 backdrop-blur-md border-t border-stone-800/90 p-3 sm:p-4 shadow-2xl block lg:hidden">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
-              {totalItemCount > 0 ? `${totalItemCount} ítems en tu combo` : 'Total Estimado'}
-            </span>
-            <div className="flex items-baseline gap-1">
-              <span className="text-xl font-black font-mono text-white">
-                ${formatPrice(grandTotal)}
-              </span>
-              <span className="text-[10px] font-bold text-stone-400">COP</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <a
-              href={generateWhatsAppUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-stone-950 font-black text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 active:scale-95 cursor-pointer"
-            >
-              <MessageCircle className="w-4 h-4 fill-stone-950" />
-              <span>WhatsApp</span>
-            </a>
-
-            <button
-              type="button"
-              onClick={handleBookWithCombo}
-              className="py-2.5 px-3 rounded-xl bg-amber-500 text-stone-950 font-black text-xs uppercase tracking-wider flex items-center gap-1 shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer"
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>Agendar</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
     </section>
   );
 }
