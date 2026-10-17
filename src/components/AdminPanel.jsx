@@ -1735,7 +1735,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const getBookingConfirmationPlainText = (b, customNotes = '', chosenLine = 'line1') => {
+  const getBookingConfirmationPlainText = (b, customNotes = '', chosenLine = 'line1', paidAmount = 0, paymentMethod = 'Nequi') => {
     if (!b) return '';
     const rawName = (b.clientName || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
