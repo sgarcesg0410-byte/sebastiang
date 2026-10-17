@@ -661,7 +661,19 @@ app.get('/api/catalog', async (req, res) => {
       console.warn('⚠️ [MongoDB] Error cargando catálogo:', eMongo?.message || eMongo);
     }
   }
-  res.json(runtimeDB.catalog || []);
+  const cleanCatalog = (runtimeDB.catalog || []).filter(item =>
+    item &&
+    item.category !== 'session_data' &&
+    item.category !== 'vip_client' &&
+    !item.category?.endsWith('_data') &&
+    !item.id?.startsWith('system_') &&
+    !item.id?.startsWith('book-') &&
+    !item.id?.startsWith('pay-') &&
+    !item.id?.startsWith('rev-') &&
+    !item.id?.startsWith('sess-') &&
+    !item.id?.startsWith('vip-')
+  );
+  res.json(cleanCatalog);
 });
 
 app.get('/api/packages', async (req, res) => {
@@ -680,7 +692,19 @@ app.get('/api/packages', async (req, res) => {
 });
 
 
-app.get('/api/admin/wallets', requireAdminAuth, (req, res) => {
+app.get('/api/admin/wallets', requireAdminAuth, async (req, res) => {
+  if (isMongoConfigured() && (!runtimeDB.walletBalances || !runtimeDB._walletsLoadedFromMongo)) {
+    try {
+      const doc = await findMongoDoc('settings', { id: 'wallet_balances' });
+      if (doc) {
+        const { _id, id, ...safe } = doc;
+        runtimeDB.walletBalances = { ...runtimeDB.walletBalances, ...safe };
+        runtimeDB._walletsLoadedFromMongo = true;
+      }
+    } catch (eMongo) {
+      console.warn('⚠️ [MongoDB] Error cargando wallets:', eMongo?.message || eMongo);
+    }
+  }
   res.json(runtimeDB.walletBalances || { nequi: 0, daviplata: 0, dale: 0 });
 });
 
@@ -1893,13 +1917,81 @@ app.get('/api/payments/status/:reference', async (req, res) => {
   });
 });
 
-app.patch('/api/admin/payments/:id', (req, res) => {
+app.patch('/api/admin/payments/:id', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  const payment = (runtimeDB.payments || []).find(p => p.id === id);
+  const cleanId = String(id);
+  const supaId = cleanId.startsWith('pay-') ? cleanId : `pay-${cleanId}`;
+
+  let payment = (runtimeDB.payments || []).find(p => p.id === cleanId || p.id === supaId);
+
+  if (!payment && isMongoConfigured()) {
+    try {
+      const doc = await findMongoDoc('payments', { $or: [{ id: cleanId }, { id: supaId }] });
+      if (doc) {
+        const { _id, ...cleanDoc } = doc;
+        payment = cleanDoc;
+        if (!runtimeDB.payments) runtimeDB.payments = [];
+        runtimeDB.payments.unshift(payment);
+      }
+    } catch (eMongo) {}
+  }
+
   if (!payment) return res.status(404).json({ error: 'Pago no encontrado.' });
   payment.status = status;
+
+  if (isMongoConfigured()) {
+    try {
+      await upsertMongoDoc('payments', { id: payment.id }, payment);
+    } catch (eMongo) {
+      console.warn('⚠️ [MongoDB] Error actualizando estado de pago:', eMongo?.message || eMongo);
+    }
+  }
+
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(payment.id.startsWith('pay-') ? payment.id : `pay-${payment.id}`)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_REST_KEY,
+          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ url: JSON.stringify(payment) })
+      });
+    } catch (e) {}
+  }
+
   res.json({ success: true, payment });
+});
+
+app.delete('/api/admin/payments/:id', async (req, res) => {
+  const { id } = req.params;
+  const cleanId = String(id);
+  const supaId = cleanId.startsWith('pay-') ? cleanId : `pay-${cleanId}`;
+  runtimeDB.payments = (runtimeDB.payments || []).filter(p => p.id !== cleanId && p.id !== supaId);
+
+  if (isMongoConfigured()) {
+    try {
+      await deleteMongoDoc('payments', { $or: [{ id: cleanId }, { id: supaId }, { supaId }] });
+    } catch (eMongo) {
+      console.warn('⚠️ [MongoDB] Error eliminando pago:', eMongo?.message || eMongo);
+    }
+  }
+
+  if (SUPABASE_REST_KEY) {
+    try {
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(cleanId)}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
+      });
+    } catch (e) {}
+  }
+  res.json({ success: true, id: cleanId });
 });
 
 app.get('/api/admin/sessions', async (req, res) => {
@@ -2610,8 +2702,8 @@ app.all('/api/bot-webhook', async (req, res) => {
 // El navegador ya no escribe directo en Supabase con la clave publica: manda la
 // operacion aqui, con su sesion de administrador, y el servidor la ejecuta con
 // service_role. Lista blanca estricta de tablas y operaciones.
-const DB_ALLOWED_TABLES = ['catalog', 'bookings', 'sessions', 'payments', 'reviews', 'system_config'];
-const DB_ALLOWED_OPS = ['upsert', 'insert', 'update', 'delete'];
+const DB_ALLOWED_TABLES = ['catalog', 'bookings', 'sessions', 'payments', 'reviews', 'system_config', 'settings', 'packages', 'vip_clients'];
+const DB_ALLOWED_OPS = ['upsert', 'insert', 'update', 'delete', 'select'];
 
 app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
   const { table, op, payload, match } = req.body || {};
@@ -2627,7 +2719,10 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
   if (isMongoConfigured()) {
     try {
       const colName = table;
-      if (op === 'upsert' || op === 'insert') {
+      if (op === 'select') {
+        const docs = await findMongoDocs(colName, match || {});
+        return res.json({ success: true, data: (docs || []).map(({ _id, ...d }) => d) });
+      } else if (op === 'upsert' || op === 'insert') {
         const filter = (payload && payload.id) ? { id: payload.id } : (match || {});
         await upsertMongoDoc(colName, filter, payload);
         return res.json({ success: true, data: [payload] });

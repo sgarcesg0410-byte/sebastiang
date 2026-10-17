@@ -700,6 +700,22 @@ export function getWalletBaseBalances() {
 
 export async function fetchCloudWalletBaseBalances() {
   try {
+    const token = getAdminSessionToken();
+    const res = await fetch(`${API_BASE}/admin/wallets`, {
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        localStorage.setItem(LOCAL_WALLET_BASE_BALANCES_KEY, JSON.stringify(data));
+        return data;
+      }
+    }
+  } catch (e) {}
+
+  try {
     const { data } = await supabase
       .from('catalog')
       .select('url')
@@ -726,7 +742,20 @@ export async function saveWalletBaseBalances(balances) {
     }
   } catch (e) {}
 
-  // Sincronizar en la nube (Supabase) para que PC y APK se sincronicen en tiempo real
+  // 1. Sincronización directa en MongoDB Atlas mediante endpoint autenticado
+  try {
+    const token = getAdminSessionToken();
+    await fetch(`${API_BASE}/admin/wallets`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify(balances)
+    });
+  } catch (errApi) {}
+
+  // 2. Sincronización transparente de respaldo
   try {
     await supabase.from('catalog').upsert({
       id: 'system_wallet_balances',
@@ -735,9 +764,7 @@ export async function saveWalletBaseBalances(balances) {
       location: 'system',
       url: JSON.stringify(balances)
     });
-  } catch (err) {
-    console.warn('Error al sincronizar saldos en Supabase:', err);
-  }
+  } catch (err) {}
 }
 
 export function getDeletedPaymentIds() {
@@ -939,6 +966,19 @@ function saveLocalSettings(st) {
 }
 
 export async function getSettings() {
+  const localSt = getLocalSettings();
+  try {
+    const res = await fetch(`${API_BASE}/settings`);
+    if (res.ok) {
+      const data = await res.json();
+      const merged = { ...DEFAULT_SETTINGS, ...data, ...(localSt || {}) };
+      saveLocalSettings(merged);
+      return merged;
+    }
+  } catch (err) {
+    console.warn('Consultando configuración local o respaldo:', err);
+  }
+
   try {
     const { data: supaSt } = await supabase
       .from('catalog')
@@ -954,16 +994,6 @@ export async function getSettings() {
     }
   } catch (e) {}
 
-  const localSt = getLocalSettings();
-  try {
-    const res = await fetch(`${API_BASE}/settings`);
-    if (res.ok) {
-      const data = await res.json();
-      return { ...DEFAULT_SETTINGS, ...data, ...(localSt || {}) };
-    }
-  } catch (err) {
-    console.warn('Usando configuración por defecto o local:', err);
-  }
   return { ...DEFAULT_SETTINGS, ...(localSt || {}) };
 }
 
@@ -1037,47 +1067,6 @@ const KNOWN_STATIC_PHOTOS = {
 };
 
 export async function getCatalog() {
-  let supabaseCatalog = [];
-  try {
-    // Filtrar a nivel de servidor en Supabase para no descargar jamás sesiones, clientes VIP ni datos del sistema
-    const supabasePromise = supabase
-      .from('catalog')
-      .select('id, title, category, location, url')
-      .not('id', 'like', 'sess-%')
-      .not('id', 'like', 'book-%')
-      .not('id', 'like', 'pay-%')
-      .not('id', 'like', 'rev-%')
-      .not('id', 'like', 'vip-%')
-      .not('id', 'like', 'system_%')
-      .not('category', 'eq', 'vip_client')
-      .not('category', 'like', '%_data')
-      .order('created_at', { ascending: false });
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Supabase catalog timeout')), 12000)
-    );
-    const { data, error } = await Promise.race([supabasePromise, timeoutPromise]);
-    if (!error && Array.isArray(data)) {
-      supabaseCatalog = data.filter(item => 
-        item && 
-        item.category !== 'session_data' && 
-        item.category !== 'vip_client' && 
-        !item.category?.endsWith('_data') && 
-        !item.id?.startsWith('system_') && 
-        !item.id?.startsWith('book-') && 
-        !item.id?.startsWith('pay-') && 
-        !item.id?.startsWith('rev-') && 
-        !item.id?.startsWith('sess-') &&
-        !item.id?.startsWith('vip-') &&
-        typeof item.url === 'string' &&
-        !item.url.trim().startsWith('{') &&
-        !item.url.trim().startsWith('[') &&
-        !item.url.includes('fbcdn.net')
-      );
-    }
-  } catch (err) {
-    console.warn('Aviso: Supabase catálogo no respondió a tiempo o error, usando caché y servidor:', err);
-  }
-
   let serverCatalog = [];
   try {
     const res = await fetch(`${API_BASE}/catalog`);
@@ -1086,7 +1075,42 @@ export async function getCatalog() {
       serverCatalog = Array.isArray(data) ? data : [];
     }
   } catch (err) {
-    console.warn('Error obteniendo catálogo de servidor:', err);
+    console.warn('Consultando catálogo de servidor:', err);
+  }
+
+  let supabaseCatalog = [];
+  if (serverCatalog.length === 0) {
+    try {
+      const { data, error } = await supabase
+        .from('catalog')
+        .select('id, title, category, location, url')
+        .not('id', 'like', 'sess-%')
+        .not('id', 'like', 'book-%')
+        .not('id', 'like', 'pay-%')
+        .not('id', 'like', 'rev-%')
+        .not('id', 'like', 'vip-%')
+        .not('id', 'like', 'system_%')
+        .not('category', 'eq', 'vip_client')
+        .not('category', 'like', '%_data');
+      if (!error && Array.isArray(data)) {
+        supabaseCatalog = data.filter(item => 
+          item && 
+          item.category !== 'session_data' && 
+          item.category !== 'vip_client' && 
+          !item.category?.endsWith('_data') && 
+          !item.id?.startsWith('system_') && 
+          !item.id?.startsWith('book-') && 
+          !item.id?.startsWith('pay-') && 
+          !item.id?.startsWith('rev-') && 
+          !item.id?.startsWith('sess-') && 
+          !item.id?.startsWith('vip-') &&
+          typeof item.url === 'string' &&
+          !item.url.trim().startsWith('{') &&
+          !item.url.trim().startsWith('[') &&
+          !item.url.includes('fbcdn.net')
+        );
+      }
+    } catch (err) {}
   }
 
   // 3. Consultar IndexedDB de alta capacidad (persistencia local protegida ante caída de red o límites de cuota)
@@ -1165,7 +1189,20 @@ export async function getCatalog() {
 }
 
 export async function getPackages() {
-  // 1. Probar en Supabase Cloud primero (para sincronización instantánea entre APK y Web)
+  const localPkgs = getLocalPackages();
+  try {
+    const res = await fetch(`${API_BASE}/packages`);
+    if (res.ok) {
+      const serverPkgs = await res.json();
+      if (Array.isArray(serverPkgs) && serverPkgs.length > 0) {
+        saveLocalPackages(serverPkgs);
+        return serverPkgs;
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso: Servidor /api/packages inaccesible, usando local/defecto:', err);
+  }
+
   try {
     const { data: supaPkgs } = await supabase
       .from('catalog')
@@ -1181,18 +1218,6 @@ export async function getPackages() {
     }
   } catch (e) {}
 
-  const localPkgs = getLocalPackages();
-  try {
-    const res = await fetch(`${API_BASE}/packages`);
-    if (res.ok) {
-      const serverPkgs = await res.json();
-      if (Array.isArray(serverPkgs) && serverPkgs.length > 0) {
-        return serverPkgs;
-      }
-    }
-  } catch (err) {
-    console.warn('Aviso: Servidor /api/packages inaccesible, usando local/defecto:', err);
-  }
   if (localPkgs && Array.isArray(localPkgs) && localPkgs.length > 0) {
     return localPkgs;
   }
@@ -2168,6 +2193,20 @@ export async function saveVipClient(clientData) {
     idbSaveVipClient(clientToSave);
   } catch (e) {}
 
+  // 1. Guardar en MongoDB Atlas mediante endpoint autenticado
+  try {
+    const token = getAdminSessionToken();
+    await fetch(`${API_BASE}/admin/vip`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ client: clientToSave, id: clientToSave.id })
+    });
+  } catch (e) {}
+
+  // 2. Respaldo transparente en proxy Supabase
   try {
     const supaVipId = String(id).startsWith('vip-') ? id : `vip-${id}`;
     await supabase.from('catalog').upsert({
@@ -2180,6 +2219,37 @@ export async function saveVipClient(clientData) {
   } catch (e) {}
 
   return clientToSave;
+}
+
+export async function deleteVipClient(id) {
+  if (!id) return false;
+  try {
+    const token = getAdminSessionToken();
+    const cleanPhone = String(id).replace(/^vip-/, '').replace(/^vip-/, '');
+    const currentList = getLocalVipClients().filter(c => {
+      const p = (c.phone || c.clientWhatsApp || '').replace(/\D/g, '');
+      return p !== cleanPhone && c.id !== id && c.id !== `vip-${cleanPhone}` && c.id !== `vip-vip-${cleanPhone}`;
+    });
+    localStorage.setItem(LOCAL_VIP_CLIENTS_KEY, JSON.stringify(currentList));
+
+    const res = await fetch(`${API_BASE}/admin/vip/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      }
+    });
+
+    try {
+      await supabase.from('catalog').delete().eq('id', id);
+      await supabase.from('catalog').delete().eq('id', `vip-${cleanPhone}`);
+      await supabase.from('catalog').delete().eq('id', `vip-vip-${cleanPhone}`);
+    } catch (e) {}
+
+    return res ? res.ok : true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // --- PAGOS EN TIEMPO REAL (NEQUI, DAVIPLATA, DALE) ---

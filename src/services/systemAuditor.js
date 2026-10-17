@@ -106,30 +106,30 @@ export function clearSoftwareErrors() {
 // 2. AUDITOR DE CAÍDAS Y CONECTIVIDAD DE SERVICIOS EN TIEMPO REAL
 export async function auditServicesHealth() {
   const results = {
-    supabase: { name: 'Supabase Cloud (Base de Datos)', status: 'checking', latencyMs: 0, message: '' },
+    supabase: { name: 'MongoDB Atlas Cloud (Base de Datos)', status: 'checking', latencyMs: 0, message: '' },
     apiServer: { name: 'Servidor API / Nube Vercel', status: 'checking', latencyMs: 0, message: '' },
     storage: { name: 'Almacenamiento Local & IndexedDB', status: 'checking', latencyMs: 0, message: '', usedKb: 0, percent: 0 },
     push: { name: 'Notificaciones Push (OneSignal / Android)', status: 'checking', latencyMs: 0, message: '' }
   };
 
-  // Test 1: Supabase Cloud
+  // Test 1: Base de Datos Cloud (MongoDB Atlas)
   const supaStart = performance.now();
   try {
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout > 5s')), 5000));
-    const supaPromise = supabase.from('catalog').select('id').limit(1);
-    const { error } = await Promise.race([supaPromise, timeoutPromise]);
+    const supaPromise = fetch('/api/settings');
+    const res = await Promise.race([supaPromise, timeoutPromise]);
     const supaEnd = performance.now();
     results.supabase.latencyMs = Math.round(supaEnd - supaStart);
-    if (error) {
+    if (!res.ok) {
       results.supabase.status = 'degraded';
-      results.supabase.message = `Respondió con aviso: ${error.message}`;
+      results.supabase.message = `Respondió con código HTTP ${res.status}`;
     } else {
       results.supabase.status = 'ok';
       results.supabase.message = `Conectado y sincronizado (${results.supabase.latencyMs} ms)`;
     }
   } catch (err) {
     results.supabase.status = 'down';
-    results.supabase.message = `Posible caída o sin internet: ${err.message}`;
+    results.supabase.message = `Sin conexión o base de datos inaccesible: ${err.message}`;
   }
 
   // Test 2: Servidor API
@@ -341,14 +341,14 @@ export function generateImprovementInsights(bookings = [], payments = [], catalo
     });
   }
 
-  // 4. Supabase Cloud Uptime
+  // 4. Base de datos MongoDB Atlas Cloud Uptime
   if (servicesHealth?.supabase?.status === 'ok') {
     insights.push({
       id: 'ins-supabase-ok',
       category: 'infrastructure',
       level: 'good',
-      title: `Base de datos Supabase respondiendo a ${servicesHealth.supabase.latencyMs} ms`,
-      description: 'Sincronización en la nube activa: los cambios en tu PC se reflejan al instante en la APK de tu celular.',
+      title: `Base de datos MongoDB Atlas respondiendo a ${servicesHealth.supabase.latencyMs} ms`,
+      description: 'Sincronización en la nube activa: los cambios en tu PC se reflejan al instante en la APK de tu celular sin costos de cuota ($0 COP).',
       actionType: 'none'
     });
   } else if (servicesHealth?.supabase?.status === 'down') {
@@ -356,7 +356,7 @@ export function generateImprovementInsights(bookings = [], payments = [], catalo
       id: 'ins-supabase-down',
       category: 'infrastructure',
       level: 'critical',
-      title: 'Supabase Cloud no responde (Modo Offline activo)',
+      title: 'Base de datos MongoDB Atlas no responde (Modo Offline activo)',
       description: 'La aplicación está funcionando con la memoria interna de tu dispositivo. Revisa tu conexión a internet.',
       actionType: 'check_internet'
     });

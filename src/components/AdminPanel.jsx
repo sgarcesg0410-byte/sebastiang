@@ -135,6 +135,7 @@ import {
   deleteAdminPayment,
   getVipClients,
   saveVipClient,
+  deleteVipClient,
   formatPrintedPhotosSummary,
   formatPaperPhotosSummary,
   formatRetablosSummary,
@@ -1597,13 +1598,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       navigator.serviceWorker.addEventListener('message', swMessageListener);
     }
 
-    // 5. Latido de seguridad periódico cada 45 segundos (ahorro total de cuota cloud)
-    // El despertar instantáneo (0ms) se realiza mediante WebSockets y eventos de foco
+    // 5. Latido de actualización en tiempo real periódico cada 12 segundos (MongoDB Atlas $0 COP)
+    // El despertar instantáneo (0ms) se realiza mediante BroadcastChannel y eventos de foco
     const heartbeatInterval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden) {
         loadAllAdminData(true);
       }
-    }, 45000);
+    }, 12000);
 
     // 6. Despertar instantáneo al volver a la APK o pestaña (0 milisegundos de retardo)
     const handleInstantWakeup = () => {
@@ -2065,8 +2066,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       const clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
       const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
       try {
-        await supabase.from('catalog').delete().eq('id', `vip-${activePhone}`);
-        await supabase.from('catalog').delete().eq('id', `vip-vip-${activePhone}`);
+        await deleteVipClient(`vip-${activePhone}`);
         setVipClients(prev => prev.filter(v => v.id !== `vip-${activePhone}` && v.id !== `vip-vip-${activePhone}`));
       } catch (e) {}
 
@@ -9421,7 +9421,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 {/* KPI 1: Base de Datos */}
                 <div className="bg-stone-900/90 border border-stone-800 p-4 rounded-2xl shadow-lg">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-stone-400">Base de Datos Cloud</span>
+                    <span className="text-xs font-bold text-stone-400">MongoDB Atlas Cloud</span>
                     <Database className="w-4 h-4 text-cyan-400" />
                   </div>
                   <div className="flex items-center gap-2">
@@ -9545,8 +9545,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         <Database className="w-5 h-5" />
                       </div>
                       <div>
-                        <h4 className="text-sm font-bold text-white">Supabase Cloud (Base de Datos)</h4>
-                        <span className="text-[11px] text-stone-400">PostgreSQL Cloud Sincronizado</span>
+                        <h4 className="text-sm font-bold text-white">MongoDB Atlas Cloud (Base de Datos)</h4>
+                        <span className="text-[11px] text-stone-400">Cluster Serverless Sincronizado ($0 COP)</span>
                       </div>
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${

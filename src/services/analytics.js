@@ -1,5 +1,4 @@
 // Servicio de Métricas y Analítica en Tiempo Real
-import { supabase } from './supabase';
 
 const LOCAL_ANALYTICS_KEY = 'sg_analytics_stats_v1';
 const SESSION_VISIT_FLAG = 'sg_session_visited_flag';
