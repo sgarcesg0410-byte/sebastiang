@@ -650,18 +650,7 @@ app.get('/api/settings', async (req, res) => {
 });
 
 app.get('/api/catalog', async (req, res) => {
-  if (isMongoConfigured() && (!runtimeDB.catalog || runtimeDB.catalog.length === 0 || !runtimeDB._catalogLoadedFromMongo)) {
-    try {
-      const mongoCatalog = await findMongoDocs('catalog', {}, { createdAt: -1 });
-      if (mongoCatalog && mongoCatalog.length > 0) {
-        runtimeDB.catalog = mongoCatalog.map(({ _id, ...item }) => item);
-        runtimeDB._catalogLoadedFromMongo = true;
-      }
-    } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error cargando catálogo:', eMongo?.message || eMongo);
-    }
-  }
-  const cleanCatalog = (runtimeDB.catalog || []).filter(item =>
+  const filterPhotos = (list) => (list || []).filter(item =>
     item &&
     item.category !== 'session_data' &&
     item.category !== 'vip_client' &&
@@ -673,6 +662,22 @@ app.get('/api/catalog', async (req, res) => {
     !item.id?.startsWith('sess-') &&
     !item.id?.startsWith('vip-')
   );
+
+  let cleanCatalog = filterPhotos(runtimeDB.catalog);
+
+  if (isMongoConfigured() && cleanCatalog.length === 0) {
+    try {
+      const mongoCatalog = await findMongoDocs('catalog', {}, { createdAt: -1 });
+      if (mongoCatalog && mongoCatalog.length > 0) {
+        runtimeDB.catalog = mongoCatalog.map(({ _id, ...item }) => item);
+        runtimeDB._catalogLoadedFromMongo = true;
+        cleanCatalog = filterPhotos(runtimeDB.catalog);
+      }
+    } catch (eMongo) {
+      console.warn('⚠️ [MongoDB] Error cargando catálogo:', eMongo?.message || eMongo);
+    }
+  }
+
   res.json(cleanCatalog);
 });
 
