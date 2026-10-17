@@ -244,8 +244,23 @@ async function executeProxyRead(table, queryState) {
     // Aplicar filtros not en memoria
     for (const notRule of queryState.notFilters) {
       if (notRule.op === 'like') {
-        const prefix = notRule.val.replace(/[%_]/g, '');
-        filtered = filtered.filter(item => !item || !String(item[notRule.col] || '').startsWith(prefix));
+        // Soporta comodines % de Supabase (prefijo/sufijo/contención).
+        // El guion bajo (_) se trata como literal, que es como se usa en el
+        // proyecto (p. ej. 'system_%', '%_data').
+        const pattern = String(notRule.val);
+        const startsWild = pattern.startsWith('%');
+        const endsWild = pattern.endsWith('%');
+        const core = pattern.replace(/%/g, '');
+        filtered = filtered.filter(item => {
+          if (!item) return true;
+          const cell = String(item[notRule.col] ?? '');
+          let matches = false;
+          if (startsWild && endsWild) matches = cell.includes(core);
+          else if (startsWild) matches = cell.endsWith(core);
+          else if (endsWild) matches = cell.startsWith(core);
+          else matches = cell === core;
+          return !matches;
+        });
       } else if (notRule.op === 'eq') {
         filtered = filtered.filter(item => !item || String(item[notRule.col]) !== String(notRule.val));
       }
