@@ -10,10 +10,7 @@ import {
   ShieldCheck, 
   UserCheck, 
   Maximize2, 
-  HelpCircle, 
-  ChevronDown,
-  ChevronUp,
-  Clock,
+  Clock, 
   Award
 } from 'lucide-react';
 import { getPaperPrintSizes, getRetabloSizes } from '../services/api';
@@ -41,34 +38,6 @@ export default function PackagesSection({
   });
 
   const [activeCategoryTab, setActiveCategoryTab] = useState('all'); // 'all' | 'packages' | 'retablos' | 'paper'
-  const [expandedFaq, setExpandedFaq] = useState(null);
-
-  const faqList = [
-    {
-      q: '¿Cómo aparto mi fecha para la sesión?',
-      a: 'Puedes apartar tu cupo con un anticipo de solo $20.000 COP a través de Nequi (324 472 5167), DaviPlata (@PLATA3244725167) o tarjeta en línea. El saldo restante se cancela el día de la sesión.'
-    },
-    {
-      q: '¿Cómo y cuándo me entregan las fotos?',
-      a: 'En un plazo de 2 a 3 días hábiles recibirás un enlace privado exclusivo a tu WhatsApp. Desde allí podrás ver tus fotos en alta calidad, elegir tus favoritas y descargarlas directamente en tu celular o computador.'
-    },
-    {
-      q: '¿Qué características tienen los cuadros en retablo?',
-      a: 'Están elaborados sobre bastidor de madera maciza de alta durabilidad con cantos biselados en color negro mate. La fotografía cuenta con laminado de protección UV antirreflejo y antipolvo, por lo que no se raya, no le entra humedad, no requiere vidrio y viene con soporte metálico listo para colgar.'
-    },
-    {
-      q: '¿Qué tipo de papel utilizan para las fotos impresas?',
-      a: 'Utilizamos papel fotográfico profesional de laboratorio químico de 300 DPI (no impresiones caseras de inyección). Garantiza colores reales, máxima nitidez y una preservación que no se decolora con los años.'
-    },
-    {
-      q: '¿Puedo pedir retablos o fotos impresas después de la sesión?',
-      a: '¡Sí! Al recibir tu enlace privado de selección por WhatsApp, podrás añadir retablos e impresiones con las fotos que más te hayan gustado.'
-    },
-    {
-      q: '¿Realizas sesiones en otras playas o ciudades?',
-      a: 'Sí, realizamos sesiones en exteriores, playas, cabañas o locaciones en San Antero, Coveñas, Tolú y cualquier rincón de Colombia. Si la locación requiere traslados especiales, se coordina el viático de forma transparente.'
-    }
-  ];
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 relative pb-16">
@@ -464,50 +433,6 @@ export default function PackagesSection({
           <Heart className="w-6 h-6 text-amber-400 mb-2" />
           <h4 className="text-xs font-bold uppercase text-white tracking-wider">Satisfacción Garantizada</h4>
           <p className="text-[11px] text-stone-400 mt-0.5">Tus recuerdos en las mejores manos</p>
-        </div>
-      </div>
-
-      {/* 5. SECCIÓN DE PREGUNTAS FRECUENTES (FAQ) */}
-      <div className="max-w-3xl mx-auto">
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-stone-900 border border-stone-800 text-stone-300 text-xs font-semibold mb-2">
-            <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
-            <span>Preguntas Frecuentes</span>
-          </div>
-          <h3 className="text-2xl font-serif font-bold text-white">
-            Todo lo que necesitas saber
-          </h3>
-        </div>
-
-        <div className="space-y-3">
-          {faqList.map((item, idx) => {
-            const isOpen = expandedFaq === idx;
-
-            return (
-              <div 
-                key={idx}
-                className="rounded-2xl bg-stone-900/80 border border-stone-800 overflow-hidden transition-colors"
-              >
-                <button
-                  type="button"
-                  onClick={() => setExpandedFaq(isOpen ? null : idx)}
-                  className="w-full p-4 text-left flex items-center justify-between gap-3 text-sm font-semibold text-white hover:text-amber-300 transition-colors cursor-pointer"
-                >
-                  <span>{item.q}</span>
-                  {isOpen ? (
-                    <ChevronUp className="w-4 h-4 text-amber-400 shrink-0" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-stone-400 shrink-0" />
-                  )}
-                </button>
-                {isOpen && (
-                  <div className="px-4 pb-4 text-xs sm:text-sm text-stone-300 border-t border-stone-800/80 pt-3 leading-relaxed">
-                    {item.a}
-                  </div>
-                )}
-              </div>
-            );
-          })}
         </div>
       </div>
     </section>
