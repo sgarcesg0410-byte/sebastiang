@@ -1827,6 +1827,11 @@ export async function verifyAdminPin(pin) {
 
   resetAttempts();
   setAdminSessionToken(data.token);
+  if (data.bioRefreshToken) {
+    try {
+      localStorage.setItem('sebastian_g_bio_refresh_token', data.bioRefreshToken);
+    } catch (e) {}
+  }
 
   // El segundo factor y la expiración los controla el servidor con el token firmado.
   return { success: true, requires2FA: false, token: data.token };

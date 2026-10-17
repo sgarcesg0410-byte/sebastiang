@@ -139,6 +139,32 @@ export function createAdminToken(extra = {}) {
   return `${body}.${signature}`;
 }
 
+const BIO_REFRESH_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 días
+
+export function createBioRefreshToken(extra = {}) {
+  const secret = getAdminAuthSecret();
+  if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir sesión biométrica.');
+  const payload = {
+    role: 'admin',
+    type: 'bio_refresh',
+    iat: Date.now(),
+    exp: Date.now() + BIO_REFRESH_TOKEN_TTL_MS,
+    nonce: crypto.randomBytes(16).toString('hex'),
+    pwd: extra.pwd ?? getCachedPasswordVersion(),
+    ...extra
+  };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `${body}.${signature}`;
+}
+
+export function verifyBioRefreshToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const payload = verifyAdminToken(token);
+  if (!payload || payload.type !== 'bio_refresh') return null;
+  return payload;
+}
+
 export function verifyAdminToken(token, { expectedPasswordVersion } = {}) {
   const secret = getAdminAuthSecret();
   if (!secret) return null;

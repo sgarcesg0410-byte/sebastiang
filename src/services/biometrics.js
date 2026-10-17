@@ -6,10 +6,37 @@
  * 2. Web Authentication API (WebAuthn / Passkeys estándar FIDO2) para navegadores (Chrome Android, Safari iOS, Windows Hello).
  */
 
+import { setAdminSessionToken, getAdminSessionToken } from './api';
+
 const BIO_ENABLED_KEY = 'sebastian_g_biometrics_enabled_v1';
 const BIO_CRED_ID_KEY = 'sebastian_g_biometrics_cred_id_v1';
 const BIO_DEVICE_NAME_KEY = 'sebastian_g_biometrics_device_name_v1';
 const BIO_PROVIDER_KEY = 'sebastian_g_biometrics_provider_v1'; // 'native_android' | 'webauthn'
+
+async function refreshServerSessionViaBiometrics() {
+  try {
+    const bioRefreshToken = localStorage.getItem('sebastian_g_bio_refresh_token');
+    if (!bioRefreshToken) return false;
+    const res = await fetch('/api/admin/auth/bio-refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${bioRefreshToken}`
+      },
+      body: JSON.stringify({ bioRefreshToken })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.token) {
+        setAdminSessionToken(data.token);
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn('Error renovando sesión biométrica:', e);
+  }
+  return false;
+}
 
 function bufferToBase64(buffer) {
   if (!buffer) return '';
@@ -278,10 +305,12 @@ export async function authenticateWithBiometrics() {
       'Coloca tu huella dactilar para acceder inmediatamente'
     );
     if (res && res.success) {
+      const renewed = await refreshServerSessionViaBiometrics();
       return {
         success: true,
         verified: true,
-        method: 'fingerprint'
+        method: 'fingerprint',
+        sessionRenewed: renewed
       };
     }
     throw new Error('No se pudo verificar la huella.');
@@ -319,10 +348,12 @@ export async function authenticateWithBiometrics() {
     });
 
     if (assertion) {
+      const renewed = await refreshServerSessionViaBiometrics();
       return {
         success: true,
         verified: true,
-        method: 'fingerprint'
+        method: 'fingerprint',
+        sessionRenewed: renewed
       };
     }
     throw new Error('No se pudo verificar la huella.');

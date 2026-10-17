@@ -3,6 +3,8 @@ import cors from 'cors';
 import crypto from 'crypto';
 import {
   createAdminToken,
+  createBioRefreshToken,
+  verifyBioRefreshToken,
   requireAdminAuth,
   verifyAdminPin,
   isWeakConfiguredPin,
@@ -79,7 +81,17 @@ app.use(express.json({ limit: '50mb' }));
 // Si no están configuradas, las notificaciones push se deshabilitan sin fallar.
 // ==============================================================================
 const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || '';
-const ONESIGNAL_REST_API_KEY = process.env.ONESIGNAL_REST_API_KEY || '';
+let rawOneSignalKey = process.env.ONESIGNAL_REST_API_KEY || '';
+// Detectar si la clave fue provista en Base64 y decodificarla
+if (rawOneSignalKey && !rawOneSignalKey.startsWith('os_v2_')) {
+  try {
+    const decoded = Buffer.from(rawOneSignalKey, 'base64').toString('utf8');
+    if (decoded.startsWith('os_v2_') || decoded.length > 20) {
+      rawOneSignalKey = decoded;
+    }
+  } catch (e) {}
+}
+const ONESIGNAL_REST_API_KEY = rawOneSignalKey;
 
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
   console.warn(
@@ -766,6 +778,52 @@ app.post('/api/settings', requireAdminAuth, async (req, res) => {
   res.json({ success: true, settings: runtimeDB.settings });
 });
 
+// Endpoint exclusivo de alta eficiencia para la APK nativa Android (Background Service 24/7)
+app.get('/api/apk/feed', async (req, res) => {
+  try {
+    let bookings = [];
+    let payments = [];
+    let sessions = [];
+    let reviews = [];
+
+    if (isMongoConfigured()) {
+      try {
+        const [bDocs, pDocs, sDocs, rDocs] = await Promise.all([
+          findMongoDocs('bookings', {}, { createdAt: -1 }, 10),
+          findMongoDocs('payments', {}, { createdAt: -1 }, 10),
+          findMongoDocs('sessions', {}, { createdAt: -1 }, 10),
+          findMongoDocs('reviews', {}, { createdAt: -1 }, 10)
+        ]);
+        if (Array.isArray(bDocs)) bookings = bDocs.map(({ _id, ...b }) => b);
+        if (Array.isArray(pDocs)) payments = pDocs.map(({ _id, ...p }) => p);
+        if (Array.isArray(sDocs)) sessions = sDocs.map(({ _id, ...s }) => s);
+        if (Array.isArray(rDocs)) reviews = rDocs.map(({ _id, ...r }) => r);
+      } catch (errMongo) {
+        console.warn('⚠️ [MongoDB] Error alimentando /api/apk/feed:', errMongo?.message || errMongo);
+      }
+    }
+
+    if (bookings.length === 0 && Array.isArray(runtimeDB.bookings)) {
+      bookings = runtimeDB.bookings.slice(0, 10);
+    }
+    if (payments.length === 0 && Array.isArray(runtimeDB.payments)) {
+      payments = runtimeDB.payments.slice(0, 10);
+    }
+
+    return res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      bookings,
+      payments,
+      sessions,
+      reviews
+    });
+  } catch (err) {
+    console.error('Error en /api/apk/feed:', err);
+    return res.status(500).json({ error: 'Error en feed de APK' });
+  }
+});
+
 app.post('/api/bookings', async (req, res) => {
   const {
     clientName, clientWhatsApp, clientEmail, packageId,
@@ -1311,10 +1369,38 @@ app.post('/api/admin/auth', async (req, res) => {
       runtimeDB
     });
     const token = createAdminToken({ pwd: activeVersion });
-    return res.json({ success: true, token, expiresInMs: 12 * 60 * 60 * 1000 });
+    const bioRefreshToken = createBioRefreshToken({ pwd: activeVersion });
+    return res.json({ success: true, token, bioRefreshToken, expiresInMs: 12 * 60 * 60 * 1000 });
   } catch (e) {
     console.error('[Seguridad] No se pudo emitir la sesión:', e?.message || e);
     return res.status(503).json({ error: 'El servidor no tiene configurado ADMIN_AUTH_SECRET.' });
+  }
+});
+
+// Renovación de sesión rápida mediante huella biométrica
+app.post('/api/admin/auth/bio-refresh', async (req, res) => {
+  try {
+    const rawToken = readAdminToken(req) || req.body?.bioRefreshToken;
+    const payload = verifyBioRefreshToken(rawToken);
+    if (!payload) {
+      return res.status(401).json({ error: 'Sesión biométrica no válida o expirada. Ingresa con tu PIN.' });
+    }
+
+    const activeVersion = await getActivePasswordVersionFromStore({
+      supaUrl: SUPABASE_REST_URL,
+      supaKey: SUPABASE_REST_KEY,
+      runtimeDB
+    });
+
+    if (payload.pwd !== activeVersion) {
+      return res.status(401).json({ error: 'La contraseña fue cambiada. Ingresa con tu nueva contraseña.' });
+    }
+
+    const freshToken = createAdminToken({ pwd: activeVersion });
+    return res.json({ success: true, token: freshToken, expiresInMs: 12 * 60 * 60 * 1000 });
+  } catch (err) {
+    console.error('[Seguridad] Error en renovación biométrica:', err);
+    return res.status(500).json({ error: 'Error procesando renovación biométrica.' });
   }
 });
 
@@ -1341,7 +1427,7 @@ app.post('/api/admin/password/reset-confirm', async (req, res) => {
 // A PARTIR DE AQUÍ, TODO /api/admin/* EXIGE UNA SESIÓN FIRMADA VÁLIDA
 // ==============================================================================
 app.use('/api/admin', (req, res, next) => {
-  if (req.path === '/auth' || req.path.startsWith('/password/')) return next();
+  if (req.path === '/auth' || req.path === '/auth/bio-refresh' || req.path.startsWith('/password/')) return next();
   return requireAdminAuth(req, res, next);
 });
 

@@ -86,6 +86,7 @@ import {
 } from '../services/onesignal';
 import { 
   verifyAdminPin, 
+  getAdminSessionToken,
   changeAdminPasswordOnServer,
   requestAdminPasswordReset,
   confirmAdminPasswordReset,
@@ -1318,6 +1319,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     try {
       const res = await authenticateWithBiometrics();
       if (res && res.verified) {
+        const currentToken = getAdminSessionToken();
+        if (!currentToken) {
+          setAuthError('Huella reconocida, pero tu sesión en el servidor expiró. Ingresa tu contraseña una vez para sincronizarla.');
+          return;
+        }
         setIsAuthenticated(true);
         if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
           try { Notification.requestPermission(); } catch (err) {}
