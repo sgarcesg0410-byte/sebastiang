@@ -8,6 +8,7 @@ import {
   Settings, 
   MessageCircle, 
   Clock, 
+  CheckCircle,
   CheckCircle2, 
   Plus, 
   RefreshCw, 
@@ -6008,7 +6009,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                               className="px-2.5 py-1.5 bg-teal-950/80 hover:bg-teal-900 border border-teal-500/40 text-teal-300 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
                               title="Marcar sesión como realizada y notificar al cliente"
                             >
-                              <CheckCircle className="w-3.5 h-3.5 text-teal-400" />
+                              <CheckCircle2 className="w-3.5 h-3.5 text-teal-400" />
                               <span className="text-[11px]">Sesión Realizada</span>
                             </button>
                           )}
@@ -11681,7 +11682,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             <div className="flex items-start justify-between border-b border-stone-800 pb-3">
               <div className="flex items-center gap-2.5">
                 <span className="p-2.5 rounded-2xl bg-teal-500/20 text-teal-300 border border-teal-500/40">
-                  <CheckCircle className="w-6 h-6" />
+                  <CheckCircle2 className="w-6 h-6" />
                 </span>
                 <div>
                   <h3 className="text-base font-bold text-white">Marcar Sesión como Realizada</h3>
@@ -11789,7 +11790,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 onClick={() => handleConfirmCompleteSession(sessionCompletedNotifyClient)}
                 className="w-full sm:flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95 disabled:opacity-50"
               >
-                <CheckCircle className="w-4 h-4" />
+                <CheckCircle2 className="w-4 h-4" />
                 <span>
                   {sessionCompletedNotifyClient ? 'Confirmar y Notificar al Cliente' : 'Marcar Realizada'}
                 </span>
