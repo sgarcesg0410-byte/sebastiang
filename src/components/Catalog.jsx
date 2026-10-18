@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowRight, Calendar, Camera, Heart, MapPin, Share2, Check, X } from 'lucide-react';
 import { trackLinkShare } from '../services/analytics';
+import { sortCatalogDescending } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 
 const HERO_WORDS = ['retratos', 'parejas', 'bodas', 'quinceañeras', 'eventos', 'campo y playa'];
@@ -97,9 +98,11 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
       )
     : [];
 
+  const sortedCatalog = sortCatalogDescending(safeCatalog);
+
   const filteredPhotos = selectedCategory === 'Todas'
-    ? safeCatalog
-    : safeCatalog.filter(photo => photo && photo.category === selectedCategory);
+    ? sortedCatalog
+    : sortedCatalog.filter(photo => photo && photo.category === selectedCategory);
 
   const toggleLike = (id, e) => {
     e.stopPropagation();

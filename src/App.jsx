@@ -26,7 +26,7 @@ import HowItWorksSection from './components/HowItWorksSection';
 import InteractiveLogoIntro from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import MobileStickyBookingBar from './components/MobileStickyBookingBar';
-import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds, syncLocalCatalogToCloud } from './services/api';
+import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds, syncLocalCatalogToCloud, sortCatalogDescending } from './services/api';
 import { supabase } from './services/supabase';
 import { trackPageVisit } from './services/analytics';
 import { initOneSignal } from './services/onesignal';
@@ -136,12 +136,12 @@ export default function App() {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed)) {
             const clean = parsed.filter(isRealCatalogItem);
-            if (clean.length > 0) return clean;
+            if (clean.length > 0) return sortCatalogDescending(clean);
           }
         }
       }
     } catch (e) {}
-    return DEFAULT_REAL_CATALOG;
+    return sortCatalogDescending(DEFAULT_REAL_CATALOG);
   });
   const [packages, setPackages] = useState(DEFAULT_PACKAGES);
   const [loading, setLoading] = useState(false);
@@ -170,11 +170,11 @@ export default function App() {
         }
       });
 
-      const merged = Array.from(map.values());
+      const merged = sortCatalogDescending(Array.from(map.values()));
       if (prev && prev.length === merged.length && prev[0]?.id === merged[0]?.id) {
         return prev;
       }
-      return merged.length > 0 ? merged : (prev || DEFAULT_REAL_CATALOG);
+      return merged.length > 0 ? merged : sortCatalogDescending(prev || DEFAULT_REAL_CATALOG);
     });
   };
 

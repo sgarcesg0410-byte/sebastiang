@@ -110,6 +110,7 @@ import {
   deleteCatalogPhoto,
   deleteAllSampleCatalogPhotos,
   isSampleItem,
+  sortCatalogDescending,
   getAdminPayments,
   updatePaymentStatus,
   formatDateTime12Hour,
@@ -8575,7 +8576,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                {catalog.map((item) => {
+                {sortCatalogDescending(catalog).map((item) => {
                   const isSample = isSampleItem(item);
                   return (
                     <div key={item.id} className="group relative bg-stone-900 border border-stone-800 rounded-2xl overflow-hidden shadow-md flex flex-col justify-between">

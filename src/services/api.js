@@ -139,7 +139,35 @@ export const DEFAULT_PACKAGES = [
   }
 ];
 
-export const DEFAULT_REAL_CATALOG = [
+export function getCatalogItemTimestamp(item) {
+  if (!item) return 0;
+  if (item.id === 'cat-verano-salsero') return 1789878000000;
+  const match = String(item.id || '').match(/^cat-(\d{11,14})/);
+  if (match) {
+    const ts = Number(match[1]);
+    if (!isNaN(ts) && ts > 1000000000000) return ts;
+  }
+  if (item.createdAt) {
+    const t = new Date(item.createdAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.created_at) {
+    const t = new Date(item.created_at).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.updatedAt) {
+    const t = new Date(item.updatedAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  return 0;
+}
+
+export function sortCatalogDescending(list) {
+  if (!Array.isArray(list)) return [];
+  return [...list].sort((a, b) => getCatalogItemTimestamp(b) - getCatalogItemTimestamp(a));
+}
+
+export const DEFAULT_REAL_CATALOG = sortCatalogDescending([
   { id: 'cat-verano-salsero', title: 'Verano salsero', category: 'Retratos', location: 'Playas de Coveñas', url: '/catalog/verano-salsero.jpg' },
   { id: 'cat-1789878355199', title: 'Amor al  campo', category: 'Retratos', location: 'Torrente -Coveñas', url: '/catalog/cat-1789878355199.jpg' },
   { id: 'cat-1789878484787', title: 'Sesión en Torrente, Coveñas', category: 'Retratos', location: 'Torrente - Coveñas', url: '/catalog/cat-1789878484787.jpg' },
@@ -180,7 +208,7 @@ export const DEFAULT_REAL_CATALOG = [
   { id: 'cat-1790139359055', title: 'Hay amistades que se convierten en familia y corazones que viven cada etapa como si fuera propia 💕✨', category: 'Retratos', location: 'Malecon,Coveñas', url: '/catalog/cat-1790139359055.jpg' },
   { id: 'cat-1790139435319', title: 'Los 6 llegaron llenos de diversión, juegos y mucho pastel!', category: 'Retratos', location: 'Nuevo Agrado, San Antero', url: '/catalog/cat-1790139435319.jpg' },
   { id: 'cat-1790909237730', title: '🇨🇴 Un momento para recordar toda la vida', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790909237730.jpg' }
-];
+]);
 
 export function isSampleItem(item) {
   if (!item) return false;
@@ -521,7 +549,7 @@ export function saveLocalCatalogItem(item) {
   try {
     const items = getLocalCatalog().filter(i => i.id !== item.id);
     items.unshift(item);
-    saveLocalCatalog(items);
+    saveLocalCatalog(sortCatalogDescending(items));
     try {
       const deletedIds = getDeletedCatalogIds().filter(id => id !== item.id);
       localStorage.setItem(LOCAL_DELETED_CATALOG_KEY, JSON.stringify(deletedIds));
@@ -1380,14 +1408,16 @@ export async function getCatalog() {
     result.push(item);
   }
 
+  const sortedResult = sortCatalogDescending(result);
+
   // Guardar copia de seguridad garantizada en IndexedDB y localStorage
-  if (result.length > 0) {
+  if (sortedResult.length > 0) {
     try {
-      saveLocalCatalog(result);
+      saveLocalCatalog(sortedResult);
     } catch (e) {}
   }
 
-  return result.length > 0 ? result : (localItems.length > 0 ? localItems : DEFAULT_REAL_CATALOG);
+  return sortedResult.length > 0 ? sortedResult : sortCatalogDescending(localItems.length > 0 ? localItems : DEFAULT_REAL_CATALOG);
 }
 
 export async function getPackages() {

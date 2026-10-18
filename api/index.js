@@ -722,6 +722,34 @@ app.get('/api/settings', async (req, res) => {
   res.json(publicSettings);
 });
 
+export function getCatalogItemTimestamp(item) {
+  if (!item) return 0;
+  if (item.id === 'cat-verano-salsero') return 1789878000000;
+  const match = String(item.id || '').match(/^cat-(\d{11,14})/);
+  if (match) {
+    const ts = Number(match[1]);
+    if (!isNaN(ts) && ts > 1000000000000) return ts;
+  }
+  if (item.createdAt) {
+    const t = new Date(item.createdAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.created_at) {
+    const t = new Date(item.created_at).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  if (item.updatedAt) {
+    const t = new Date(item.updatedAt).getTime();
+    if (!isNaN(t) && t > 0) return t;
+  }
+  return 0;
+}
+
+export function sortCatalogDescending(list) {
+  if (!Array.isArray(list)) return [];
+  return [...list].sort((a, b) => getCatalogItemTimestamp(b) - getCatalogItemTimestamp(a));
+}
+
 app.get('/api/catalog', async (req, res) => {
   const filterPhotos = (list) => (list || []).filter(item =>
     item &&
@@ -753,6 +781,8 @@ app.get('/api/catalog', async (req, res) => {
     }
   }
 
+  // Orden cronológico estricto: Fotos más recientes arriba / de primero
+  cleanCatalog = sortCatalogDescending(cleanCatalog);
   res.json(cleanCatalog);
 });
 
