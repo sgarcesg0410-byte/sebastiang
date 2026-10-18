@@ -77,10 +77,16 @@ describe('Estado de pago de una reserva (src/services/financials.js)', () => {
     expect(res.isFullyPaid).toBe(false);
   });
 
-  it('una reserva completada se considera pagada', () => {
-    const res = computeBookingPaymentStatus(booking({ status: 'completed' }), []);
-    expect(res.isFullyPaid).toBe(true);
-    expect(res.isPendingAbono).toBe(false);
+  it('una reserva completada sin pagos no se marca como pagada; con pagos completos sí', () => {
+    const resSinPagos = computeBookingPaymentStatus(booking({ status: 'completed' }), []);
+    expect(resSinPagos.isFullyPaid).toBe(false);
+    expect(resSinPagos.isPendingAbono).toBe(true);
+
+    const b = booking({ status: 'completed', totalPrice: 200000 });
+    const pagos = [{ sessionToken: b.id, amount: 200000, status: 'verified' }];
+    const resConPagos = computeBookingPaymentStatus(b, pagos);
+    expect(resConPagos.isFullyPaid).toBe(true);
+    expect(resConPagos.isPendingAbono).toBe(false);
   });
 
   it('PREVIENE EL DOBLE COBRO: el abono sugerido nunca supera el saldo restante', () => {
