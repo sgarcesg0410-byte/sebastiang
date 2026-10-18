@@ -19,6 +19,7 @@ import { resolveBookingPrice } from './pricingGuard.js';
 import {
   sendNewBookingEmails,
   sendBookingConfirmedEmail,
+  sendSessionCompletedEmail,
   sendPaymentReceiptEmail,
   sendPhotoDeliveryEmail,
   sendTwoFactorCodeEmail,
@@ -993,6 +994,9 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
     } else if (type === 'booking_confirmation') {
       const ok = await sendBookingConfirmedEmail(data.booking, data.customNotes);
       return res.json({ success: ok, message: ok ? 'Correo de confirmación enviado' : 'No se pudo enviar el correo' });
+    } else if (type === 'session_completed') {
+      const ok = await sendSessionCompletedEmail(data.booking, data.customNotes);
+      return res.json({ success: ok, message: ok ? 'Correo de sesión realizada enviado' : 'No se pudo enviar el correo' });
     } else if (type === 'photo_delivery') {
       const ok = await sendPhotoDeliveryEmail(data);
       return res.json({ success: ok, message: ok ? 'Fotos enviadas por correo al cliente' : 'No se pudo enviar el correo' });

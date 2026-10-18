@@ -1071,7 +1071,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [deliverySuccessMsg, setDeliverySuccessMsg] = useState('');
   const [deliveryWhatsAppLine, setDeliveryWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
 
-  // Modal y confirmación de reserva por WhatsApp al cliente
+  // Modal y confirmación de reserva (fecha y sesión) por WhatsApp y Correo al cliente
   const [confirmingBooking, setConfirmingBooking] = useState(null);
   const [confirmWhatsAppLine, setConfirmWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
   const [confirmPhone, setConfirmPhone] = useState('');
@@ -1079,9 +1079,22 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [confirmSuccessMsg, setConfirmSuccessMsg] = useState('');
   const [confirmCopied, setConfirmCopied] = useState(false);
   const [isConfirmingBookingStatus, setIsConfirmingBookingStatus] = useState(false);
-  const [confirmAutoRegisterPayment, setConfirmAutoRegisterPayment] = useState(true);
-  const [confirmPaymentType, setConfirmPaymentType] = useState('deposit'); // 'deposit' (50%) | 'total' (100%)
-  const [confirmPaymentMethod, setConfirmPaymentMethod] = useState('nequi'); // 'nequi' | 'daviplata' | 'dale'
+
+  // Modal para registro explícito de "Abono" o "Pago Completo"
+  const [paymentModalBooking, setPaymentModalBooking] = useState(null); // { booking, type: 'deposit' | 'total' }
+  const [paymentModalAmount, setPaymentModalAmount] = useState(0);
+  const [paymentModalMethod, setPaymentModalMethod] = useState('nequi'); // 'nequi' | 'daviplata' | 'dale' | 'efectivo'
+  const [paymentModalNotifyClient, setPaymentModalNotifyClient] = useState(true);
+  const [paymentModalWhatsAppLine, setPaymentModalWhatsAppLine] = useState('line1');
+  const [isSubmittingPaymentModal, setIsSubmittingPaymentModal] = useState(false);
+
+  // Modal para "Sesión Realizada" con opción de notificar al cliente
+  const [sessionCompletedBooking, setSessionCompletedBooking] = useState(null);
+  const [sessionCompletedNotifyClient, setSessionCompletedNotifyClient] = useState(true);
+  const [sessionCompletedWhatsAppLine, setSessionCompletedWhatsAppLine] = useState('line1');
+  const [sessionCompletedNote, setSessionCompletedNote] = useState('');
+  const [isSubmittingSessionCompleted, setIsSubmittingSessionCompleted] = useState(false);
+  const [sessionCompletedSuccessMsg, setSessionCompletedSuccessMsg] = useState('');
 
   // Instalación nativa PWA en Android exclusiva para el fotógrafo
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -1987,86 +2000,110 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  const getBookingConfirmationPlainText = (b, customNotes = '', chosenLine = 'line1', paidAmount = 0, paymentMethod = 'Nequi') => {
+  const getBookingConfirmationPlainText = (b, customNotes = '', chosenLine = 'line1') => {
     if (!b) return '';
-    const rawName = (b.clientName || 'Cliente').trim();
+    const rawName = (b.clientName || b.client_name || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
     const isOutside = b.locationType === 'outside_san_antero' || b.locationType === 'outside';
-    const loc = b.specificLocation || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada');
+    const loc = b.specificLocation || b.specific_location || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada');
     const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
-    const total = Number(b.totalPrice || 0);
-    const paid = Number(paidAmount || 0);
-    const balance = Math.max(0, total - paid);
-    const isFull = balance === 0 || (paid > 0 && paid >= total);
-    const voucherNum = `REC-${String(b.id || '001').replace(/\D/g, '').slice(-5).padStart(5, '0')}`;
-    const receiptUrl = `https://sebastiang.app/#recibo=${b.receiptToken || b.id}&paid=${paid}&method=${encodeURIComponent(paymentMethod)}`;
+    const total = Number(b.totalPrice ?? b.total_price ?? 0);
 
     return (
       `📸 *¡Hola ${formattedFirstName}! Te saluda Sebastian G.* ✨\n\n` +
-      `¡Excelente noticia! Te confirmo con mucho agrado tu *Sesión Fotográfica Profesional* y el registro de tu pago en agenda oficial:\n\n` +
-      `🗓️ *Fecha y Hora:* ${formatDateTime12Hour(b.dateTime)}\n` +
-      `📦 *Paquete Confirmado:* ${b.packageName || 'Sesión Fotográfica'}\n` +
-      `📍 *Locación:* ${loc}\n\n` +
-      `────────────────────────\n` +
-      `💰 *Total del Contrato:* $${total.toLocaleString('es-CO')} COP\n` +
-      `✅ *Valor Recibido / Abonado Hoy:* $${paid.toLocaleString('es-CO')} COP (${paymentMethod})\n` +
-      (isFull
-        ? `🏆 *Estado:* ¡PAZ Y SALVO 100% SALDADO!\n`
-        : `⏳ *Saldo Pendiente para el Día de la Sesión:* $${balance.toLocaleString('es-CO')} COP\n`
-      ) +
-      `────────────────────────\n` +
+      `¡Tu cita para la sesión fotográfica ha sido *CONFIRMADA* con éxito! 🗓️🎉\n\n` +
+      `Te confirmo con mucho gusto que tu fecha y hora quedaron agendadas oficialmente en mi calendario de trabajo:\n\n` +
+      `🗓️ *Fecha y Hora:* ${formatDateTime12Hour(b.dateTime || b.date_time)}\n` +
+      `📦 *Paquete Confirmado:* ${b.packageName || b.package_name || 'Sesión Fotográfica'}\n` +
+      `📍 *Locación:* ${loc}\n` +
+      `💰 *Valor Total de la Sesión:* $${total.toLocaleString('es-CO')} COP\n\n` +
       (customNotes && customNotes.trim() ? `📝 *Nota de Sebastian G:* "${customNotes.trim()}"\n\n` : '') +
-      `⛅ *Garantía de Clima en ${loc}:* En caso de lluvia o clima adverso, tu sesión se reprograma sin ninguna penalidad ni costo adicional.\n\n` +
-      `📄 *CONSULTA O DESCARGA TU COMPROBANTE OFICIAL (PDF) AQUÍ:*\n${receiptUrl}\n\n` +
       `💡 *Recomendaciones para el día de tu sesión:*\n` +
-      `• Llegar con 10 o 15 minutos de anticipación al punto de encuentro.\n` +
-      `• Trae tus cambios de vestuario listos y toda la energía frente al lente.\n\n` +
+      `• Llegar con 10 o 15 minutos de anticipación al punto acordado.\n` +
+      `• Trae tus cambios de vestuario listos y toda la mejor energía frente al lente.\n` +
+      `• Descansa bien la noche anterior y mantén una buena hidratación.\n\n` +
+      `⛅ *Garantía de Clima en ${loc}:* En caso de lluvia o clima adverso, tu sesión se reprograma sin ninguna penalidad ni costo adicional.\n\n` +
       `¡Será un verdadero honor capturar tus mejores momentos! Si tienes alguna duda, puedes responderme directamente a este WhatsApp (+57 ${myPhone}). 📸✨`
     );
   };
 
-  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '', targetPhone = null, chosenLine = 'line1', paidAmount = 0, paymentMethod = 'Nequi') => {
+  const getBookingConfirmationWhatsAppUrl = (b, customNotes = '', targetPhone = null, chosenLine = 'line1') => {
     if (!b) return '#';
-    let cleanPhone = (targetPhone || b.clientWhatsApp || '').replace(/\D/g, '');
+    let cleanPhone = (targetPhone || b.clientWhatsApp || b.client_whatsapp || '').replace(/\D/g, '');
     if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
       cleanPhone = '57' + cleanPhone;
     }
-    const text = encodeURIComponent(getBookingConfirmationPlainText(b, customNotes, chosenLine, paidAmount, paymentMethod));
+    const text = encodeURIComponent(getBookingConfirmationPlainText(b, customNotes, chosenLine));
     return `https://wa.me/${cleanPhone}?text=${text}`;
+  };
+
+  const getPaymentReceiptPlainText = (b, payment, chosenLine = 'line1') => {
+    if (!b || !payment) return '';
+    const rawName = (b.clientName || b.client_name || 'Cliente').trim();
+    const firstName = rawName.split(' ')[0] || rawName;
+    const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+    const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
+    const total = Number(b.totalPrice ?? b.total_price ?? 0);
+    const amount = Number(payment.amount || 0);
+    const method = String(payment.method || 'Nequi').toUpperCase();
+    const fin = computeBookingPaymentStatus(b, [...(payments || []), payment]);
+    const balance = fin.remaining;
+    const isFull = fin.isFullyPaid;
+    const receiptUrl = `https://sebastiang.app/#recibo=${b.receiptToken || b.id}&paid=${amount}&method=${encodeURIComponent(payment.method || 'nequi')}`;
+
+    return (
+      `📸 *¡Hola ${formattedFirstName}! Te saluda Sebastian G.* ✨\n\n` +
+      `¡Comprobante de Pago Registrado con Éxito! 💵✅\n\n` +
+      `He registrado tu pago en el sistema contable para tu *Sesión Fotográfica*:\n\n` +
+      `💰 *Total de la Sesión:* $${total.toLocaleString('es-CO')} COP\n` +
+      `✅ *Valor Recibido:* $${amount.toLocaleString('es-CO')} COP (${method})\n` +
+      (isFull
+        ? `🏆 *Estado:* ¡PAZ Y SALVO 100% SALDADO!\n`
+        : `⏳ *Saldo Pendiente para el Día de la Sesión:* $${balance.toLocaleString('es-CO')} COP\n`
+      ) +
+      `📄 *Consulta tu Comprobante Digital:* ${receiptUrl}\n\n` +
+      `¡Muchas gracias por tu pago! Si tienes alguna duda, escríbeme directamente por aquí (+57 ${myPhone}). 📸✨`
+    );
+  };
+
+  const getSessionCompletedPlainText = (b, customNotes = '', chosenLine = 'line1') => {
+    if (!b) return '';
+    const rawName = (b.clientName || b.client_name || 'Cliente').trim();
+    const firstName = rawName.split(' ')[0] || rawName;
+    const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+    const loc = b.specificLocation || b.specific_location || (b.locationType === 'outside' ? 'Locación con Desplazamiento' : 'Locación Acordada');
+    const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
+
+    return (
+      `🎉 *¡Hola ${formattedFirstName}! Muchísimas gracias por la sesión de hoy.* 📸✨\n\n` +
+      `¡Fue un verdadero placer realizar tu sesión fotográfica de *${b.packageName || b.package_name || 'Fotografía'}* hoy en ${loc}!\n\n` +
+      `Tu sesión fue todo un éxito. En este momento ya nos encontramos en el proceso de respaldo digital y revelado/edición de tus fotografías.\n\n` +
+      `⏳ *¿Qué sigue ahora?*\n` +
+      `• Muy pronto te enviaré el enlace privado exclusivo para que puedas visualizar todas las tomas y seleccionar tus fotos favoritas.\n` +
+      `• Si tu paquete incluye fotos impresas o retablos, te indicaremos cómo recibirlos una vez finalizada la selección.\n\n` +
+      (customNotes && customNotes.trim() ? `📝 *Nota de Sebastian G:* "${customNotes.trim()}"\n\n` : '') +
+      `¡Muchísimas gracias por confiar en mi trabajo y en mi lente! Si tienes alguna duda, escríbeme por aquí (+57 ${myPhone}). 📸✨`
+    );
   };
 
   const handleOpenConfirmBookingModal = (booking) => {
     setConfirmingBooking(booking);
-    setConfirmPhone(booking?.clientWhatsApp || '');
+    setConfirmPhone(booking?.clientWhatsApp || booking?.client_whatsapp || '');
     setConfirmNote('');
     setConfirmSuccessMsg('');
     setConfirmCopied(false);
     setConfirmWhatsAppLine('line1');
-    setConfirmAutoRegisterPayment(true);
-    setConfirmPaymentType('deposit');
-    setConfirmPaymentMethod('nequi');
   };
 
   const handleSendBookingConfirmation = async (chosenLine = confirmWhatsAppLine) => {
     if (!confirmingBooking) return;
     setIsConfirmingBookingStatus(true);
     try {
-      const activePhone = (confirmPhone || '').trim() || confirmingBooking.clientWhatsApp;
-      const total = Number(confirmingBooking.totalPrice || 0);
+      const activePhone = (confirmPhone || '').trim() || confirmingBooking.clientWhatsApp || confirmingBooking.client_whatsapp || '';
 
-      // 1. Calcular el monto a acreditar (abono o pago total)
-      const finConfirm = computeBookingPaymentStatus(confirmingBooking, payments || []);
-      const amountToCredit = confirmAutoRegisterPayment
-        ? (confirmPaymentType === 'deposit'
-            ? Math.min(finConfirm.remaining, Math.round(total * 0.5))
-            : finConfirm.remaining)
-        : Math.round(total * 0.5);
-
-      const concept = confirmPaymentType === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
-
-      // 2. Asegurar que el estado quede como 'confirmed' en base de datos y localmente
-      const updatedObj = { ...confirmingBooking, status: 'confirmed', clientWhatsApp: activePhone };
+      // 1. Asegurar que el estado quede como 'confirmed' en base de datos y localmente (CONFIRMACIÓN DE FECHA Y SESIÓN)
+      const updatedObj = { ...confirmingBooking, status: 'confirmed', clientWhatsApp: activePhone, client_whatsapp: activePhone };
       await updateAdminBooking(confirmingBooking.id, updatedObj);
       saveLocalBooking(updatedObj);
       setBookings(prev => {
@@ -2078,70 +2115,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         return [updatedObj, ...list];
       });
 
-      // 3. Auto-registrar pago en caja si está activado
-      if (confirmAutoRegisterPayment && amountToCredit > 0) {
-        try {
-          const resPay = await createPayment({
-            clientName: confirmingBooking.clientName,
-            clientWhatsApp: activePhone,
-            sessionToken: String(confirmingBooking.id),
-            packageTitle: confirmingBooking.packageName || 'Sesión Fotográfica',
-            amount: amountToCredit,
-            method: confirmPaymentMethod,
-            reference: `Abono Reserva #${confirmingBooking.id}`,
-            concept: concept,
-            status: 'verified'
-          });
-          if (resPay && resPay.payment) {
-            setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
-          }
-        } catch (payErr) {
-          console.warn('Error al auto-registrar pago en saldo de fotos:', payErr);
-        }
-      }
-
-      // 4. Generar el PDF vectorial de alta resolución del comprobante
-      let receiptPdfRes = null;
-      try {
-        receiptPdfRes = await generateLuxuryReceiptPdf({
-          booking: updatedObj,
-          paidAmount: amountToCredit,
-          paymentMethod: confirmPaymentMethod,
-          notes: confirmNote || concept
-        });
-      } catch (pdfErr) {
-        console.warn('Error generando PDF de comprobante al confirmar reserva:', pdfErr);
-      }
-
-      // 5. Enviar comprobante oficial 100% automático por correo con PDF adjunto si tiene email
+      // 2. Enviar correo oficial de confirmación de cita al cliente si tiene email registrado
       if (confirmingBooking.clientEmail && confirmingBooking.clientEmail.includes('@')) {
         sendEmailNotification({
-          type: 'payment_receipt',
+          type: 'booking_confirmation',
           data: {
             booking: updatedObj,
-            paidAmount: amountToCredit,
-            paymentMethod: confirmPaymentMethod,
-            notes: confirmNote,
-            pdfBase64: receiptPdfRes ? receiptPdfRes.getRawBase64() : null
+            customNotes: confirmNote
           }
         }).then(resEmail => {
           if (resEmail?.success) {
-            console.log('✓ Comprobante con PDF adjunto enviado automáticamente al correo:', confirmingBooking.clientEmail);
+            console.log('✓ Correo oficial de cita confirmada enviado al cliente:', confirmingBooking.clientEmail);
           }
-        }).catch(err => console.error('Error enviando comprobante por correo:', err));
+        }).catch(err => console.error('Error enviando correo de confirmación de cita:', err));
       }
 
-      // 6. Generar URL de WhatsApp formateada con el enlace oficial al comprobante
+      // 3. Generar URL de WhatsApp formateada con el mensaje oficial de confirmación de fecha y sesión
       const url = getBookingConfirmationWhatsAppUrl(
         confirmingBooking,
         confirmNote,
         activePhone,
-        chosenLine,
-        amountToCredit,
-        confirmPaymentMethod
+        chosenLine
       );
       const lineLabel = chosenLine === 'line2' ? 'Línea 2 (302 369 6513)' : 'Línea 1 (324 472 5167)';
-      setConfirmSuccessMsg(`✓ ¡Reserva y pago confirmados con éxito! Abriendo WhatsApp desde tu ${lineLabel}...`);
+      setConfirmSuccessMsg(`✓ ¡Sesión y fecha confirmadas con éxito! Abriendo WhatsApp desde tu ${lineLabel}...`);
       setLastSentWhatsAppUrl(url);
 
       openWhatsAppSafely(url);
@@ -2158,15 +2155,129 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
+  const handleOpenPaymentModal = (booking, type = 'deposit') => {
+    if (!booking) return;
+    const total = Number(booking.totalPrice ?? booking.total_price ?? 0);
+    const fin = computeBookingPaymentStatus(booking, payments || []);
+    const defaultAmount = type === 'deposit'
+      ? (fin.hasDeposit ? fin.remaining : Math.min(fin.remaining, Math.round(total * 0.5)))
+      : fin.remaining;
+
+    setPaymentModalBooking({ booking, type });
+    setPaymentModalAmount(defaultAmount > 0 ? defaultAmount : total);
+    setPaymentModalMethod('nequi');
+    setPaymentModalNotifyClient(true);
+    setPaymentModalWhatsAppLine('line1');
+  };
+
+  const handleConfirmRegisterPaymentModal = async () => {
+    if (!paymentModalBooking || !paymentModalBooking.booking) return;
+    const { booking, type } = paymentModalBooking;
+    const amount = Number(paymentModalAmount) || 0;
+    if (amount <= 0) {
+      alert('Por favor ingresa un monto válido mayor a $0 COP.');
+      return;
+    }
+
+    setIsSubmittingPaymentModal(true);
+    try {
+      const cName = String(booking.clientName || booking.client_name || 'Cliente').trim();
+      const cPhone = String(booking.clientWhatsApp || booking.client_whatsapp || '').trim();
+      const cPkg = String(booking.packageName || booking.package_name || 'Sesión Fotográfica').trim();
+      const cLoc = String(booking.specificLocation || booking.specific_location || 'San Antero').trim();
+      const cDate = String(booking.dateTime || booking.date_time || '').trim();
+
+      const concept = type === 'deposit' ? 'Abono Sesión Fotográfica' : 'Pago Total Sesión Fotográfica';
+
+      const resPay = await createPayment({
+        clientName: cName,
+        clientWhatsApp: cPhone,
+        sessionToken: String(booking.id),
+        packageTitle: cPkg,
+        amount,
+        method: paymentModalMethod,
+        reference: `Pago Reserva #${booking.id}`,
+        concept,
+        status: 'verified'
+      });
+
+      let newPayment = resPay?.payment;
+      if (newPayment) {
+        setPayments(prev => [newPayment, ...prev.filter(p => p.id !== newPayment.id)]);
+      }
+
+      // Si el cliente tiene correo y se seleccionó notificar, enviar comprobante por correo
+      if (paymentModalNotifyClient && booking.clientEmail && booking.clientEmail.includes('@')) {
+        let pdfRes = null;
+        try {
+          pdfRes = await generateLuxuryReceiptPdf({
+            booking,
+            paidAmount: amount,
+            paymentMethod: paymentModalMethod,
+            notes: concept
+          });
+        } catch (e) {
+          console.warn('Error al generar PDF de comprobante:', e);
+        }
+
+        sendEmailNotification({
+          type: 'payment_receipt',
+          data: {
+            booking,
+            paidAmount: amount,
+            paymentMethod: paymentModalMethod,
+            notes: concept,
+            pdfBase64: pdfRes ? pdfRes.getRawBase64() : null
+          }
+        }).catch(err => console.error('Error enviando comprobante por correo:', err));
+      }
+
+      // Si se seleccionó notificar, abrir WhatsApp con el comprobante de pago
+      if (paymentModalNotifyClient) {
+        const text = getPaymentReceiptPlainText(booking, { amount, method: paymentModalMethod }, paymentModalWhatsAppLine);
+        let cleanPhone = cPhone.replace(/\D/g, '');
+        if (cleanPhone.length === 10 && !cleanPhone.startsWith('57')) {
+          cleanPhone = '57' + cleanPhone;
+        }
+        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+        openWhatsAppSafely(waUrl);
+      }
+
+      // Guardar en Directorio VIP
+      const updatedPayments = newPayment ? [...(payments || []), newPayment] : payments;
+      const finAfter = computeBookingPaymentStatus(booking, updatedPayments);
+      const clientPhone = cPhone.replace(/\D/g, '');
+      const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+      saveVipClient({
+        id: `vip-${activePhone}`,
+        name: cName,
+        phone: cPhone,
+        email: booking.clientEmail || booking.client_email || '',
+        location: cLoc,
+        totalPrice: Number(booking.totalPrice ?? booking.total_price ?? 0),
+        amountPaid: finAfter.totalPaid,
+        packageName: cPkg,
+        dateTime: cDate,
+        incrementSession: false,
+        notes: `Pago registrado vía ${paymentModalMethod.toUpperCase()}.`
+      }).catch(() => {});
+
+      setPaymentModalBooking(null);
+      alert(`✓ ¡${type === 'deposit' ? 'Abono' : 'Pago completo'} de $${amount.toLocaleString('es-CO')} COP registrado con éxito en ${paymentModalMethod.toUpperCase()}!`);
+    } catch (err) {
+      alert('Error al registrar el pago: ' + err.message);
+    } finally {
+      setIsSubmittingPaymentModal(false);
+    }
+  };
+
   const handleQuickRegisterBookingPayment = async (booking, type = 'deposit', method = 'nequi') => {
-    const total = Number(booking.totalPrice || 0);
-    // Topado al saldo pendiente: antes precargaba el 50% del total aunque el
-    // cliente ya hubiera abonado, lo que abría la puerta al doble cobro.
+    const total = Number(booking.totalPrice ?? booking.total_price ?? 0);
     const finQuick = computeBookingPaymentStatus(booking, payments || []);
     const amount = type === 'deposit'
       ? Math.min(finQuick.remaining, Math.round(total * 0.5))
-      : finQuick.remaining;
-    const concept = type === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
+      : (type === 'remaining' ? finQuick.remaining : finQuick.remaining);
+    const concept = type === 'deposit' ? 'Abono 50% Sesión' : (type === 'remaining' ? 'Saldo Restante Sesión' : 'Pago Total 100% Sesión');
     
     const cName = String(booking.clientName || booking.client_name || 'Cliente').trim();
     const cPhone = String(booking.clientWhatsApp || booking.client_whatsapp || '').trim();
@@ -2190,77 +2301,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
       }
 
-      if (type === 'total') {
-        await updateAdminBooking(booking.id, { status: 'completed' });
-        setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'completed' } : b));
-
-        const clientPhone = cPhone.replace(/\D/g, '');
-        const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
-        const vipSaved = await saveVipClient({
-          id: `vip-${activePhone}`,
-          name: cName,
-          phone: cPhone,
-          email: booking.clientEmail || booking.client_email || '',
-          location: cLoc,
-          totalPrice: total,
-          amountPaid: total,
-          packageName: cPkg,
-          dateTime: cDate,
-          incrementSession: true,
-          notes: `Sesión 100% pagada en 1 solo pago (${method.toUpperCase()}).`
-        });
-        if (vipSaved) {
-          setVipClients(prev => {
-            const exists = prev.find(v => v.id === vipSaved.id);
-            return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
-          });
-        }
-        alert(`✓ ¡Pago total de $${amount.toLocaleString('es-CO')} COP acreditado con éxito en ${method.toUpperCase()} para ${booking.clientName}!\n\n🏆 La reserva quedó PAGADA AL 100% y se archivó en 'Pagadas 100%'.\n⭐ Cliente preservado en el Directorio VIP con 15% de beneficio.`);
-      } else {
-        if (booking.status !== 'confirmed') {
-          await updateBookingStatus(booking.id, 'confirmed');
-          setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'confirmed' } : b));
-        }
-        alert(`✓ ¡Abono del 50% ($${amount.toLocaleString('es-CO')} COP) acreditado con éxito en ${method.toUpperCase()} para ${booking.clientName}!\n\nCupo reservado con éxito. Ahora aparece en la pestaña 'Con Abono'.`);
-      }
-    } catch (err) {
-      alert('Error al registrar pago: ' + err.message);
-    }
-  };
-
-  const handleRegisterRemainingBookingPayment = async (booking, remainingAmount, method = 'nequi') => {
-    const cName = String(booking.clientName || booking.client_name || 'Cliente').trim();
-    const cPhone = String(booking.clientWhatsApp || booking.client_whatsapp || '').trim();
-    const cPkg = String(booking.packageName || booking.package_name || 'Sesión Fotográfica').trim();
-    const cLoc = String(booking.specificLocation || booking.specific_location || 'San Antero').trim();
-    const cDate = String(booking.dateTime || booking.date_time || '').trim();
-
-    try {
-      const resPay = await createPayment({
-        clientName: cName,
-        clientWhatsApp: cPhone,
-        sessionToken: String(booking.id),
-        packageTitle: cPkg,
-        amount: remainingAmount,
-        method,
-        reference: `Saldo Final Reserva #${booking.id}`,
-        concept: 'Saldo Final 50% Sesión',
-        status: 'verified'
-      });
-      if (resPay && resPay.payment) {
-        setPayments(prev => [resPay.payment, ...prev.filter(p => p.id !== resPay.payment.id)]);
-      }
-
-      // Marcar reserva como 100% completada y archivar de la agenda activa
-      await updateAdminBooking(booking.id, { status: 'completed' });
-      setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'completed' } : b));
-
-      // Guardar cliente en Directorio VIP
       const clientPhone = cPhone.replace(/\D/g, '');
       const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
-      const total = Number(booking.totalPrice ?? booking.total_price ?? 0);
-
-      const vipSaved = await saveVipClient({
+      saveVipClient({
         id: `vip-${activePhone}`,
         name: cName,
         phone: cPhone,
@@ -2270,20 +2313,99 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         amountPaid: total,
         packageName: cPkg,
         dateTime: cDate,
-        incrementSession: true,
-        notes: `Sesión 100% pagada (Saldo final recibido vía ${method.toUpperCase()}).`
-      });
+        incrementSession: false,
+        notes: `Pago registrado vía ${method.toUpperCase()}.`
+      }).catch(() => {});
 
-      if (vipSaved) {
-        setVipClients(prev => {
-          const exists = prev.find(v => v.id === vipSaved.id);
-          return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
-        });
+      if (type === 'total' || type === 'remaining') {
+        alert(`✓ ¡Pago de $${amount.toLocaleString('es-CO')} COP acreditado con éxito en ${method.toUpperCase()} para ${cName}!\n\n🏆 La reserva quedó PAGADA AL 100%. (La fecha de la sesión sigue en agenda activa hasta que se realice).`);
+      } else {
+        alert(`✓ ¡Abono del 50% ($${amount.toLocaleString('es-CO')} COP) acreditado con éxito en ${method.toUpperCase()} para ${cName}!\n\nCupo reservado con éxito. Aparece en la pestaña 'Con Abono'.`);
+      }
+    } catch (err) {
+      alert('Error al registrar pago: ' + err.message);
+    }
+  };
+
+  const handleRegisterRemainingBookingPayment = async (booking, remainingAmount, method = 'nequi') => {
+    return handleQuickRegisterBookingPayment(booking, 'remaining', method);
+  };
+
+  const handleOpenCompleteSessionModal = (booking) => {
+    setSessionCompletedBooking(booking);
+    setSessionCompletedNotifyClient(true);
+    setSessionCompletedWhatsAppLine('line1');
+    setSessionCompletedNote('');
+    setSessionCompletedSuccessMsg('');
+  };
+
+  const handleConfirmCompleteSession = async (notify = sessionCompletedNotifyClient) => {
+    if (!sessionCompletedBooking) return;
+    const b = sessionCompletedBooking;
+    setIsSubmittingSessionCompleted(true);
+    try {
+      // 1. Actualizar estado de la reserva a 'completed' (Sesión Realizada)
+      const updated = { ...b, status: 'completed' };
+      await updateAdminBooking(b.id, { status: 'completed' });
+      saveLocalBooking(updated);
+      setBookings(prev => prev.map(item => item.id === b.id ? { ...item, status: 'completed' } : item));
+
+      // 2. Guardar cliente en Directorio VIP con incremento de sesión realizada
+      const cName = String(b.clientName || b.client_name || 'Cliente').trim();
+      const cPhone = String(b.clientWhatsApp || b.client_whatsapp || '').trim();
+      const clientPhone = cPhone.replace(/\D/g, '');
+      const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
+      const fin = computeBookingPaymentStatus(b, payments || []);
+
+      saveVipClient({
+        id: `vip-${activePhone}`,
+        name: cName,
+        phone: cPhone,
+        email: b.clientEmail || b.client_email || '',
+        location: b.specificLocation || b.specific_location || 'San Antero',
+        totalPrice: Number(b.totalPrice ?? b.total_price ?? 0),
+        amountPaid: fin.totalPaid,
+        packageName: b.packageName || b.package_name || 'Sesión Fotográfica',
+        dateTime: b.dateTime || b.date_time || '',
+        incrementSession: true,
+        notes: 'Sesión realizada exitosamente.'
+      }).then(vipSaved => {
+        if (vipSaved) {
+          setVipClients(prev => {
+            const exists = prev.find(v => v.id === vipSaved.id);
+            return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
+          });
+        }
+      }).catch(() => {});
+
+      // 3. Notificar al cliente si la opción está marcada
+      if (notify) {
+        // Enviar correo de sesión realizada si tiene email registrado
+        if (b.clientEmail && b.clientEmail.includes('@')) {
+          sendEmailNotification({
+            type: 'session_completed',
+            data: {
+              booking: updated,
+              customNotes: sessionCompletedNote
+            }
+          }).catch(err => console.error('Error enviando correo de sesión realizada:', err));
+        }
+
+        // Abrir WhatsApp con el mensaje de agradecimiento y fotos en proceso
+        const waText = getSessionCompletedPlainText(b, sessionCompletedNote, sessionCompletedWhatsAppLine);
+        let phoneClean = cPhone.replace(/\D/g, '');
+        if (phoneClean.length === 10 && !phoneClean.startsWith('57')) {
+          phoneClean = '57' + phoneClean;
+        }
+        const waUrl = `https://wa.me/${phoneClean}?text=${encodeURIComponent(waText)}`;
+        openWhatsAppSafely(waUrl);
       }
 
-      alert(`✓ ¡Saldo final de $${remainingAmount.toLocaleString('es-CO')} COP acreditado a ${method.toUpperCase()}!\n\n🏆 La reserva de ${booking.clientName} quedó PAGADA AL 100% y se archivó automáticamente en 'Pagadas 100%'.\n⭐ Datos preservados en el Directorio VIP con su 15% de beneficio.`);
+      setSessionCompletedBooking(null);
     } catch (err) {
-      alert('Error al registrar saldo final: ' + err.message);
+      alert('Error al marcar sesión como realizada: ' + err.message);
+    } finally {
+      setIsSubmittingSessionCompleted(false);
     }
   };
 
@@ -2385,8 +2507,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
   const handleStatusChange = async (bookingId, newStatus) => {
     try {
+      const b = (bookings || []).find(item => item.id === bookingId);
+      if (newStatus === 'confirmed') {
+        if (b) {
+          handleOpenConfirmBookingModal({ ...b, status: newStatus });
+        }
+        return;
+      }
+      if (newStatus === 'completed') {
+        if (b) {
+          handleOpenCompleteSessionModal(b);
+        }
+        return;
+      }
+
       if (newStatus === 'pending') {
-        const b = bookings.find(item => item.id === bookingId);
         const bPayments = (payments || []).filter(
           p => (String(p.sessionToken) === String(bookingId) || (b && p.clientName && b.clientName && p.clientName.trim().toLowerCase() === b.clientName.trim().toLowerCase())) && p.status !== 'rejected'
         );
@@ -2404,46 +2539,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }
 
       await updateBookingStatus(bookingId, newStatus);
-      const target = bookings.find(item => item.id === bookingId);
-      if (target) {
-        saveLocalBooking({ ...target, status: newStatus });
+      if (b) {
+        saveLocalBooking({ ...b, status: newStatus });
       }
-      setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
-      if (newStatus === 'confirmed') {
-        const b = bookings.find(item => item.id === bookingId);
-        if (b) {
-          handleOpenConfirmBookingModal({ ...b, status: newStatus });
-        }
-      } else if (newStatus === 'completed') {
-        const b = bookings.find(item => item.id === bookingId);
-        if (b) {
-          const clientPhone = (b.clientWhatsApp || '').replace(/\D/g, '');
-          const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
-          const total = Number(b.totalPrice || 0);
-          saveVipClient({
-            id: `vip-${activePhone}`,
-            name: b.clientName,
-            phone: b.clientWhatsApp,
-            email: b.clientEmail,
-            location: b.specificLocation || 'San Antero',
-            totalPrice: total,
-            amountPaid: total,
-            packageName: b.packageName,
-            dateTime: b.dateTime,
-            incrementSession: true,
-            notes: 'Sesión completada y pagada.'
-          }).then(vipSaved => {
-            if (vipSaved) {
-              setVipClients(prev => {
-                const exists = prev.find(v => v.id === vipSaved.id);
-                return exists ? prev.map(v => v.id === vipSaved.id ? vipSaved : v) : [vipSaved, ...prev];
-              });
-            }
-          }).catch(() => {});
-        }
-      }
+      setBookings(prev => prev.map(item => item.id === bookingId ? { ...item, status: newStatus } : item));
     } catch (err) {
-      alert('Error al actualizar estado');
+      alert('Error al actualizar estado: ' + err.message);
     }
   };
 
@@ -4840,14 +4941,17 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               };
             };
 
-            const completedBookings = bookings.filter(b => getFinancials(b).isFullyPaid);
-            const withDepositBookings = bookings.filter(b => getFinancials(b).hasDeposit);
-            const pendingAbonoBookings = bookings.filter(b => getFinancials(b).isPendingAbono);
-            const activeBookings = bookings.filter(b => !getFinancials(b).isFullyPaid);
+            const sessionCompletedBookings = bookings.filter(b => b.status === 'completed');
+            const fullyPaidBookings = bookings.filter(b => getFinancials(b).isFullyPaid);
+            const withDepositBookings = bookings.filter(b => getFinancials(b).hasDeposit && b.status !== 'completed');
+            const pendingAbonoBookings = bookings.filter(b => getFinancials(b).isPendingAbono && b.status !== 'completed');
+            const activeBookings = bookings.filter(b => b.status !== 'completed');
 
             const displayedBookings =
-              bookingFilterStatus === 'completed'
-                ? completedBookings
+              bookingFilterStatus === 'completed' || bookingFilterStatus === 'session_done'
+                ? sessionCompletedBookings
+                : bookingFilterStatus === 'paid_full'
+                ? fullyPaidBookings
                 : bookingFilterStatus === 'with_deposit'
                 ? withDepositBookings
                 : bookingFilterStatus === 'pending_deposit'
@@ -4917,19 +5021,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                     <button
                       type="button"
-                      onClick={() => setBookingFilterStatus('completed')}
+                      onClick={() => setBookingFilterStatus('paid_full')}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                        bookingFilterStatus === 'completed'
+                        bookingFilterStatus === 'paid_full'
                           ? 'bg-emerald-500 text-stone-950 shadow-md font-black'
                           : 'text-stone-400 hover:text-white bg-stone-900/60'
                       }`}
                       title="Reservas pagadas al 100% (abono + saldo final cancelado)"
                     >
-                      <span>🏆 Pagadas 100%</span>
+                      <span>🟢 Pagadas 100%</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                        bookingFilterStatus === 'completed' ? 'bg-stone-950 text-emerald-300' : 'bg-stone-800 text-stone-300'
+                        bookingFilterStatus === 'paid_full' ? 'bg-stone-950 text-emerald-300' : 'bg-stone-800 text-stone-300'
                       }`}>
-                        {completedBookings.length}
+                        {fullyPaidBookings.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingFilterStatus('session_done')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        bookingFilterStatus === 'session_done'
+                          ? 'bg-teal-500 text-stone-950 shadow-md font-black'
+                          : 'text-stone-400 hover:text-white bg-stone-900/60'
+                      }`}
+                      title="Sesiones que ya fueron tomadas y realizadas por el fotógrafo"
+                    >
+                      <span>📸 Sesión Realizada</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        bookingFilterStatus === 'session_done' ? 'bg-stone-950 text-teal-300' : 'bg-stone-800 text-stone-300'
+                      }`}>
+                        {sessionCompletedBookings.length}
                       </span>
                     </button>
 
@@ -4956,8 +5078,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       ? 'Sesiones que aún no han realizado su primer abono'
                       : bookingFilterStatus === 'with_deposit'
                       ? 'Sesiones con cupo asegurado (50% abonado, falta saldo)'
-                      : bookingFilterStatus === 'completed'
-                      ? 'Sesiones pagadas al 100% y clientes en Directorio VIP'
+                      : bookingFilterStatus === 'paid_full'
+                      ? 'Sesiones con el valor total pagado al 100%'
+                      : bookingFilterStatus === 'session_done'
+                      ? 'Sesiones fotográficas tomadas y realizadas'
                       : 'Todas las reservas'}
                   </span>
                 </div>
@@ -5762,81 +5886,88 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                               </div>
                             )}
 
-                            {/* BOTONES RÁPIDOS 1-TAP (SIN DIGITAR NÚMEROS) */}
-                            {totalPaid === 0 && (
-                              <div className="pt-2 space-y-1.5 border-t border-stone-800">
-                                <span className="text-[10px] text-stone-400 block font-medium">
-                                  ⚡ Acreditar abono con 1 toque (sin digitar):
-                                </span>
-                                <div className="grid grid-cols-3 gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'nequi')}
-                                    className="py-1.5 px-1 bg-purple-950/70 hover:bg-purple-900 border border-purple-500/40 text-purple-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center flex flex-col items-center justify-center gap-0.5"
-                                    title="Acreditar 50% de abono a Nequi automáticamente"
-                                  >
-                                    <span className="text-[#ff007a] font-extrabold text-[11px]">Nequi</span>
-                                    <span className="font-mono font-semibold">${deposit50.toLocaleString('es-CO')}</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'daviplata')}
-                                    className="py-1.5 px-1 bg-red-950/70 hover:bg-red-900 border border-red-500/40 text-red-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center flex flex-col items-center justify-center gap-0.5"
-                                    title="Acreditar 50% de abono a DaviPlata automáticamente"
-                                  >
-                                    <span className="text-[#ed1c24] font-extrabold text-[11px]">DaviPlata</span>
-                                    <span className="font-mono font-semibold">${deposit50.toLocaleString('es-CO')}</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleQuickRegisterBookingPayment(booking, 'deposit', 'dale')}
-                                    className="py-1.5 px-1 bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center flex flex-col items-center justify-center gap-0.5"
-                                    title="Acreditar 50% de abono a Dale! automáticamente"
-                                  >
-                                    <span className="text-[#ffdd00] font-extrabold text-[11px]">Dale!</span>
-                                    <span className="font-mono font-semibold">${deposit50.toLocaleString('es-CO')}</span>
-                                  </button>
-                                </div>
+                            {/* OPCIONES EXPLÍCITAS DE PAGO: "ABONO" Y "PAGO COMPLETO" */}
+                            <div className="pt-2 space-y-2 border-t border-stone-800">
+                              <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider block">
+                                Registrar ingreso de dinero:
+                              </span>
+                              <div className="grid grid-cols-2 gap-2">
+                                {/* OPCIÓN 1: ABONO */}
                                 <button
                                   type="button"
-                                  onClick={() => handleQuickRegisterBookingPayment(booking, 'total', 'nequi')}
-                                  className="w-full py-1 text-[10px] text-stone-400 hover:text-emerald-400 text-center font-semibold hover:underline block"
+                                  onClick={() => handleOpenPaymentModal(booking, 'deposit')}
+                                  className="p-2.5 bg-gradient-to-r from-purple-950/80 to-purple-900/80 hover:from-purple-900 hover:to-purple-800 border border-purple-500/50 text-purple-200 rounded-xl text-xs font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 shadow-md text-center"
+                                  title="Registrar abono del 50% o personalizado para asegurar cupo"
                                 >
-                                  O registrar pago total 100% (${totalPrice.toLocaleString('es-CO')} COP)
+                                  <div className="flex items-center gap-1.5 font-black text-purple-300 text-xs">
+                                    <DollarSign className="w-3.5 h-3.5 text-purple-400" />
+                                    <span>Abono</span>
+                                  </div>
+                                  <span className="font-mono text-[10px] text-purple-200/90 font-semibold">
+                                    {hasDeposit ? `Abonar más ($${remaining.toLocaleString('es-CO')})` : `50%: $${deposit50.toLocaleString('es-CO')}`}
+                                  </span>
+                                </button>
+
+                                {/* OPCIÓN 2: PAGO COMPLETO */}
+                                <button
+                                  type="button"
+                                  disabled={isFullyPaid}
+                                  onClick={() => handleOpenPaymentModal(booking, 'total')}
+                                  className={`p-2.5 rounded-xl text-xs font-bold transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5 shadow-md text-center ${
+                                    isFullyPaid
+                                      ? 'bg-stone-900 border border-stone-800 text-stone-500 cursor-not-allowed opacity-60'
+                                      : 'bg-gradient-to-r from-emerald-950/80 to-emerald-900/80 hover:from-emerald-900 hover:to-emerald-800 border border-emerald-500/50 text-emerald-200'
+                                  }`}
+                                  title="Registrar pago completo del 100% de la sesión"
+                                >
+                                  <div className="flex items-center gap-1.5 font-black text-emerald-300 text-xs">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Pago Completo</span>
+                                  </div>
+                                  <span className="font-mono text-[10px] text-emerald-200/90 font-semibold">
+                                    {isFullyPaid ? '✓ 100% Saldado' : `$${remaining.toLocaleString('es-CO')} COP`}
+                                  </span>
                                 </button>
                               </div>
-                            )}
 
-                            {hasDeposit && remaining > 0 && (
-                              <div className="pt-2 space-y-1.5 border-t border-stone-800">
-                                <span className="text-[10px] text-amber-300 block font-medium">
-                                  Cobrar saldo restante de ${remaining.toLocaleString('es-CO')} COP:
-                                </span>
-                                <div className="grid grid-cols-3 gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRegisterRemainingBookingPayment(booking, remaining, 'nequi')}
-                                    className="py-1.5 px-1 bg-purple-950/70 hover:bg-purple-900 border border-purple-500/40 text-purple-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center"
-                                  >
-                                    🟣 Nequi
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRegisterRemainingBookingPayment(booking, remaining, 'daviplata')}
-                                    className="py-1.5 px-1 bg-red-950/70 hover:bg-red-900 border border-red-500/40 text-red-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center"
-                                  >
-                                    🔴 DaviPlata
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRegisterRemainingBookingPayment(booking, remaining, 'dale')}
-                                    className="py-1.5 px-1 bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-200 rounded-lg text-[10px] font-bold transition-all active:scale-95 text-center"
-                                  >
-                                    🟡 Dale!
-                                  </button>
+                              {/* Accesos rápidos 1-toque directo a cuentas (Nequi, DaviPlata, Dale!) */}
+                              {!isFullyPaid && (
+                                <div className="p-2 rounded-xl bg-stone-950 border border-stone-800/80 space-y-1.5">
+                                  <span className="text-[10px] text-stone-400 font-semibold flex items-center justify-between">
+                                    <span>⚡ Acreditar al instante sin digitar:</span>
+                                    <span className="font-mono text-amber-400 font-bold">
+                                      {hasDeposit ? `$${remaining.toLocaleString('es-CO')}` : `$${deposit50.toLocaleString('es-CO')}`}
+                                    </span>
+                                  </span>
+                                  <div className="grid grid-cols-3 gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickRegisterBookingPayment(booking, hasDeposit ? 'remaining' : 'deposit', 'nequi')}
+                                      className="py-1 px-1 rounded-lg bg-purple-950/80 hover:bg-purple-900 border border-purple-500/40 text-[#ff007a] text-[10px] font-bold active:scale-95 text-center"
+                                      title="Acreditar a Nequi"
+                                    >
+                                      🟣 Nequi
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickRegisterBookingPayment(booking, hasDeposit ? 'remaining' : 'deposit', 'daviplata')}
+                                      className="py-1 px-1 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-500/40 text-[#ed1c24] text-[10px] font-bold active:scale-95 text-center"
+                                      title="Acreditar a DaviPlata"
+                                    >
+                                      🔴 DaviPlata
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickRegisterBookingPayment(booking, hasDeposit ? 'remaining' : 'deposit', 'dale')}
+                                      className="py-1 px-1 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-500/40 text-[#ffdd00] text-[10px] font-bold active:scale-95 text-center"
+                                      title="Acreditar a Dale!"
+                                    >
+                                      🟡 Dale!
+                                    </button>
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )}
+                            </div>
 
                             {/* BOTÓN DE CORRECCIÓN: SI SE REGISTRÓ PAGO O SE MARCÓ PAGADA/CONFIRMADA POR ERROR */}
                             {(isFullyPaid || hasDeposit || bookingPayments.length > 0 || booking.status === 'completed' || booking.status === 'confirmed') && (
@@ -5863,12 +5994,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <select
                             value={booking.status}
                             onChange={(e) => handleStatusChange(booking.id, e.target.value)}
-                            className="bg-stone-950 border border-stone-700 text-xs rounded-lg px-2 py-1.5 text-stone-300"
+                            className="bg-stone-950 border border-stone-700 text-xs rounded-lg px-2 py-1.5 text-stone-300 font-semibold"
                           >
                             <option value="pending">Pendiente</option>
-                            <option value="confirmed">Confirmar</option>
+                            <option value="confirmed">Confirmada</option>
                             <option value="completed">Sesión Realizada</option>
                           </select>
+
+                          {booking.status !== 'completed' && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCompleteSessionModal(booking)}
+                              className="px-2.5 py-1.5 bg-teal-950/80 hover:bg-teal-900 border border-teal-500/40 text-teal-300 rounded-lg text-xs font-bold flex items-center gap-1 transition-all"
+                              title="Marcar sesión como realizada y notificar al cliente"
+                            >
+                              <CheckCircle className="w-3.5 h-3.5 text-teal-400" />
+                              <span className="text-[11px]">Sesión Realizada</span>
+                            </button>
+                          )}
 
                           <button
                             type="button"
@@ -5939,8 +6082,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <CheckCircle2 className="w-4 h-4 shrink-0" />
                           <span>
                             {booking.status === 'confirmed'
-                              ? '✓ Confirmada • Re-enviar WhatsApp'
-                              : '⚡ Confirmar Sesión por WhatsApp'}
+                              ? '✓ Fecha y Sesión Confirmadas • Re-enviar WhatsApp'
+                              : '📅 Confirmar Fecha y Sesión por WhatsApp'}
                           </span>
                         </button>
                       </div>
@@ -11298,55 +11441,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   </p>
                 </div>
               </div>
-              {/* AUTO-ACREDITAR PAGO EN SALDO DE FOTOS */}
-              <div className="p-3.5 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-emerald-300 select-none">
-                    <input
-                      type="checkbox"
-                      checked={confirmAutoRegisterPayment}
-                      onChange={(e) => setConfirmAutoRegisterPayment(e.target.checked)}
-                      className="w-4 h-4 rounded text-emerald-500 bg-stone-950 border-stone-700 focus:ring-emerald-400 cursor-pointer"
-                    />
-                    <span>Acreditar automáticamente este pago al Saldo de Fotos</span>
-                  </label>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    Auto-Cálculo
-                  </span>
-                </div>
-
-                {confirmAutoRegisterPayment && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-stone-400 mb-1">
-                        Tipo de Ingreso:
-                      </label>
-                      <select
-                        value={confirmPaymentType}
-                        onChange={(e) => setConfirmPaymentType(e.target.value)}
-                        className="w-full bg-stone-950 border border-stone-700 text-stone-200 text-xs rounded-xl px-3 py-2 font-bold focus:outline-none focus:border-emerald-400"
-                      >
-                        <option value="deposit">Abono del 50% (${Math.round(Number(confirmingBooking.totalPrice || 0) * 0.5).toLocaleString('es-CO')} COP)</option>
-                        <option value="total">Pago Total 100% (${Number(confirmingBooking.totalPrice || 0).toLocaleString('es-CO')} COP)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-stone-400 mb-1">
-                        Cuenta donde recibiste el dinero:
-                      </label>
-                      <select
-                        value={confirmPaymentMethod}
-                        onChange={(e) => setConfirmPaymentMethod(e.target.value)}
-                        className="w-full bg-stone-950 border border-stone-700 text-stone-200 text-xs rounded-xl px-3 py-2 font-bold focus:outline-none focus:border-emerald-400"
-                      >
-                        <option value="nequi">🟣 Nequi (324 472 5167)</option>
-                        <option value="daviplata">🔴 DaviPlata (@PLATA3244725167)</option>
-                        <option value="dale">🟡 Dale! (@SGG04)</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
+              {/* AVISO IMPORTANTE: CONFIRMACIÓN DE FECHA Y SESIÓN */}
+              <div className="p-3 bg-stone-950/80 border border-stone-800 rounded-2xl flex items-start gap-2.5 text-xs text-stone-300">
+                <span className="p-1 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+                  <Calendar className="w-4 h-4" />
+                </span>
+                <p className="leading-relaxed">
+                  <strong className="text-white">Confirmación Oficial de Agenda:</strong> Esta acción confirma que la sesión se realizará en la fecha y hora pactadas, enviando la notificación al cliente por WhatsApp y Correo. <span className="text-stone-400">Los abonos o pagos completos se registran de forma independiente en las opciones de pago.</span>
+                </p>
               </div>
 
               {/* Botones de acción directos por línea y copiar */}
@@ -11359,7 +11461,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
                   >
                     <MessageCircle className="w-4 h-4 shrink-0" />
-                    <span>📲 Enviar vía Línea 1 (324...)</span>
+                    <span>📲 Confirmar vía Línea 1 (324...)</span>
                   </button>
 
                   <button
@@ -11369,7 +11471,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="py-3 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
                   >
                     <MessageCircle className="w-4 h-4 shrink-0" />
-                    <span>📲 Enviar vía Línea 2 (302...)</span>
+                    <span>📲 Confirmar vía Línea 2 (302...)</span>
                   </button>
                 </div>
 
@@ -11398,6 +11500,309 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA REGISTRAR ABONO O PAGO COMPLETO EXPLÍCITO */}
+      {paymentModalBooking && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative max-w-md w-full bg-stone-900 border border-purple-500/40 rounded-3xl p-6 shadow-2xl space-y-4 my-8 text-left">
+            <div className="flex items-start justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className={`p-2 rounded-xl border ${
+                  paymentModalBooking.type === 'deposit'
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                }`}>
+                  <DollarSign className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    {paymentModalBooking.type === 'deposit' ? 'Registrar Abono de Sesión' : 'Registrar Pago Completo'}
+                  </h3>
+                  <p className="text-xs text-stone-400">
+                    Cliente: <strong className="text-amber-300">{paymentModalBooking.booking?.clientName || paymentModalBooking.booking?.client_name}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPaymentModalBooking(null)}
+                className="p-1.5 rounded-xl bg-stone-800 text-stone-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-stone-950 rounded-2xl border border-stone-800 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-stone-400">📦 Paquete:</span>
+                <span className="font-bold text-stone-200">{paymentModalBooking.booking?.packageName || paymentModalBooking.booking?.package_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-400">💰 Valor Total del Contrato:</span>
+                <span className="font-mono font-bold text-amber-400">
+                  ${Number(paymentModalBooking.booking?.totalPrice ?? paymentModalBooking.booking?.total_price ?? 0).toLocaleString('es-CO')} COP
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-stone-300 font-bold mb-1">
+                  Monto a ingresar en caja ($ COP):
+                </label>
+                <input
+                  type="number"
+                  value={paymentModalAmount}
+                  onChange={(e) => setPaymentModalAmount(Number(e.target.value) || 0)}
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm font-bold focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-stone-300 font-bold mb-1">
+                  Cuenta / Pasarela donde recibiste el dinero:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentModalMethod('nequi')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      paymentModalMethod === 'nequi'
+                        ? 'bg-purple-950 border-[#ff007a] text-white shadow-md'
+                        : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-[#ff007a]" />
+                    <span>Nequi</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentModalMethod('daviplata')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      paymentModalMethod === 'daviplata'
+                        ? 'bg-red-950 border-[#ed1c24] text-white shadow-md'
+                        : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-[#ed1c24]" />
+                    <span>DaviPlata</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentModalMethod('dale')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      paymentModalMethod === 'dale'
+                        ? 'bg-amber-950 border-[#ffdd00] text-white shadow-md'
+                        : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-[#ffdd00]" />
+                    <span>Dale!</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentModalMethod('efectivo')}
+                    className={`p-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      paymentModalMethod === 'efectivo'
+                        ? 'bg-emerald-950 border-emerald-400 text-white shadow-md'
+                        : 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span>Efectivo / Otro</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 bg-stone-950/70 border border-stone-800 rounded-xl space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none text-stone-300 font-bold">
+                  <input
+                    type="checkbox"
+                    checked={paymentModalNotifyClient}
+                    onChange={(e) => setPaymentModalNotifyClient(e.target.checked)}
+                    className="w-4 h-4 rounded text-purple-500 bg-stone-900 border-stone-700"
+                  />
+                  <span>Enviar comprobante oficial por WhatsApp y Correo</span>
+                </label>
+
+                {paymentModalNotifyClient && (
+                  <div className="pt-1 flex items-center justify-between gap-2 text-[11px] text-stone-400">
+                    <span>Línea para enviar WhatsApp:</span>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentModalWhatsAppLine('line1')}
+                        className={`px-2 py-0.5 rounded-md font-bold ${paymentModalWhatsAppLine === 'line1' ? 'bg-emerald-500 text-stone-950' : 'bg-stone-800 text-stone-400'}`}
+                      >
+                        Línea 1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentModalWhatsAppLine('line2')}
+                        className={`px-2 py-0.5 rounded-md font-bold ${paymentModalWhatsAppLine === 'line2' ? 'bg-emerald-500 text-stone-950' : 'bg-stone-800 text-stone-400'}`}
+                      >
+                        Línea 2
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isSubmittingPaymentModal}
+                onClick={handleConfirmRegisterPaymentModal}
+                className="flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-purple-600 via-purple-500 to-purple-600 hover:from-purple-500 hover:to-purple-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95 disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{isSubmittingPaymentModal ? 'Registrando...' : 'Acreditar en Caja'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentModalBooking(null)}
+                className="px-4 py-3 rounded-xl bg-stone-800 text-stone-400 hover:text-white text-xs font-semibold"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE SESIÓN REALIZADA CON OPCIÓN DE NOTIFICAR AL CLIENTE */}
+      {sessionCompletedBooking && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="relative max-w-lg w-full bg-stone-900 border border-teal-500/40 rounded-3xl p-6 shadow-2xl space-y-4 my-8 text-left">
+            <div className="flex items-start justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2.5 rounded-2xl bg-teal-500/20 text-teal-300 border border-teal-500/40">
+                  <CheckCircle className="w-6 h-6" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-white">Marcar Sesión como Realizada</h3>
+                  <p className="text-xs text-stone-400">
+                    Cliente: <strong className="text-amber-300">{sessionCompletedBooking.clientName || sessionCompletedBooking.client_name}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSessionCompletedBooking(null)}
+                className="p-1.5 rounded-xl bg-stone-800 text-stone-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-stone-950 rounded-2xl border border-stone-800 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-stone-400">🗓️ Fecha de la Sesión:</span>
+                <span className="font-bold text-white">{formatDateTime12Hour(sessionCompletedBooking.dateTime || sessionCompletedBooking.date_time)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-400">📦 Paquete:</span>
+                <span className="font-bold text-amber-300">{sessionCompletedBooking.packageName || sessionCompletedBooking.package_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-400">📍 Locación:</span>
+                <span className="text-stone-300">{sessionCompletedBooking.specificLocation || sessionCompletedBooking.specific_location || 'Locación Acordada'}</span>
+              </div>
+            </div>
+
+            <div className="p-4 bg-teal-950/30 border border-teal-500/30 rounded-2xl space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-teal-300">
+                <input
+                  type="checkbox"
+                  checked={sessionCompletedNotifyClient}
+                  onChange={(e) => setSessionCompletedNotifyClient(e.target.checked)}
+                  className="w-4 h-4 rounded text-teal-500 bg-stone-950 border-stone-700 cursor-pointer"
+                />
+                <span>Notificar al cliente por WhatsApp y Correo que la sesión fue realizada</span>
+              </label>
+
+              {sessionCompletedNotifyClient && (
+                <div className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-stone-400 mb-1">
+                      Línea de WhatsApp desde donde enviar el mensaje:
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSessionCompletedWhatsAppLine('line1')}
+                        className={`p-2 rounded-xl border text-xs font-bold transition-all text-center ${
+                          sessionCompletedWhatsAppLine === 'line1'
+                            ? 'bg-emerald-950 border-emerald-400 text-emerald-200'
+                            : 'bg-stone-950 border-stone-800 text-stone-400'
+                        }`}
+                      >
+                        Línea 1 (324 472 5167)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSessionCompletedWhatsAppLine('line2')}
+                        className={`p-2 rounded-xl border text-xs font-bold transition-all text-center ${
+                          sessionCompletedWhatsAppLine === 'line2'
+                            ? 'bg-teal-950 border-teal-400 text-teal-200'
+                            : 'bg-stone-950 border-stone-800 text-stone-400'
+                        }`}
+                      >
+                        Línea 2 (302 369 6513)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-stone-400 mb-1">
+                      Mensaje o indicación adicional para el cliente (opcional):
+                    </label>
+                    <input
+                      type="text"
+                      value={sessionCompletedNote}
+                      onChange={(e) => setSessionCompletedNote(e.target.value)}
+                      placeholder="Ej: Mañana te paso el enlace para que elijas / Todo salió excelente"
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-stone-400 mb-1">
+                      Vista previa del mensaje de WhatsApp:
+                    </label>
+                    <div className="p-3 bg-stone-950/80 border border-stone-800 rounded-xl text-[11px] text-stone-300 whitespace-pre-line leading-relaxed">
+                      {getSessionCompletedPlainText(sessionCompletedBooking, sessionCompletedNote, sessionCompletedWhatsAppLine)}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isSubmittingSessionCompleted}
+                onClick={() => handleConfirmCompleteSession(sessionCompletedNotifyClient)}
+                className="w-full sm:flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95 disabled:opacity-50"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>
+                  {sessionCompletedNotifyClient ? 'Confirmar y Notificar al Cliente' : 'Marcar Realizada'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSessionCompletedBooking(null)}
+                className="w-full sm:w-auto px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white text-xs font-semibold"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}

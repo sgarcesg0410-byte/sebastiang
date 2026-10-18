@@ -459,6 +459,74 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
 }
 
 /**
+ * 2.1 Envía correo de agradecimiento y estado al cliente cuando la sesión se marca como realizada
+ */
+export async function sendSessionCompletedEmail(booking, customNotes = '') {
+  if (!booking || !booking.clientEmail || !booking.clientEmail.includes('@')) {
+    return false;
+  }
+
+  const transporter = getTransporter();
+  if (!transporter) return false;
+
+  const rawName = (booking.clientName || booking.client_name || 'Cliente').trim();
+  const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
+  const loc = escapeHtml(booking.specificLocation || booking.specific_location || 'Locación Acordada');
+  const pkgName = escapeHtml(booking.packageName || booking.package_name || 'Sesión Fotográfica');
+  const dateStr = escapeHtml(booking.dateTime || booking.date_time || 'Fecha acordada');
+
+  try {
+    const html = wrapEmailTemplate(`
+      <div style="background-color: #064e3b; border: 1px solid #059669; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+        <span style="color: #6ee7b7; font-weight: 800; font-size: 15px; text-transform: uppercase; letter-spacing: 1px;">
+          🎉 ¡Sesión Fotográfica Realizada con Éxito!
+        </span>
+      </div>
+      <h2 style="color: #f59e0b; margin-top: 0; font-size: 20px;">
+        ¡Hola ${firstName}! ✨📸
+      </h2>
+      <p style="color: #e7e5e4; font-size: 15px; line-height: 1.6;">
+        Queremos darte las gracias por haber compartido tu tiempo y tu confianza en la sesión de hoy correspondiente a tu <strong>${pkgName}</strong>.
+      </p>
+      <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin: 20px 0;">
+        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">🗓️ <strong>Fecha de la Sesión:</strong> ${dateStr}</p>
+        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📍 <strong>Locación:</strong> ${loc}</p>
+        <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📦 <strong>Paquete:</strong> ${pkgName}</p>
+      </div>
+      ${customNotes && customNotes.trim() ? `
+      <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
+        <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Mensaje de Sebastian G:</span>
+        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(customNotes.trim())}"</p>
+      </div>` : ''}
+      <div style="background-color: #172554; border-left: 4px solid #3b82f6; padding: 14px; border-radius: 8px; margin: 20px 0;">
+        <span style="color: #93c5fd; font-weight: bold; font-size: 13px;">⏳ ¿Qué sigue ahora?</span>
+        <ul style="margin: 8px 0 0; padding-left: 18px; color: #e0e7ff; font-size: 13px; line-height: 1.6;">
+          <li>Tus fotografías ya están en proceso de respaldo digital y revelado profesional.</li>
+          <li>Muy pronto recibirás tu enlace privado exclusivo para que puedas visualizar la preselección y elegir tus fotos favoritas.</li>
+          <li>Si tu paquete incluye fotos impresas o retablos, te indicaremos cómo recibirlos una vez finalizada la selección.</li>
+        </ul>
+      </div>
+      <p style="color: #a8a29e; font-size: 14px; text-align: center; margin-top: 25px;">
+        ¡Fue un verdadero honor haber trabajado contigo frente al lente! Si tienes alguna pregunta, puedes responder directamente a nuestro WhatsApp oficial. 📸✨
+      </p>
+    `);
+
+    await transporter.sendMail({
+      from: '"Sebastian G • Fotografía" <reservas@sebastiang.app>',
+      to: booking.clientEmail.trim(),
+      subject: `🎉 ¡Gracias por tu sesión hoy! Tus fotos ya están en proceso • Sebastian G`,
+      html
+    });
+
+    console.log('✓ Correo de sesión realizada enviado al cliente:', booking.clientEmail);
+    return true;
+  } catch (err) {
+    console.error('Error enviando correo de sesión realizada:', err);
+    return false;
+  }
+}
+
+/**
  * 3. Envía las fotos listas al cliente por correo (WeTransfer o Galería VIP)
  */
 export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageName, downloadUrl, customNotes = '' }) {

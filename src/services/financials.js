@@ -76,9 +76,9 @@ export function computeBookingPaymentStatus(booking, payments = []) {
   const totalPrice = Number(booking.totalPrice) || 0;
   const remaining = Math.max(0, totalPrice - totalPaid);
   const paidPercent = totalPrice > 0 ? Math.round((totalPaid / totalPrice) * 100) : 0;
-  const isFullyPaid = booking.status === 'completed' || (totalPrice > 0 && totalPaid >= totalPrice);
+  const isFullyPaid = totalPrice > 0 ? (totalPaid >= totalPrice) : false;
   const hasDeposit = totalPaid > 0 && !isFullyPaid;
-  const isPendingAbono = totalPaid === 0 && booking.status !== 'completed';
+  const isPendingAbono = totalPaid === 0;
   const deposit50 = Math.round(totalPrice * 0.5);
 
   let suggestedPaymentAmount = 0;
