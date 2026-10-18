@@ -153,14 +153,74 @@ setPasswordVersionGetter(() => getActivePasswordVersionFromStore({
   runtimeDB
 }));
 
+function normalizeBookingDoc(b) {
+  if (!b || !b.id) return null;
+  const name = String(b.clientName || b.client_name || '').trim();
+  const phone = String(b.clientWhatsApp || b.client_whatsapp || '').trim();
+  const email = String(b.clientEmail || b.client_email || '').trim();
+  const pkgId = String(b.packageId || b.package_id || 'pkg-4fotos').trim();
+  const pkgName = String(b.packageName || b.package_name || 'Sesión Fotográfica').trim();
+  const price = Number(b.totalPrice ?? b.total_price ?? 0);
+  const locType = String(b.locationType || b.location_type || 'san_antero').trim();
+  const specLoc = String(b.specificLocation || b.specific_location || '').trim();
+  const dt = String(b.dateTime || b.date_time || '').trim();
+  const desc = String(b.description || b.notes || '').trim();
+  const st = String(b.status || 'pending').trim();
+  const cr = b.createdAt || b.created_at || new Date().toISOString();
+
+  return {
+    ...b,
+    id: b.id,
+    clientName: name,
+    client_name: name,
+    clientWhatsApp: phone,
+    client_whatsapp: phone,
+    clientEmail: email,
+    client_email: email,
+    packageId: pkgId,
+    package_id: pkgId,
+    packageName: pkgName,
+    package_name: pkgName,
+    totalPrice: price,
+    total_price: price,
+    locationType: locType,
+    location_type: locType,
+    specificLocation: specLoc,
+    specific_location: specLoc,
+    dateTime: dt,
+    date_time: dt,
+    description: desc,
+    status: st,
+    createdAt: cr,
+    created_at: cr,
+    isReal: true
+  };
+}
+
+function mergeBookingObjectsServer(existing, incoming) {
+  if (!existing) return normalizeBookingDoc(incoming);
+  if (!incoming) return normalizeBookingDoc(existing);
+  const merged = { ...existing };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v !== undefined && v !== null && v !== '') {
+      if ((k === 'totalPrice' || k === 'total_price') && Number(v) === 0 && Number(existing.totalPrice || existing.total_price || 0) > 0) {
+        continue;
+      }
+      merged[k] = v;
+    }
+  }
+  return normalizeBookingDoc(merged);
+}
+
 async function syncBookingToSupabaseServer(b) {
   if (!b || !b.id) return;
   const supaId = b.id.startsWith('book-') ? b.id : `book-${b.id}`;
+  const normalized = normalizeBookingDoc(b);
 
   // 1. MongoDB Atlas (Persistencia Primaria)
-  if (isMongoConfigured()) {
+  if (isMongoConfigured() && normalized) {
     try {
-      await upsertMongoDoc('bookings', { id: b.id }, { ...b, id: b.id, supaId });
+      await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id, supaId });
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
     }
@@ -794,7 +854,7 @@ app.get('/api/apk/feed', async (req, res) => {
           findMongoDocs('sessions', {}, { createdAt: -1 }, 10),
           findMongoDocs('reviews', {}, { createdAt: -1 }, 10)
         ]);
-        if (Array.isArray(bDocs)) bookings = bDocs.map(({ _id, ...b }) => b);
+        if (Array.isArray(bDocs)) bookings = bDocs.map(({ _id, ...b }) => normalizeBookingDoc(b)).filter(Boolean);
         if (Array.isArray(pDocs)) payments = pDocs.map(({ _id, ...p }) => p);
         if (Array.isArray(sDocs)) sessions = sDocs.map(({ _id, ...s }) => s);
         if (Array.isArray(rDocs)) reviews = rDocs.map(({ _id, ...r }) => r);
@@ -804,7 +864,7 @@ app.get('/api/apk/feed', async (req, res) => {
     }
 
     if (bookings.length === 0 && Array.isArray(runtimeDB.bookings)) {
-      bookings = runtimeDB.bookings.slice(0, 10);
+      bookings = runtimeDB.bookings.slice(0, 10).map(b => normalizeBookingDoc(b)).filter(Boolean);
     }
     if (payments.length === 0 && Array.isArray(runtimeDB.payments)) {
       payments = runtimeDB.payments.slice(0, 10);
@@ -1434,7 +1494,10 @@ app.use('/api/admin', (req, res, next) => {
 app.get('/api/admin/bookings', async (req, res) => {
   try {
     const map = new Map();
-    (runtimeDB.bookings || []).forEach(b => { if (b && b.id) map.set(b.id, { ...b, isReal: true }); });
+    (runtimeDB.bookings || []).forEach(b => {
+      const norm = normalizeBookingDoc(b);
+      if (norm) map.set(norm.id, norm);
+    });
 
     // 1. MongoDB Atlas (primario)
     if (isMongoConfigured()) {
@@ -1444,8 +1507,11 @@ app.get('/api/admin/bookings', async (req, res) => {
           mongoBookings.forEach(b => {
             if (b && b.id) {
               const { _id, ...cleanBooking } = b;
-              const existing = map.get(cleanBooking.id);
-              map.set(cleanBooking.id, existing ? { ...existing, ...cleanBooking, isReal: true } : { ...cleanBooking, isReal: true });
+              const norm = normalizeBookingDoc(cleanBooking);
+              if (norm) {
+                const existing = map.get(norm.id);
+                map.set(norm.id, existing ? mergeBookingObjectsServer(existing, norm) : norm);
+              }
             }
           });
         }
@@ -1454,7 +1520,7 @@ app.get('/api/admin/bookings', async (req, res) => {
       }
     }
 
-    // 2. Supabase fallback
+    // 2. Supabase fallback (solo fusiona campos válidos, nunca sobrescribe con undefined ni $0)
     if (SUPABASE_REST_KEY) {
       try {
         const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.booking_data&select=*`, {
@@ -1467,8 +1533,11 @@ app.get('/api/admin/bookings', async (req, res) => {
               try {
                 const b = JSON.parse(r.url);
                 if (b && b.id) {
-                  const existing = map.get(b.id);
-                  map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
+                  const norm = normalizeBookingDoc(b);
+                  if (norm) {
+                    const existing = map.get(norm.id);
+                    map.set(norm.id, existing ? mergeBookingObjectsServer(existing, norm) : norm);
+                  }
                 }
               } catch (err) {}
             });
@@ -1487,24 +1556,11 @@ app.get('/api/admin/bookings', async (req, res) => {
           if (Array.isArray(rows)) {
             rows.forEach(b => {
               if (b && b.id) {
-                const formatted = {
-                  id: b.id,
-                  clientName: b.client_name,
-                  clientWhatsApp: b.client_whatsapp,
-                  clientEmail: b.client_email,
-                  packageId: b.package_id,
-                  packageName: b.package_name,
-                  totalPrice: Number(b.total_price || 0),
-                  locationType: b.location_type,
-                  specificLocation: b.specific_location,
-                  dateTime: b.date_time,
-                  description: b.description,
-                  status: b.status,
-                  createdAt: b.created_at,
-                  isReal: true
-                };
-                const existing = map.get(b.id);
-                map.set(b.id, existing ? { ...existing, ...formatted, isReal: true } : formatted);
+                const norm = normalizeBookingDoc(b);
+                if (norm) {
+                  const existing = map.get(norm.id);
+                  map.set(norm.id, existing ? mergeBookingObjectsServer(existing, norm) : norm);
+                }
               }
             });
           }
@@ -1514,7 +1570,7 @@ app.get('/api/admin/bookings', async (req, res) => {
       }
     }
 
-    runtimeDB.bookings = Array.from(map.values());
+    runtimeDB.bookings = Array.from(map.values()).map(b => normalizeBookingDoc(b)).filter(Boolean);
   } catch (e) {
     console.warn('Error en /api/admin/bookings:', e);
   }
@@ -1543,7 +1599,7 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
       const doc = await findMongoDoc('bookings', { $or: [{ id }, { id: supaId }, { supaId }] });
       if (doc) {
         const { _id, supaId: _s, ...cleanBooking } = doc;
-        booking = cleanBooking;
+        booking = normalizeBookingDoc(cleanBooking);
       }
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error buscando reserva para actualizar:', eMongo?.message || eMongo);
@@ -1558,7 +1614,7 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
       if (supaRes.ok) {
         const rows = await supaRes.json();
         if (Array.isArray(rows) && rows.length > 0 && rows[0].url) {
-          try { booking = JSON.parse(rows[0].url); } catch (e) {}
+          try { booking = normalizeBookingDoc(JSON.parse(rows[0].url)); } catch (e) {}
         }
       }
     } catch (e) {}
@@ -1566,11 +1622,13 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
 
   if (!booking) {
     // No existe en ningún almacén: se crea con lo que llegue (comportamiento previo).
-    booking = { id, ...updates, isReal: true };
+    booking = normalizeBookingDoc({ id, ...updates, isReal: true });
     if (!runtimeDB.bookings) runtimeDB.bookings = [];
     runtimeDB.bookings.unshift(booking);
   } else {
-    Object.assign(booking, updates, { isReal: true });
+    booking = mergeBookingObjectsServer(booking, updates);
+    const idx = (runtimeDB.bookings || []).findIndex(b => b.id === id || b.id === supaId);
+    if (idx !== -1) runtimeDB.bookings[idx] = booking;
   }
 
   await syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
@@ -2816,12 +2874,14 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
         const docs = await findMongoDocs(colName, match || {});
         return res.json({ success: true, data: (docs || []).map(({ _id, ...d }) => d) });
       } else if (op === 'upsert' || op === 'insert') {
-        const filter = (payload && payload.id) ? { id: payload.id } : (match || {});
-        await upsertMongoDoc(colName, filter, payload);
-        return res.json({ success: true, data: [payload] });
+        const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
+        const filter = (docToSave && docToSave.id) ? { id: docToSave.id } : (match || {});
+        await upsertMongoDoc(colName, filter, docToSave);
+        return res.json({ success: true, data: [docToSave] });
       } else if (op === 'update') {
-        await upsertMongoDoc(colName, match || {}, payload);
-        return res.json({ success: true, data: [payload] });
+        const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
+        await upsertMongoDoc(colName, match || {}, docToSave);
+        return res.json({ success: true, data: [docToSave] });
       } else if (op === 'delete') {
         await deleteMongoDoc(colName, match || {});
         return res.json({ success: true, data: [] });

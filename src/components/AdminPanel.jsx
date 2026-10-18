@@ -119,6 +119,7 @@ import {
   fetchCloudWalletBaseBalances,
   saveWalletBaseBalances,
   REAL_DEFAULT_BOOKINGS,
+  safeMergeBookingObjects,
   DEFAULT_PACKAGES,
   DEFAULT_REAL_CATALOG,
   sendEmailNotification,
@@ -1408,35 +1409,37 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setBookings(prev => {
         const rawDel = getDeletedBookingIds();
         const deletedSet = new Set(Array.isArray(rawDel) ? rawDel : []);
-        // Proteger permanentemente las 3 reservas reales del negocio
-        const PROTECTED_IDS = ['book-real-jennifer-vasquez', 'book-1790280190756', 'book-laura-vanesa-maza-1790651249486'];
+        // Proteger permanentemente las 5 reservas reales del negocio
+        const PROTECTED_IDS = [
+          'book-real-jennifer-vasquez',
+          'book-1790280190756',
+          'book-laura-vanesa-maza-1790651249486',
+          'book-1792197996225-905e3bb3',
+          'book-1792268723998-a1793b77'
+        ];
         PROTECTED_IDS.forEach(pid => {
           deletedSet.delete(pid);
           deletedSet.delete(`book-${pid}`);
         });
 
         const map = new Map();
-        // 1. Incorporar siempre las 3 reservas reales oficiales garantizadas
+        // 1. Incorporar siempre las 5 reservas reales oficiales garantizadas
         REAL_DEFAULT_BOOKINGS.forEach(b => {
           if (b && b.id) map.set(b.id, { ...b, isReal: true });
         });
 
-        // 2. Preservar todas las reservas previas válidas
+        // 2. Preservar todas las reservas previas válidas sin pérdida de campos
         (prev || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
-            map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
+            map.set(b.id, safeMergeBookingObjects(existing, b));
           }
         });
         // 3. Fusionar con las reservas recibidas de la fuente (servidor/nube/local/idb)
         (bData || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
-            if (existing) {
-              map.set(b.id, { ...existing, ...b, status: b.status || existing.status, isReal: true });
-            } else {
-              map.set(b.id, { ...b, isReal: true });
-            }
+            map.set(b.id, safeMergeBookingObjects(existing, b));
           }
         });
         const merged = Array.from(map.values());
@@ -2165,12 +2168,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       : finQuick.remaining;
     const concept = type === 'deposit' ? 'Abono 50% Sesión' : 'Pago Total 100% Sesión';
     
+    const cName = String(booking.clientName || booking.client_name || 'Cliente').trim();
+    const cPhone = String(booking.clientWhatsApp || booking.client_whatsapp || '').trim();
+    const cPkg = String(booking.packageName || booking.package_name || 'Sesión Fotográfica').trim();
+    const cLoc = String(booking.specificLocation || booking.specific_location || 'San Antero').trim();
+    const cDate = String(booking.dateTime || booking.date_time || '').trim();
+
     try {
       const resPay = await createPayment({
-        clientName: booking.clientName,
-        clientWhatsApp: booking.clientWhatsApp,
+        clientName: cName,
+        clientWhatsApp: cPhone,
         sessionToken: String(booking.id),
-        packageTitle: booking.packageName || 'Sesión Fotográfica',
+        packageTitle: cPkg,
         amount,
         method,
         reference: `Reserva #${booking.id}`,
@@ -2185,18 +2194,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         await updateAdminBooking(booking.id, { status: 'completed' });
         setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'completed' } : b));
 
-        const clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+        const clientPhone = cPhone.replace(/\D/g, '');
         const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
         const vipSaved = await saveVipClient({
           id: `vip-${activePhone}`,
-          name: booking.clientName,
-          phone: booking.clientWhatsApp,
-          email: booking.clientEmail,
-          location: booking.specificLocation || 'San Antero',
+          name: cName,
+          phone: cPhone,
+          email: booking.clientEmail || booking.client_email || '',
+          location: cLoc,
           totalPrice: total,
           amountPaid: total,
-          packageName: booking.packageName,
-          dateTime: booking.dateTime,
+          packageName: cPkg,
+          dateTime: cDate,
           incrementSession: true,
           notes: `Sesión 100% pagada en 1 solo pago (${method.toUpperCase()}).`
         });
@@ -2220,12 +2229,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   const handleRegisterRemainingBookingPayment = async (booking, remainingAmount, method = 'nequi') => {
+    const cName = String(booking.clientName || booking.client_name || 'Cliente').trim();
+    const cPhone = String(booking.clientWhatsApp || booking.client_whatsapp || '').trim();
+    const cPkg = String(booking.packageName || booking.package_name || 'Sesión Fotográfica').trim();
+    const cLoc = String(booking.specificLocation || booking.specific_location || 'San Antero').trim();
+    const cDate = String(booking.dateTime || booking.date_time || '').trim();
+
     try {
       const resPay = await createPayment({
-        clientName: booking.clientName,
-        clientWhatsApp: booking.clientWhatsApp,
+        clientName: cName,
+        clientWhatsApp: cPhone,
         sessionToken: String(booking.id),
-        packageTitle: booking.packageName || 'Sesión Fotográfica',
+        packageTitle: cPkg,
         amount: remainingAmount,
         method,
         reference: `Saldo Final Reserva #${booking.id}`,
@@ -2241,20 +2256,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, status: 'completed' } : b));
 
       // Guardar cliente en Directorio VIP
-      const clientPhone = (booking.clientWhatsApp || '').replace(/\D/g, '');
+      const clientPhone = cPhone.replace(/\D/g, '');
       const activePhone = clientPhone.length === 10 && !clientPhone.startsWith('57') ? '57' + clientPhone : clientPhone;
-      const total = Number(booking.totalPrice || 0);
+      const total = Number(booking.totalPrice ?? booking.total_price ?? 0);
 
       const vipSaved = await saveVipClient({
         id: `vip-${activePhone}`,
-        name: booking.clientName,
-        phone: booking.clientWhatsApp,
-        email: booking.clientEmail,
-        location: booking.specificLocation || 'San Antero',
+        name: cName,
+        phone: cPhone,
+        email: booking.clientEmail || booking.client_email || '',
+        location: cLoc,
         totalPrice: total,
         amountPaid: total,
-        packageName: booking.packageName,
-        dateTime: booking.dateTime,
+        packageName: cPkg,
+        dateTime: cDate,
         incrementSession: true,
         notes: `Sesión 100% pagada (Saldo final recibido vía ${method.toUpperCase()}).`
       });
@@ -5262,19 +5277,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           </div>
 
                           <div className="space-y-1 mt-1 overflow-hidden">
-                            {dayBookings.slice(0, 2).map((b, idx) => (
-                              <div
-                                key={idx}
-                                className={`text-[9px] truncate px-1 py-0.5 rounded font-medium ${
-                                  b.status === 'confirmed'
-                                    ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-500/30'
-                                    : 'bg-amber-950/90 text-amber-300 border border-amber-500/30'
-                                }`}
-                                title={`${b.clientName} (${formatDateTime12Hour(b.dateTime)})`}
-                              >
-                                {b.clientName.split(' ')[0]}
-                              </div>
-                            ))}
+                            {dayBookings.slice(0, 2).map((b, idx) => {
+                              const cName = String(b.clientName || b.client_name || 'Cliente').trim();
+                              const cDate = formatDateTime12Hour(b.dateTime || b.date_time);
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`text-[9px] truncate px-1 py-0.5 rounded font-medium ${
+                                    b.status === 'confirmed'
+                                      ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-500/30'
+                                      : 'bg-amber-950/90 text-amber-300 border border-amber-500/30'
+                                  }`}
+                                  title={`${cName} (${cDate})`}
+                                >
+                                  {cName.split(' ')[0]}
+                                </div>
+                              );
+                            })}
                             {dayBookings.length > 2 && (
                               <div className="text-[9px] text-stone-400 text-center font-bold">
                                 +{dayBookings.length - 2} más
@@ -5389,13 +5408,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                                 <div>
                                   <h5 className="font-serif font-bold text-white text-base">
-                                    {booking.clientName}
+                                    {booking.clientName || booking.client_name || 'Cliente'}
                                   </h5>
                                   <p className="text-xs text-stone-300 truncate mt-0.5">
-                                    {booking.packageName}
+                                    {booking.packageName || booking.package_name || 'Sesión Fotográfica'}
                                   </p>
                                   <p className="text-[11px] text-stone-400 truncate">
-                                    📍 {booking.specificLocation || 'San Antero'}
+                                    📍 {booking.specificLocation || booking.specific_location || 'San Antero'}
                                   </p>
                                 </div>
 
@@ -5559,33 +5578,41 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           {booking.status === 'confirmed' ? 'Confirmada' : booking.status === 'completed' ? 'Sesión Realizada' : 'Pendiente'}
                         </span>
                         <span className="text-[11px] text-stone-500">
-                          {new Date(booking.createdAt).toLocaleDateString()}
+                          {booking.createdAt && !isNaN(new Date(booking.createdAt).getTime())
+                            ? new Date(booking.createdAt).toLocaleDateString('es-CO')
+                            : (booking.created_at && !isNaN(new Date(booking.created_at).getTime()) ? new Date(booking.created_at).toLocaleDateString('es-CO') : '')}
                         </span>
                       </div>
 
                       <h4 className="text-xl font-serif font-bold text-white">
-                        {booking.clientName}
+                        {booking.clientName || booking.client_name || 'Cliente'}
                       </h4>
 
                       <div className="mt-1 flex flex-wrap items-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenClientChat(booking)}
-                          className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
-                          title="Escribir por WhatsApp eligiendo línea"
-                        >
-                          <MessageCircle className="w-3.5 h-3.5" />
-                          <span>{booking.clientWhatsApp} (Chatear)</span>
-                        </button>
+                        {(booking.clientWhatsApp || booking.client_whatsapp) ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenClientChat(booking)}
+                            className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
+                            title="Escribir por WhatsApp eligiendo línea"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>{booking.clientWhatsApp || booking.client_whatsapp} (Chatear)</span>
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-stone-500 font-medium">
+                            Sin WhatsApp registrado
+                          </span>
+                        )}
 
-                        {booking.clientEmail && (
+                        {(booking.clientEmail || booking.client_email) && (
                           <a
-                            href={`mailto:${booking.clientEmail}`}
+                            href={`mailto:${booking.clientEmail || booking.client_email}`}
                             className="inline-flex items-center gap-1.5 text-xs text-amber-300 hover:text-amber-200 font-medium"
                             title="Enviar correo a cliente"
                           >
                             <Mail className="w-3.5 h-3.5" />
-                            <span>{booking.clientEmail}</span>
+                            <span>{booking.clientEmail || booking.client_email}</span>
                           </a>
                         )}
                       </div>
@@ -5593,30 +5620,30 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       <div className="mt-4 p-3.5 rounded-2xl bg-stone-950 border border-stone-800/80 space-y-2 text-xs">
                         <div className="flex justify-between">
                           <span className="text-stone-400">Paquete:</span>
-                          <span className="font-semibold text-white truncate max-w-[170px]">{booking.packageName}</span>
+                          <span className="font-semibold text-white truncate max-w-[170px]">{booking.packageName || booking.package_name || 'Sesión Fotográfica'}</span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-stone-400">Valor Cobrado:</span>
                           <span className="text-base font-extrabold text-amber-400 font-mono">
-                            ${Number(booking.totalPrice).toLocaleString('es-CO')} COP
+                            ${Number(booking.totalPrice ?? booking.total_price ?? 0).toLocaleString('es-CO')} COP
                           </span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-stone-400">Ubicación:</span>
                           <span className={`font-semibold ${isOutside ? 'text-amber-300' : 'text-stone-200'}`}>
-                            {booking.specificLocation || (isOutside ? 'Locación Especial / Fuera' : 'Sesión Local')}
+                            {booking.specificLocation || booking.specific_location || (isOutside ? 'Locación Especial / Fuera' : 'Sesión Local')}
                           </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-stone-400">Fecha y Hora:</span>
-                          <span className="font-semibold text-white">{formatDateTime12Hour(booking.dateTime)}</span>
+                          <span className="font-semibold text-white">{formatDateTime12Hour(booking.dateTime || booking.date_time) || 'Por definir'}</span>
                         </div>
                       </div>
 
-                      {booking.description && (
+                      {(booking.description || booking.notes) && (
                         <div className="mt-3 p-3 bg-stone-950/60 rounded-xl border border-stone-800 text-xs text-stone-300">
                           <span className="text-[10px] uppercase font-bold text-stone-500 block mb-0.5">Notas del cliente:</span>
-                          "{booking.description}"
+                          "{booking.description || booking.notes}"
                         </div>
                       )}
 
@@ -5855,7 +5882,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
                           <button
                             type="button"
-                            onClick={() => handleDeleteBooking(booking.id, booking.clientName)}
+                            onClick={() => handleDeleteBooking(booking.id, booking.clientName || booking.client_name || 'Cliente')}
                             className="p-1.5 bg-stone-800/80 hover:bg-red-950 text-stone-400 hover:text-red-400 rounded-lg text-xs transition-colors"
                             title="Eliminar reserva"
                           >
@@ -5953,9 +5980,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                             handleOpenDelivery(matchingSession || {
                               id: `book-${booking.id}`,
                               token: booking.id,
-                              clientName: booking.clientName,
-                              clientWhatsApp: booking.clientWhatsApp,
-                              packageType: booking.packageName,
+                              clientName: booking.clientName || booking.client_name || 'Cliente',
+                              clientWhatsApp: booking.clientWhatsApp || booking.client_whatsapp || '',
+                              packageType: booking.packageName || booking.package_name || 'Sesión Fotográfica',
                               status: booking.finalDeliveryUrl ? 'delivered' : 'pending',
                               finalDeliveryUrl: booking.finalDeliveryUrl || '',
                               deliveryService: booking.deliveryService || 'wetransfer',
@@ -5979,8 +6006,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         {booking.finalDeliveryUrl && (
                           <a
                             href={getDeliveryWhatsAppUrl({
-                              clientName: booking.clientName,
-                              clientWhatsApp: booking.clientWhatsApp,
+                              clientName: booking.clientName || booking.client_name || 'Cliente',
+                              clientWhatsApp: booking.clientWhatsApp || booking.client_whatsapp || '',
                               finalDeliveryUrl: booking.finalDeliveryUrl,
                               deliveryService: booking.deliveryService,
                               deliveryNotes: booking.deliveryNotes

@@ -581,51 +581,235 @@ function saveLocalSession(session) {
 
 export const REAL_DEFAULT_BOOKINGS = [
   {
-    id: "book-real-jennifer-vasquez",
-    clientName: "Jennifer Vásquez",
-    clientWhatsApp: "+57 320 892 1635",
-    packageId: "pkg-8fotos",
-    packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+    id: "book-1792268723998-a1793b77",
+    clientName: "Maria fernanda arrieta rivera",
+    client_name: "Maria fernanda arrieta rivera",
+    clientWhatsApp: "+57 301 757 6084",
+    client_whatsapp: "+57 301 757 6084",
+    packageId: "pkg-10fotos",
+    package_id: "pkg-10fotos",
+    packageName: "10 Fotos Digitales",
+    package_name: "10 Fotos Digitales",
     totalPrice: 85000,
-    locationType: "outside_san_antero",
-    specificLocation: "Coveñas",
-    dateTime: "30/09/2026 a las 3:00 p. m.",
-    description: "Sesión de fotos de juramento de bandera de su hijo",
-    createdAt: "2026-09-19T10:00:00.000Z",
+    total_price: 85000,
+    locationType: "san_antero",
+    location_type: "san_antero",
+    specificLocation: "Porvenir",
+    specific_location: "Porvenir",
+    dateTime: "30/10/2026 a las 8:00 a. m.",
+    date_time: "30/10/2026 a las 8:00 a. m.",
+    description: "Cumpleaños",
+    createdAt: "2026-10-17T17:25:23.998Z",
+    created_at: "2026-10-17T17:25:23.998Z",
     status: "confirmed",
     isReal: true
   },
   {
-    id: "book-1790280190756",
-    clientName: "Marlin torres",
-    clientWhatsApp: "+57 313 666 7262",
-    packageId: "pkg-6fotos",
-    packageName: "6 Fotos Digitales",
-    totalPrice: 75000,
-    locationType: "outside_san_antero",
-    specificLocation: "Locación Especial / Fuera",
-    dateTime: "03/10/2026 a las 3:10 p. m.",
-    description: "Primer mes bebé",
-    createdAt: "2026-09-24T20:03:10.756Z",
+    id: "book-1792197996225-905e3bb3",
+    clientName: "Marcia Pérez Olea",
+    client_name: "Marcia Pérez Olea",
+    clientWhatsApp: "+57 324 231 6681",
+    client_whatsapp: "+57 324 231 6681",
+    packageId: "pkg-4fotos",
+    package_id: "pkg-4fotos",
+    packageName: "4 Fotos Digitales",
+    package_name: "4 Fotos Digitales",
+    totalPrice: 45000,
+    total_price: 45000,
+    locationType: "san_antero",
+    location_type: "san_antero",
+    specificLocation: "Playa Cangrejo",
+    specific_location: "Playa Cangrejo",
+    dateTime: "18/10/2026 a las 4:00 p. m.",
+    date_time: "18/10/2026 a las 4:00 p. m.",
+    description: "Sesión en playa cangrejo",
+    createdAt: "2026-10-16T21:46:36.225Z",
+    created_at: "2026-10-16T21:46:36.225Z",
     status: "confirmed",
     isReal: true
   },
   {
     id: "book-laura-vanesa-maza-1790651249486",
     clientName: "Laura Vanesa Maza de Hoyos",
+    client_name: "Laura Vanesa Maza de Hoyos",
     clientWhatsApp: "+57 313 597 5323",
+    client_whatsapp: "+57 313 597 5323",
     packageId: "pkg-4fotos",
+    package_id: "pkg-4fotos",
     packageName: "4 Fotos Digitales",
+    package_name: "4 Fotos Digitales",
     totalPrice: 45000,
+    total_price: 45000,
     locationType: "san_antero",
+    location_type: "san_antero",
     specificLocation: "Jose Antonio Galán",
+    specific_location: "Jose Antonio Galán",
     dateTime: "29/11/2026 a las 4:00 p. m.",
+    date_time: "29/11/2026 a las 4:00 p. m.",
     description: "Grado",
     createdAt: "2026-09-29T03:07:32.000Z",
+    created_at: "2026-09-29T03:07:32.000Z",
     status: "pending",
+    isReal: true
+  },
+  {
+    id: "book-1790280190756",
+    clientName: "Marlin torres",
+    client_name: "Marlin torres",
+    clientWhatsApp: "+57 313 666 7262",
+    client_whatsapp: "+57 313 666 7262",
+    packageId: "pkg-6fotos",
+    package_id: "pkg-6fotos",
+    packageName: "6 Fotos Digitales",
+    package_name: "6 Fotos Digitales",
+    totalPrice: 75000,
+    total_price: 75000,
+    locationType: "outside_san_antero",
+    location_type: "outside_san_antero",
+    specificLocation: "Locación Especial / Fuera",
+    specific_location: "Locación Especial / Fuera",
+    dateTime: "03/10/2026 a las 3:10 p. m.",
+    date_time: "03/10/2026 a las 3:10 p. m.",
+    description: "Primer mes bebé",
+    createdAt: "2026-09-24T20:03:10.756Z",
+    created_at: "2026-09-24T20:03:10.756Z",
+    status: "confirmed",
+    isReal: true
+  },
+  {
+    id: "book-real-jennifer-vasquez",
+    clientName: "Jennifer Vásquez",
+    client_name: "Jennifer Vásquez",
+    clientWhatsApp: "+57 320 892 1635",
+    client_whatsapp: "+57 320 892 1635",
+    packageId: "pkg-8fotos",
+    package_id: "pkg-8fotos",
+    packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+    package_name: "8 Fotos Digitales (+ 2 Fotos Gratis)",
+    totalPrice: 85000,
+    total_price: 85000,
+    locationType: "outside_san_antero",
+    location_type: "outside_san_antero",
+    specificLocation: "Coveñas",
+    specific_location: "Coveñas",
+    dateTime: "30/09/2026 a las 3:00 p. m.",
+    date_time: "30/09/2026 a las 3:00 p. m.",
+    description: "Sesión de fotos de juramento de bandera de su hijo",
+    createdAt: "2026-09-19T10:00:00.000Z",
+    created_at: "2026-09-19T10:00:00.000Z",
+    status: "confirmed",
     isReal: true
   }
 ];
+
+export function safeMergeBookingObjects(existing, incoming) {
+  if (!existing && !incoming) return null;
+  if (!existing) {
+    const b = incoming;
+    const name = String(b.clientName || b.client_name || '').trim();
+    const phone = String(b.clientWhatsApp || b.client_whatsapp || '').trim();
+    const email = String(b.clientEmail || b.client_email || '').trim();
+    const pkg = String(b.packageName || b.package_name || 'Sesión Fotográfica').trim();
+    const pkgId = String(b.packageId || b.package_id || 'pkg-4fotos').trim();
+    const price = Number(b.totalPrice ?? b.total_price ?? 0);
+    const date = String(b.dateTime || b.date_time || '').trim();
+    const loc = String(b.specificLocation || b.specific_location || '').trim();
+    const locType = String(b.locationType || b.location_type || 'san_antero').trim();
+    const desc = String(b.description || b.notes || '').trim();
+    const status = String(b.status || 'pending').trim();
+    const created = b.createdAt || b.created_at || new Date().toISOString();
+    return {
+      ...b,
+      id: b.id,
+      clientName: name,
+      client_name: name,
+      clientWhatsApp: phone,
+      client_whatsapp: phone,
+      clientEmail: email,
+      client_email: email,
+      packageName: pkg,
+      package_name: pkg,
+      packageId: pkgId,
+      package_id: pkgId,
+      totalPrice: price,
+      total_price: price,
+      dateTime: date,
+      date_time: date,
+      specificLocation: loc,
+      specific_location: loc,
+      locationType: locType,
+      location_type: locType,
+      description: desc,
+      status: status,
+      createdAt: created,
+      created_at: created,
+      isReal: true
+    };
+  }
+  if (!incoming) return { ...existing };
+
+  const merged = { ...existing };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v !== undefined && v !== null && v !== '') {
+      if ((k === 'totalPrice' || k === 'total_price') && Number(v) === 0 && Number(existing.totalPrice || existing.total_price || 0) > 0) {
+        continue;
+      }
+      merged[k] = v;
+    }
+  }
+
+  // Cross-fill camelCase y snake_case para blindaje total
+  const finalName = String(merged.clientName || merged.client_name || existing.clientName || existing.client_name || '').trim();
+  if (finalName) {
+    merged.clientName = finalName;
+    merged.client_name = finalName;
+  }
+  const finalPhone = String(merged.clientWhatsApp || merged.client_whatsapp || existing.clientWhatsApp || existing.client_whatsapp || '').trim();
+  if (finalPhone) {
+    merged.clientWhatsApp = finalPhone;
+    merged.client_whatsapp = finalPhone;
+  }
+  const finalEmail = String(merged.clientEmail || merged.client_email || existing.clientEmail || existing.client_email || '').trim();
+  if (finalEmail) {
+    merged.clientEmail = finalEmail;
+    merged.client_email = finalEmail;
+  }
+  const finalPkg = String(merged.packageName || merged.package_name || existing.packageName || existing.package_name || 'Sesión Fotográfica').trim();
+  if (finalPkg) {
+    merged.packageName = finalPkg;
+    merged.package_name = finalPkg;
+  }
+  const finalPkgId = String(merged.packageId || merged.package_id || existing.packageId || existing.package_id || 'pkg-4fotos').trim();
+  merged.packageId = finalPkgId;
+  merged.package_id = finalPkgId;
+  const finalPrice = Number(merged.totalPrice ?? merged.total_price ?? existing.totalPrice ?? existing.total_price ?? 0);
+  merged.totalPrice = finalPrice;
+  merged.total_price = finalPrice;
+  const finalDate = String(merged.dateTime || merged.date_time || existing.dateTime || existing.date_time || '').trim();
+  if (finalDate) {
+    merged.dateTime = finalDate;
+    merged.date_time = finalDate;
+  }
+  const finalLoc = String(merged.specificLocation || merged.specific_location || existing.specificLocation || existing.specific_location || '').trim();
+  if (finalLoc) {
+    merged.specificLocation = finalLoc;
+    merged.specific_location = finalLoc;
+  }
+  const finalLocType = String(merged.locationType || merged.location_type || existing.locationType || existing.location_type || 'san_antero').trim();
+  merged.locationType = finalLocType;
+  merged.location_type = finalLocType;
+  const finalDesc = String(merged.description || merged.notes || existing.description || existing.notes || '').trim();
+  if (finalDesc) {
+    merged.description = finalDesc;
+  }
+  const finalStatus = String(merged.status || existing.status || 'pending').trim();
+  merged.status = finalStatus;
+  const finalCreated = merged.createdAt || merged.created_at || existing.createdAt || existing.created_at || new Date().toISOString();
+  merged.createdAt = finalCreated;
+  merged.created_at = finalCreated;
+  merged.isReal = true;
+  return merged;
+}
 
 export function formatTo12Hour(time24) {
   if (!time24) return '';
@@ -838,19 +1022,24 @@ function getLocalBookings() {
   try {
     const raw = localStorage.getItem(LOCAL_BOOKINGS_KEY);
     let list = raw ? JSON.parse(raw) : [];
-    // Filtrar cualquier reserva de muestra o demo que haya quedado guardada
-    list = (Array.isArray(list) ? list : []).filter(b => b && b.clientName !== 'Camila Rodríguez' && b.id !== 'book-demo-1');
+    // Filtrar cualquier reserva de muestra, demo o corrupta sin nombre
+    list = (Array.isArray(list) ? list : []).filter(b => {
+      if (!b || !b.id || b.id === 'book-demo-1') return false;
+      if (b.clientName === 'Camila Rodríguez' || b.client_name === 'Camila Rodríguez') return false;
+      const name = String(b.clientName || b.client_name || '').trim();
+      return name.length > 0;
+    });
     
     const map = new Map();
-    // 1. Asegurar todas las reservas reales garantizadas
+    // 1. Asegurar todas las 5 reservas reales garantizadas
     REAL_DEFAULT_BOOKINGS.forEach(b => {
-      if (b && b.id) map.set(b.id, b);
+      if (b && b.id) map.set(b.id, { ...b });
     });
-    // 2. Fusionar con las reservas guardadas localmente
+    // 2. Fusionar con las reservas guardadas localmente de manera segura y no destructiva
     list.forEach(b => {
       if (b && b.id) {
         const existing = map.get(b.id);
-        map.set(b.id, existing ? { ...existing, ...b } : b);
+        map.set(b.id, safeMergeBookingObjects(existing, b));
       }
     });
 
@@ -882,7 +1071,8 @@ export function getDeletedBookingIds() {
 export function saveLocalBooking(booking) {
   if (!booking || !booking.id) return;
   try {
-    const enriched = { ...booking, isReal: true };
+    const enriched = safeMergeBookingObjects(null, booking);
+    if (!enriched) return;
     const bookings = getLocalBookings().filter(b => b.id !== enriched.id && b.clientName !== 'Camila Rodríguez');
     bookings.unshift(enriched);
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(bookings));
@@ -893,7 +1083,7 @@ export function saveLocalBooking(booking) {
       idbSaveBooking(enriched).catch(() => {});
     } catch (e) {}
 
-    // 2. Sincronización inmutable directa a Supabase Cloud (2 capas: catalog y bookings)
+    // 2. Sincronización inmutable directa a Supabase Cloud / API Proxy (2 capas: catalog y bookings)
     try {
       const supaId = enriched.id.startsWith('book-') ? enriched.id : `book-${enriched.id}`;
       supabase.from('catalog').upsert({
@@ -907,16 +1097,27 @@ export function saveLocalBooking(booking) {
       supabase.from('bookings').upsert({
         id: supaId,
         client_name: enriched.clientName || 'Cliente',
+        clientName: enriched.clientName || 'Cliente',
         client_whatsapp: enriched.clientWhatsApp || '',
+        clientWhatsApp: enriched.clientWhatsApp || '',
         client_email: enriched.clientEmail || '',
+        clientEmail: enriched.clientEmail || '',
         package_id: enriched.packageId || 'pkg-4fotos',
+        packageId: enriched.packageId || 'pkg-4fotos',
         package_name: enriched.packageName || 'Sesión Fotográfica',
+        packageName: enriched.packageName || 'Sesión Fotográfica',
         total_price: Number(enriched.totalPrice || 0),
+        totalPrice: Number(enriched.totalPrice || 0),
         location_type: enriched.locationType || 'san_antero',
+        locationType: enriched.locationType || 'san_antero',
         specific_location: enriched.specificLocation || '',
+        specificLocation: enriched.specificLocation || '',
         date_time: enriched.dateTime || '',
+        dateTime: enriched.dateTime || '',
         description: enriched.description || '',
-        status: enriched.status || 'pending'
+        status: enriched.status || 'pending',
+        created_at: enriched.createdAt || new Date().toISOString(),
+        createdAt: enriched.createdAt || new Date().toISOString()
       }).then(() => {}).catch(() => {});
     } catch (e) {}
 
@@ -1843,8 +2044,14 @@ export async function getAdminBookings() {
   try {
     const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
     deletedIds = new Set(Array.isArray(rawDel) ? rawDel : []);
-    // Proteger permanentemente las 3 reservas reales del negocio
-    const PROTECTED_REAL_BOOKINGS = ['book-real-jennifer-vasquez', 'book-1790280190756', 'book-laura-vanesa-maza-1790651249486'];
+    // Proteger permanentemente las 5 reservas reales del negocio
+    const PROTECTED_REAL_BOOKINGS = [
+      'book-real-jennifer-vasquez',
+      'book-1790280190756',
+      'book-laura-vanesa-maza-1790651249486',
+      'book-1792197996225-905e3bb3',
+      'book-1792268723998-a1793b77'
+    ];
     PROTECTED_REAL_BOOKINGS.forEach(pid => {
       deletedIds.delete(pid);
       deletedIds.delete(`book-${pid}`);
@@ -1854,14 +2061,20 @@ export async function getAdminBookings() {
   // 1. Blindaje Bóveda IndexedDB (100MB+ local resistente a reinicios y limpieza)
   let idbBookings = [];
   try {
-    idbBookings = await idbGetBookings();
+    const rawIdb = await idbGetBookings();
+    if (Array.isArray(rawIdb)) {
+      idbBookings = rawIdb.filter(b => b && (b.clientName || b.client_name));
+    }
   } catch (e) {}
 
   let serverBookings = [];
   try {
     const res = await fetch(`${API_BASE}/admin/bookings`);
     if (res.ok) {
-      serverBookings = await res.json();
+      const rawServer = await res.json();
+      if (Array.isArray(rawServer)) {
+        serverBookings = rawServer.map(b => safeMergeBookingObjects(null, b)).filter(Boolean);
+      }
     }
   } catch (err) {
     console.warn('Consultando reservas del servidor:', err);
@@ -1877,33 +2090,7 @@ export async function getAdminBookings() {
     if (Array.isArray(supaB)) {
       cloudBookings = supaB.map(sb => {
         try { return JSON.parse(sb.url); } catch(e) { return null; }
-      }).filter(Boolean);
-    }
-  } catch (e) {}
-
-  let directBookings = [];
-  try {
-    const { data: supaBookings } = await supabase
-      .from('bookings')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (Array.isArray(supaBookings)) {
-      directBookings = supaBookings.map(b => ({
-        id: b.id,
-        clientName: b.client_name,
-        clientWhatsApp: b.client_whatsapp,
-        clientEmail: b.client_email,
-        packageId: b.package_id,
-        packageName: b.package_name,
-        totalPrice: Number(b.total_price || 0),
-        locationType: b.location_type,
-        specificLocation: b.specific_location,
-        dateTime: b.date_time,
-        description: b.description,
-        status: b.status,
-        createdAt: b.created_at,
-        isReal: true
-      }));
+      }).filter(b => b && (b.clientName || b.client_name));
     }
   } catch (e) {}
 
@@ -1918,10 +2105,11 @@ export async function getAdminBookings() {
   });
 
   // 2. Fusionar con todas las fuentes garantizando no pérdida de reservas nuevas o viejas
-  [...idbBookings, ...localBookings, ...serverBookings, ...cloudBookings, ...directBookings].forEach(b => {
+  // El orden prioriza serverBookings (MongoDB Atlas) sin que campos undefined destruyan datos previos
+  [...idbBookings, ...localBookings, ...cloudBookings, ...serverBookings].forEach(b => {
     if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       const existing = map.get(b.id);
-      map.set(b.id, existing ? { ...existing, ...b, isReal: true } : { ...b, isReal: true });
+      map.set(b.id, safeMergeBookingObjects(existing, b));
     }
   });
 
@@ -1931,7 +2119,7 @@ export async function getAdminBookings() {
     map.set('book-laura-vanesa-maza-1790651249486', { ...lauraBooking, status: 'pending', isReal: true });
   }
 
-  // 3. Garantizar siempre las 3 reservas reales del negocio
+  // 3. Garantizar siempre las 5 reservas reales del negocio
   REAL_DEFAULT_BOOKINGS.forEach(b => {
     if (b && b.id && !deletedIds.has(b.id) && !map.has(b.id)) {
       map.set(b.id, { ...b, isReal: true });
