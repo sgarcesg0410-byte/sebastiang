@@ -22,7 +22,7 @@ export default class ErrorBoundary extends React.Component {
       localStorage.removeItem('sebastian_g_deleted_catalog_ids_v2');
       localStorage.removeItem('sebastian_g_samples_purged_v1');
     } catch (e) {}
-    window.location.href = '/';
+    window.location.reload();
   };
 
   render() {
@@ -41,6 +41,11 @@ export default class ErrorBoundary extends React.Component {
               <p className="text-sm text-stone-400">
                 Se presentó un problema al cargar la vista. Puedes reiniciar la aplicación con el botón a continuación.
               </p>
+              {this.state.error?.message && (
+                <div className="mt-3 p-2.5 bg-black/60 border border-stone-800 rounded-xl text-[11px] font-mono text-stone-400 text-left overflow-x-auto break-all">
+                  {this.state.error.message}
+                </div>
+              )}
             </div>
 
             <button
