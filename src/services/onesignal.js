@@ -68,9 +68,19 @@ export async function isOneSignalSubscribed() {
 
 export async function sendTestPushNotification() {
   try {
+    let token = '';
+    try {
+      token = sessionStorage.getItem('sebastian_g_admin_server_session_v1')
+        || localStorage.getItem('sebastian_g_admin_server_session_v1')
+        || '';
+    } catch (e) {}
+
     const res = await fetch('/api/send-push', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
       body: JSON.stringify({
         title: '🔔 ¡Prueba OneSignal Exitosa!',
         message: 'Las notificaciones push 24/7 en segundo plano están activas en Sebastián G.',

@@ -82,7 +82,7 @@ app.use(express.json({ limit: '50mb' }));
 // Las claves se leen EXCLUSIVAMENTE desde variables de entorno.
 // Si no están configuradas, las notificaciones push se deshabilitan sin fallar.
 // ==============================================================================
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || '';
+const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
 let rawOneSignalKey = process.env.ONESIGNAL_REST_API_KEY || '';
 // Detectar si la clave fue provista en Base64 y decodificarla
 if (rawOneSignalKey && !rawOneSignalKey.startsWith('os_v2_')) {
