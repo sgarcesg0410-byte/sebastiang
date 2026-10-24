@@ -13,14 +13,20 @@ import { MongoClient } from 'mongodb';
 // - sessions (galerías privadas de entrega)
 // ==============================================================================
 
-const uri = process.env.MONGODB_URI || '';
-const DB_NAME = process.env.MONGODB_DB_NAME || 'sebastiang';
+function getMongoUri() {
+  return String(process.env.MONGODB_URI || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function getMongoDbName() {
+  return String(process.env.MONGODB_DB_NAME || 'sebastiang').trim().replace(/^['"]|['"]$/g, '');
+}
 
 let client = null;
 let clientPromise = null;
 
 export function isMongoConfigured() {
-  return Boolean(uri && uri.startsWith('mongodb'));
+  const currentUri = getMongoUri();
+  return Boolean(currentUri && currentUri.startsWith('mongodb'));
 }
 
 export async function getMongoClient() {
@@ -28,10 +34,12 @@ export async function getMongoClient() {
     return null;
   }
 
+  const currentUri = getMongoUri();
+
   if (process.env.NODE_ENV === 'development' || !process.env.VERCEL) {
     // Modo local / desarrollo: reusar en global para hot reloading
     if (!global._mongoClientPromise) {
-      client = new MongoClient(uri, {
+      client = new MongoClient(currentUri, {
         maxPoolSize: 10,
         serverSelectionTimeoutMS: 5000
       });
@@ -41,7 +49,7 @@ export async function getMongoClient() {
   } else {
     // Modo producción Serverless (Vercel): reusar cliente en memoria
     if (!clientPromise) {
-      client = new MongoClient(uri, {
+      client = new MongoClient(currentUri, {
         maxPoolSize: 10,
         serverSelectionTimeoutMS: 5000
       });
@@ -53,6 +61,10 @@ export async function getMongoClient() {
     const connectedClient = await clientPromise;
     return connectedClient;
   } catch (err) {
+    clientPromise = null;
+    if (global._mongoClientPromise) {
+      global._mongoClientPromise = null;
+    }
     console.warn('⚠️ [MongoDB Atlas] Error conectando a la base de datos:', err?.message || err);
     return null;
   }
@@ -61,7 +73,7 @@ export async function getMongoClient() {
 export async function getMongoDB() {
   const connectedClient = await getMongoClient();
   if (!connectedClient) return null;
-  return connectedClient.db(DB_NAME);
+  return connectedClient.db(getMongoDbName());
 }
 
 /**

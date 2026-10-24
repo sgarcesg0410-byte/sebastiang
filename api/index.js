@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
@@ -135,14 +136,18 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
 }
 
 // ==============================================================================
-// SUPABASE CLOUD (Fuente canónica de verdad)
+// SUPABASE CLOUD (Fallback secundario; se omite si el host legado fue dado de baja)
 // ==============================================================================
+const DECOMMISSIONED_SUPABASE_HOST = 'maqqzcawbdhhfqxoabyq.supabase.co';
 const SUPABASE_REST_URL = process.env.SUPABASE_REST_URL || 'https://maqqzcawbdhhfqxoabyq.supabase.co';
-const SUPABASE_REST_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_REST_KEY || '';
+const rawSupabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_REST_KEY || '';
+const SUPABASE_REST_KEY = (isMongoConfigured() && SUPABASE_REST_URL.includes(DECOMMISSIONED_SUPABASE_HOST))
+  ? ''
+  : rawSupabaseKey;
 
-if (!SUPABASE_REST_KEY) {
+if (!SUPABASE_REST_KEY && !isMongoConfigured()) {
   console.warn(
-    '⚠️ [Supabase] SUPABASE_REST_KEY no configurada. ' +
+    '⚠️ [Database] Ni MongoDB Atlas ni SUPABASE_REST_KEY están configurados. ' +
     'La sincronización con la nube estará limitada.'
   );
 }
@@ -696,6 +701,18 @@ registerPublicRoutes(app, {
 // ==============================================================================
 // ENDPOINTS PÚBLICOS
 // ==============================================================================
+
+app.get('/api/health', async (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'sebastiang-api',
+    database: isMongoConfigured() ? 'mongodb-atlas' : (SUPABASE_REST_KEY ? 'supabase' : 'memory'),
+    mongoConfigured: isMongoConfigured(),
+    smtpConfigured: Boolean(process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS),
+    pushConfigured: Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY),
+    timestamp: new Date().toISOString()
+  });
+});
 
 app.post('/api/send-push', requireAdminAuth, async (req, res) => {
   const { title, message, url, data } = req.body || {};

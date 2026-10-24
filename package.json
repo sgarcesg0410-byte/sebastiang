@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "server": "node server/index.js",
     "electron": "electron .",
-    "electron:build": "vite build && electron-builder --win nsis"
+    "electron:build": "vite build --base=./ && electron-builder --win nsis"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

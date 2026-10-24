@@ -10,10 +10,10 @@ import { escapeHtml } from './security.js';
 // ==============================================================================
 
 function getZohoConfig() {
-  const host = process.env.ZOHO_SMTP_HOST || 'smtp.zoho.com';
-  const port = parseInt(process.env.ZOHO_SMTP_PORT || '587', 10);
-  const user = process.env.ZOHO_SMTP_USER || 'reservas@sebastiang.app';
-  const pass = process.env.ZOHO_SMTP_PASS;
+  const host = (process.env.ZOHO_SMTP_HOST || process.env.SMTP_HOST || 'smtp.zoho.com').trim();
+  const port = parseInt(process.env.ZOHO_SMTP_PORT || process.env.SMTP_PORT || '587', 10);
+  const user = (process.env.ZOHO_SMTP_USER || process.env.SMTP_USER || 'reservas@sebastiang.app').trim();
+  const pass = (process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS || '').trim();
 
   if (!pass) {
     console.warn(

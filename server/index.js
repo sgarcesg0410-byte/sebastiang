@@ -63,8 +63,17 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
   }
 }
 
+// Healthcheck del servidor local/escritorio
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'sebastiang-local-server',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Endpoint dedicado para enviar notificaciones Push desde cualquier parte del sistema
-app.post('/api/send-push', async (req, res) => {
+app.post('/api/send-push', requireAdminAuth, async (req, res) => {
   const { title, message, url, data } = req.body || {};
   if (!title || !message) {
     return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
