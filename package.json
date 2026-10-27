@@ -21,7 +21,7 @@
   "dependencies": {
     "canvas-confetti": "^1.9.4",
     "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
+    "dotenv": "^18.0.9",
     "express": "^4.21.2",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.16.0",
