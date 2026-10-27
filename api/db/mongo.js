@@ -146,3 +146,52 @@ export async function deleteMongoDoc(collectionName, filter) {
     return false;
   }
 }
+
+/**
+ * Crea y verifica los índices operativos y el índice TTL de 90 días en MongoDB Atlas.
+ * Puede ejecutarse contra la base principal o contra una base temporal de simulacro/staging.
+ */
+export async function ensureMongoIndexes(dbOverride = null) {
+  const startMs = performance.now();
+  try {
+    const db = dbOverride || (await getMongoDB());
+    if (!db) {
+      return { verified: false, reason: 'mongo_not_configured', elapsedMs: 0, indexes: [] };
+    }
+
+    const created = [];
+    const specs = [
+      { col: 'bookings', key: { id: 1 }, opts: { name: 'idx_bookings_id' } },
+      { col: 'bookings', key: { createdAt: -1 }, opts: { name: 'idx_bookings_created_desc' } },
+      { col: 'bookings', key: { dateTime: 1 }, opts: { name: 'idx_bookings_datetime' } },
+      { col: 'payments', key: { id: 1 }, opts: { name: 'idx_payments_id' } },
+      { col: 'payments', key: { reference: 1 }, opts: { name: 'idx_payments_reference' } },
+      { col: 'payments', key: { bookingId: 1 }, opts: { name: 'idx_payments_booking_id' } },
+      { col: 'sessions', key: { token: 1 }, opts: { name: 'idx_sessions_token' } },
+      { col: 'sessions', key: { id: 1 }, opts: { name: 'idx_sessions_id' } },
+      { col: 'audit_logs', key: { id: 1 }, opts: { name: 'idx_audit_logs_id' } },
+      { col: 'audit_logs', key: { createdAt: -1 }, opts: { name: 'idx_audit_logs_created_desc' } },
+      // Índice TTL nativo de MongoDB Atlas: purga automática al cumplirse expiresAtDate (90 días)
+      { col: 'audit_logs', key: { expiresAtDate: 1 }, opts: { name: 'idx_audit_logs_ttl_90d', expireAfterSeconds: 0 } }
+    ];
+
+    for (const s of specs) {
+      const idxName = await db.collection(s.col).createIndex(s.key, s.opts);
+      created.push(`${s.col}.${idxName}`);
+    }
+
+    return {
+      verified: true,
+      elapsedMs: Math.max(1, Math.round(performance.now() - startMs)),
+      indexes: created
+    };
+  } catch (err) {
+    console.warn('⚠️ [MongoDB] Error asegurando índices:', err?.message || err);
+    return {
+      verified: false,
+      reason: err?.message || 'index_error',
+      elapsedMs: Math.max(1, Math.round(performance.now() - startMs)),
+      indexes: []
+    };
+  }
+}

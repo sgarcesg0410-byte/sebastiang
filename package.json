@@ -12,6 +12,7 @@
     "check:syntax": "node scripts/check-syntax.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "ops:drill": "node scripts/run-incident-drill.mjs",
     "preview": "vite preview",
     "server": "node server/index.js",
     "electron": "electron .",

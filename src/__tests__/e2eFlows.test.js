@@ -382,4 +382,39 @@ describe('Suite E2E de Operación Segura y Producción Definitiva', () => {
     const pruned = pruneExpiredAuditLogs(logs, now);
     expect(pruned.map(l => l.id)).toEqual(['audit-recent']);
   });
+
+  it('Flujo E2E 11: Custodia y rotación versionada de claves de Backup (keyId v1 -> v2 + protección AAD) y prueba de alerta externa', async () => {
+    process.env.BACKUP_ENCRYPTION_KEY_V1 = 'llave-kms-historica-v1-2025-sebastiang';
+    process.env.BACKUP_ENCRYPTION_KEY_V2 = 'llave-kms-rotada-v2-2026-sebastiang';
+    process.env.BACKUP_ENCRYPTION_KEY_ID = 'v1';
+
+    // 1. Cifrar backup con llave v1
+    const snapV1 = { bookings: [{ id: 'bk-key-v1', clientName: 'Cliente Historico V1' }] };
+    const envV1 = encryptBackupPayload(snapV1);
+    expect(envV1.keyId).toBe('v1');
+
+    // 2. Rotar llave activa a v2 y cifrar nuevo backup
+    process.env.BACKUP_ENCRYPTION_KEY_ID = 'v2';
+    const snapV2 = { bookings: [{ id: 'bk-key-v2', clientName: 'Cliente Actual V2' }] };
+    const envV2 = encryptBackupPayload(snapV2);
+    expect(envV2.keyId).toBe('v2');
+
+    // 3. Verificar que tanto v1 (histórico) como v2 (actual) se descifran correctamente tras la rotación
+    expect(decryptBackupPayload(envV1).bookings[0].id).toBe('bk-key-v1');
+    expect(decryptBackupPayload(envV2).bookings[0].id).toBe('bk-key-v2');
+
+    // 4. Verificar que alterar el keyId en el sobre falla por validación criptográfica AAD (AES-256-GCM)
+    expect(() => decryptBackupPayload({ ...envV1, keyId: 'v2' })).toThrow();
+
+    // 5. Probar endpoint de alerta mensual (/api/admin/monitoring/test-alert)
+    const adminToken = createAdminToken({ pwd: 1 });
+    const alertRes = await invokeE2E('POST', '/api/admin/monitoring/test-alert', {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      body: { reason: 'Simulacro E2E de alerta mensual' }
+    });
+    expect(alertRes.status).toBe(200);
+    expect(alertRes.body.success).toBe(true);
+    expect(alertRes.body.auditLogId).toMatch(/^audit-/);
+    expect(alertRes.body.channels.inAppAuditLog).toBe(true);
+  });
 });

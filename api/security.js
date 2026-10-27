@@ -542,11 +542,13 @@ export async function recordFinancialAuditLog(
     ...(metadata && typeof metadata === 'object' ? metadata : {})
   };
   const nowIso = new Date().toISOString();
+  const expiresDate = new Date(Date.now() + AUDIT_LOG_RETENTION_MS);
   const entry = {
     id: `audit-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     timestamp: nowIso,
     createdAt: nowIso,
-    expiresAt: new Date(Date.now() + AUDIT_LOG_RETENTION_MS).toISOString(),
+    expiresAt: expiresDate.toISOString(),
+    expiresAtDate: expiresDate, // Campo BSON Date nativo para índice TTL de MongoDB Atlas
     action: String(action || 'UNKNOWN_ACTION'),
     actor: String(actor || 'system'),
     entityType: String(entityType || 'system'),
@@ -609,38 +611,102 @@ export function sanitizeBackupSnapshot(rawSnapshot = {}) {
   };
 }
 
-function deriveBackupCipherKey(secretOverride) {
-  const baseSecret = String(secretOverride || process.env.BACKUP_ENCRYPTION_KEY || getAdminAuthSecret() || '').trim();
-  if (!baseSecret) {
-    throw new Error('No hay clave configurada para cifrar/descifrar el backup (BACKUP_ENCRYPTION_KEY o ADMIN_AUTH_SECRET).');
+// Construye el keyring de claves de cifrado de backups soportando rotación por keyId:
+// - BACKUP_ENCRYPTION_KEYS_JSON='{"v1":"...","v2":"..."}'
+// - BACKUP_ENCRYPTION_KEY_V1 / BACKUP_ENCRYPTION_KEY_V2 / BACKUP_ENCRYPTION_KEY_V3
+// - BACKUP_ENCRYPTION_KEY / ADMIN_AUTH_SECRET
+export function resolveBackupKeyring(keyringOverride = null) {
+  const ring = {};
+  const fallbackSecret = String(process.env.BACKUP_ENCRYPTION_KEY || getAdminAuthSecret() || '').trim();
+  if (fallbackSecret) {
+    ring.v1 = fallbackSecret;
   }
-  return crypto.createHash('sha256').update(`sebastiang-backup-aes256gcm:${baseSecret}`).digest();
+
+  if (process.env.BACKUP_ENCRYPTION_KEYS_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.BACKUP_ENCRYPTION_KEYS_JSON);
+      if (parsed && typeof parsed === 'object') {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === 'string' && v.trim()) ring[k.trim()] = v.trim();
+        }
+      }
+    } catch {}
+  }
+
+  for (const ver of ['v1', 'v2', 'v3', 'v4']) {
+    const envVal = String(process.env[`BACKUP_ENCRYPTION_KEY_${ver.toUpperCase()}`] || '').trim();
+    if (envVal) ring[ver] = envVal;
+  }
+
+  if (keyringOverride && typeof keyringOverride === 'object') {
+    for (const [k, v] of Object.entries(keyringOverride)) {
+      if (typeof v === 'string' && v.trim()) ring[k.trim()] = v.trim();
+    }
+  }
+
+  const activeKeyId = String(process.env.BACKUP_ENCRYPTION_KEY_ID || 'v1').trim();
+  if (fallbackSecret && !ring[activeKeyId]) {
+    ring[activeKeyId] = fallbackSecret;
+  }
+
+  return { activeKeyId, ring };
 }
 
-export function encryptBackupPayload(snapshot, secretOverride) {
-  const key = deriveBackupCipherKey(secretOverride);
+function deriveBackupCipherKey({ secretOverride, keyId, keyringOverride } = {}) {
+  if (typeof secretOverride === 'string' && secretOverride.trim()) {
+    return crypto.createHash('sha256').update(`sebastiang-backup-aes256gcm:${secretOverride.trim()}`).digest();
+  }
+  const { activeKeyId, ring } = resolveBackupKeyring(keyringOverride);
+  const targetKeyId = String(keyId || activeKeyId || 'v1').trim();
+  const rawSecret = ring[targetKeyId];
+  if (!rawSecret) {
+    throw new Error(`No se encontró la clave de cifrado para keyId="${targetKeyId}" en el keyring de backups.`);
+  }
+  return crypto.createHash('sha256').update(`sebastiang-backup-aes256gcm:${rawSecret}`).digest();
+}
+
+export function encryptBackupPayload(snapshot, options = {}) {
+  const opts = typeof options === 'string' ? { secretOverride: options } : (options || {});
+  const { activeKeyId } = resolveBackupKeyring(opts.keyringOverride);
+  const keyId = String(opts.keyId || activeKeyId || 'v1').trim();
+  const key = deriveBackupCipherKey({
+    secretOverride: opts.secretOverride,
+    keyId,
+    keyringOverride: opts.keyringOverride
+  });
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(`keyId:${keyId}`, 'utf8'));
   const plaintext = Buffer.from(JSON.stringify(snapshot), 'utf8');
   const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const authTag = cipher.getAuthTag();
   return {
     algorithm: 'aes-256-gcm',
+    keyId,
     iv: iv.toString('base64'),
     authTag: authTag.toString('base64'),
     ciphertext: encrypted.toString('base64')
   };
 }
 
-export function decryptBackupPayload(envelope, secretOverride) {
+export function decryptBackupPayload(envelope, options = {}) {
   if (!envelope || envelope.algorithm !== 'aes-256-gcm' || !envelope.iv || !envelope.authTag || !envelope.ciphertext) {
     throw new Error('Sobre de backup cifrado inválido o corrupto.');
   }
-  const key = deriveBackupCipherKey(secretOverride);
+  const opts = typeof options === 'string' ? { secretOverride: options } : (options || {});
+  const keyId = String(envelope.keyId || 'v1').trim();
+  const key = deriveBackupCipherKey({
+    secretOverride: opts.secretOverride,
+    keyId,
+    keyringOverride: opts.keyringOverride
+  });
   const iv = Buffer.from(envelope.iv, 'base64');
   const authTag = Buffer.from(envelope.authTag, 'base64');
   const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  if (envelope.keyId) {
+    decipher.setAAD(Buffer.from(`keyId:${keyId}`, 'utf8'));
+  }
   decipher.setAuthTag(authTag);
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return JSON.parse(decrypted.toString('utf8'));

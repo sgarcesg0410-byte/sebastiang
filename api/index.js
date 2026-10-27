@@ -67,7 +67,8 @@ import {
   upsertMongoDoc,
   findMongoDocs,
   findMongoDoc,
-  deleteMongoDoc
+  deleteMongoDoc,
+  ensureMongoIndexes
 } from './db/mongo.js';
 
 const ALLOWED_ORIGINS = [
@@ -2657,7 +2658,9 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
 
   const startMs = performance.now();
   try {
+    const decryptStartMs = performance.now();
     let incomingSnapshot = req.body?.snapshot || null;
+    const envelopeKeyId = req.body?.encryptedEnvelope?.keyId || null;
     if (req.body?.encryptedEnvelope) {
       incomingSnapshot = decryptBackupPayload(req.body.encryptedEnvelope);
     }
@@ -2667,7 +2670,9 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
     }
 
     const clean = sanitizeBackupSnapshot(incomingSnapshot);
+    const decryptAndSanitizeMs = Math.max(1, Math.round(performance.now() - decryptStartMs));
 
+    const memStartMs = performance.now();
     // Conservar intactos los parámetros críticos de seguridad actuales en memoria
     const preservedSecurity = {
       adminPinScrypt: runtimeDB.settings?.adminPinScrypt,
@@ -2692,8 +2697,12 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
     runtimeDB.payments = Array.isArray(clean.payments) ? clean.payments : [];
     runtimeDB.sessions = Array.isArray(clean.sessions) ? clean.sessions : [];
     runtimeDB.reviews = Array.isArray(clean.reviews) ? clean.reviews : [];
+    const memoryRestoreMs = Math.max(1, Math.round(performance.now() - memStartMs));
 
+    let mongoPersistMs = 0;
+    let indexReport = { verified: false, elapsedMs: 0, indexes: [] };
     if (isMongoConfigured()) {
+      const mongoStartMs = performance.now();
       const ops = [];
       for (const b of runtimeDB.bookings) {
         if (b?.id) ops.push(persistBookingToMongo(b));
@@ -2708,9 +2717,17 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
         if (r?.id) ops.push(upsertMongoDoc('reviews', { id: r.id }, r));
       }
       await Promise.allSettled(ops);
+      mongoPersistMs = Math.max(1, Math.round(performance.now() - mongoStartMs));
+      indexReport = await ensureMongoIndexes();
     }
 
     const recoveryTimeMs = Math.max(1, Math.round(performance.now() - startMs));
+    const phasesMs = {
+      decryptAndSanitizeMs,
+      memoryRestoreMs,
+      mongoPersistMs,
+      indexVerificationMs: indexReport.elapsedMs || 0
+    };
     const restoredCounts = {
       bookings: runtimeDB.bookings.length,
       payments: runtimeDB.payments.length,
@@ -2727,13 +2744,18 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
       entityId: 'mongodb_snapshot',
       status: 'restored',
       ip: clientIp,
-      details: { recoveryTimeMs, ...restoredCounts }
+      details: { recoveryTimeMs, keyId: envelopeKeyId || 'plaintext', ...restoredCounts }
     }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
     return res.json({
       success: true,
       restoredAt: new Date().toISOString(),
+      keyId: envelopeKeyId,
       recoveryTimeMs,
+      phasesMs,
+      indexesVerified: indexReport.verified,
+      indexes: indexReport.indexes,
+      rpoPolicy: '0_confirmed_transactions_pitr_24h_snapshot',
       restoredCounts
     });
   } catch (err) {
@@ -2751,6 +2773,65 @@ app.get('/api/admin/monitoring/status', requireAdminAuth, async (req, res) => {
   return res.json({
     success: true,
     ...report
+  });
+});
+
+app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) => {
+  const clientIp = getClientIp(req);
+  if (!checkPublicWriteRateLimit(clientIp, 5, 'admin-monitoring-test-alert')) {
+    return res.status(429).json({ error: 'Demasiadas pruebas de alerta seguidas. Espera unos minutos.' });
+  }
+
+  const reason = String(req.body?.reason || 'Simulacro mensual de monitoreo y alertas operacionales').trim().slice(0, 140);
+  const channels = {
+    inAppAuditLog: true,
+    oneSignalPush: false,
+    webhookExternal: false
+  };
+
+  try {
+    const pushOk = await sendOneSignalPush({
+      title: '🚨 [Simulacro] Alerta Operacional • Sebastian G',
+      message: reason,
+      url: 'https://sebastiang.app/?mode=admin',
+      data: { type: 'operational_alert_drill', timestamp: new Date().toISOString() }
+    });
+    channels.oneSignalPush = Boolean(pushOk);
+  } catch {}
+
+  const webhookUrl = String(process.env.MONITORING_WEBHOOK_URL || '').trim();
+  if (webhookUrl.startsWith('https://')) {
+    try {
+      const whRes = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service: 'sebastiang-fotografia',
+          event: 'operational_alert_drill',
+          reason,
+          timestamp: new Date().toISOString()
+        })
+      });
+      channels.webhookExternal = whRes.ok;
+    } catch {}
+  }
+
+  recordOperationalEvent('backupExports', `Simulacro de alerta operacional ejecutado: ${reason}`, 'info');
+  const auditEntry = await recordFinancialAuditLog({
+    action: 'monitoring_alert_drill',
+    actor: 'admin',
+    entityType: 'monitoring',
+    entityId: 'alert_pipeline',
+    status: 'verified',
+    ip: clientIp,
+    details: { reason, ...channels }
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+  return res.json({
+    success: true,
+    testedAt: new Date().toISOString(),
+    auditLogId: auditEntry.id,
+    channels
   });
 });
 

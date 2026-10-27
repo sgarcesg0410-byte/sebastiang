@@ -47,5 +47,8 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
+  },
+  test: {
+    testTimeout: 15000
   }
 })

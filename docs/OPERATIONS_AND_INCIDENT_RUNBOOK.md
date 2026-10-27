@@ -35,25 +35,48 @@
 
 ---
 
-### Escenario C: Caída de MongoDB Atlas / Restauración desde Backup Cifrado
-1. **Detección:**
-   - Verifica el estado en `GET /api/health` y `GET /api/admin/monitoring/status` (alerta `MONGO_DISCONNECTED` o `MONGO_ERRORS`).
-2. **Exportación preventiva de Backup Cifrado (`AES-256-GCM`):**
+### Escenario C: Caída de MongoDB Atlas / Restauración desde Backup Cifrado y Rotación de Llaves (`keyId`)
+1. **Objetivos de Recuperación (RPO y RTO definidos):**
+   - **RPO (Recovery Point Objective):**
+     - **0 transacciones/reservas confirmadas perdidas** mediante escritura con `w=majority` y Point-in-Time Recovery (PITR / oplog continuo) en MongoDB Atlas.
+     - **Máximo 24 horas** para snapshots fríos externos descargados vía `GET /api/admin/backup?encrypt=1`.
+   - **RTO (Recovery Time Objective):**
+     - **< 2 segundos** para restauración caliente en memoria/API (`decryptAndSanitizeMs` + `memoryRestoreMs`).
+     - **< 5 minutos** para restauración completa en un clúster MongoDB Atlas limpio (conexión TLS + recreación de 11 índices BSON incluyendo TTL `idx_audit_logs_ttl_90d` + inserción por lotes + verificación de conteos).
+2. **Custodia y Rotación Versionada de Llaves (`AES-256-GCM` con `keyId` y AAD):**
+   - Cada sobre cifrado incluye `keyId` (ej. `v1`, `v2`) autenticado mediante `cipher.setAAD(Buffer.from("keyId:" + keyId))`.
+   - Para rotar la llave en producción sin perder capacidad de descifrar backups históricos:
+     1. Conserva `BACKUP_ENCRYPTION_KEY_V1` con la llave anterior.
+     2. Define `BACKUP_ENCRYPTION_KEY_V2` con la nueva llave generada desde KMS / gestor de secretos.
+     3. Cambia `BACKUP_ENCRYPTION_KEY_ID=v2`.
+     4. Todos los backups nuevos se cifrarán con `v2` y los antiguos con `v1` seguirán restaurándose transparentemente.
+3. **Detección y Prueba Mensual de Alertas Externas:**
+   - Verifica el estado en `GET /api/health` y `GET /api/admin/monitoring/status` (alertas `MONGO_DISCONNECTED`, `MONGO_ERRORS`, `SMTP_FAILURE`, `APK_AUTH_SPIKE`, `PAYMENT_REJECTION_SPIKE`).
+   - Ejecuta mensualmente el disparo de prueba hacia OneSignal Push y tu webhook externo (`MONITORING_WEBHOOK_URL` en Better Stack / UptimeRobot / Healthchecks):
+     ```bash
+     curl -X POST "https://sebastiang.app/api/admin/monitoring/test-alert" \
+       -H "Authorization: Bearer <TU_ADMIN_TOKEN>" \
+       -H "Content-Type: application/json" \
+       -d '{"channel":"all","message":"Prueba mensual de alertas operativas"}'
+     ```
+4. **Exportación preventiva de Backup Cifrado (`AES-256-GCM`):**
    - Descarga periódicamente el snapshot cifrado (sin secretos, sin hashes scrypt ni retos de recuperación, con `Content-Disposition: attachment` y `Cache-Control: no-store`):
      ```bash
      curl -X GET "https://sebastiang.app/api/admin/backup?encrypt=1" \
        -H "Authorization: Bearer <TU_ADMIN_TOKEN>" \
        -o backup-sebastiang-encrypted.json
      ```
-3. **Restauración verificada y medición de RTO (`recoveryTimeMs`):**
-   - Para restaurar un backup cifrado en una base temporal o de producción:
+5. **Restauración verificada, recreación de índices TTL y medición de RTO por fases (`phasesMs`):**
+   - Para restaurar un backup cifrado:
      ```bash
      curl -X POST "https://sebastiang.app/api/admin/backup/restore" \
        -H "Authorization: Bearer <TU_ADMIN_TOKEN>" \
        -H "Content-Type: application/json" \
        -d @backup-sebastiang-encrypted.json
      ```
-   - La respuesta devuelve `recoveryTimeMs` y `restoredCounts` (`bookings`, `payments`, `sessions`, `catalog`, `reviews`).
+   - La respuesta devuelve `keyId`, `recoveryTimeMs`, `phasesMs` (`decryptAndSanitizeMs`, `memoryRestoreMs`, `mongoPersistMs`, `indexVerificationMs`), `indexesVerified` y `restoredCounts`.
+6. **Simulacro Automatizado Completo en Infraestructura Real (`npm run ops:drill`):**
+   - Ejecuta `npm run ops:drill` (`scripts/run-incident-drill.mjs`) para correr los 5 escenarios en cadena, incluyendo la creación de una base temporal real en MongoDB Atlas (`sebastiang_drill_<timestamp>`), verificación del índice TTL nativo de 90 días (`idx_audit_logs_ttl_90d`), restauración de colecciones, medición de RTO real de red y limpieza automática (`dropDatabase`).
 
 ---
 
