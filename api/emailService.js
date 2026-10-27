@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { escapeHtml } from './security.js';
+import { escapeHtml, maskEmail } from './security.js';
 
 // ==============================================================================
 // CONFIGURACIÓN SMTP CON ZOHO MAIL
@@ -35,6 +35,9 @@ let cachedTransporter = null;
 let lastConfigWarning = 0;
 
 function getTransporter() {
+  if ((process.env.NODE_ENV === 'test' || process.env.VITEST) && process.env.ALLOW_SMTP_IN_TESTS !== 'true') {
+    return null;
+  }
   const config = getZohoConfig();
   if (!config) {
     const now = Date.now();
@@ -223,7 +226,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
         html: clientHtml
       });
       results.clientSent = true;
-      console.log('✓ Correo de bienvenida enviado al cliente:', booking.clientEmail);
+      console.log('✓ Correo de bienvenida enviado al cliente:', maskEmail(booking.clientEmail));
     } catch (errClient) {
       console.error('Error enviando correo al cliente:', errClient);
     }
@@ -382,7 +385,7 @@ export async function sendPaymentReceiptEmail({
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`✓ Comprobante oficial enviado por correo a ${booking.clientEmail} (${voucherNum})`);
+    console.log(`✓ Comprobante oficial enviado por correo a ${maskEmail(booking.clientEmail)} (${voucherNum})`);
     return { sent: true, voucherNum };
   } catch (err) {
     console.error('Error enviando comprobante de pago por correo:', err);
@@ -450,7 +453,7 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
       html
     });
 
-    console.log('✓ Confirmación de cita enviada por correo al cliente:', booking.clientEmail);
+    console.log('✓ Confirmación de cita enviada por correo al cliente:', maskEmail(booking.clientEmail));
     return true;
   } catch (err) {
     console.error('Error enviando confirmación de cita por correo:', err);
@@ -518,7 +521,7 @@ export async function sendSessionCompletedEmail(booking, customNotes = '') {
       html
     });
 
-    console.log('✓ Correo de sesión realizada enviado al cliente:', booking.clientEmail);
+    console.log('✓ Correo de sesión realizada enviado al cliente:', maskEmail(booking.clientEmail));
     return true;
   } catch (err) {
     console.error('Error enviando correo de sesión realizada:', err);
@@ -583,7 +586,7 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
       html
     });
 
-    console.log('✓ Entrega de fotos enviada por correo al cliente:', clientEmail);
+    console.log('✓ Entrega de fotos enviada por correo al cliente:', maskEmail(clientEmail));
     return true;
   } catch (err) {
     console.error('Error enviando entrega de fotos por correo:', err);
@@ -629,11 +632,11 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@g
       from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
       to: dest,
       bcc: 'reservas@sebastiang.app',
-      subject: `🔐 Tu Código de Seguridad 2FA es [ ${code} ] • Sebastian G`,
+      subject: `🔐 Código de Seguridad 2FA • Sebastian G`,
       html
     });
 
-    console.log('✓ Código 2FA enviado por correo a:', dest);
+    console.log('✓ Código 2FA enviado por correo a:', maskEmail(dest));
     return true;
   } catch (err) {
     console.error('Error enviando código 2FA por correo:', err);
@@ -684,7 +687,7 @@ export async function sendPasswordResetCodeEmail(code, targetEmail = process.env
       html
     });
 
-    console.log('✓ Código de recuperación enviado por correo a:', dest);
+    console.log('✓ Código de recuperación enviado por correo a:', maskEmail(dest));
     return true;
   } catch (err) {
     console.error('Error enviando código de recuperación por correo:', err);
@@ -733,7 +736,7 @@ export async function sendPasswordChangedAlertEmail(targetEmail = process.env.AD
       html
     });
 
-    console.log('✓ Alerta de seguridad (contraseña cambiada) enviada por correo a:', dest);
+    console.log('✓ Alerta de seguridad (contraseña cambiada) enviada por correo a:', maskEmail(dest));
     return true;
   } catch (err) {
     console.error('Error enviando alerta de cambio de contraseña por correo:', err);

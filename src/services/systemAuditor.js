@@ -2,8 +2,6 @@
 // Auditor Inteligente del Software para Sebastian G • Fotografía
 // Monitorea errores en vivo, caídas de servicios, conflictos en pagos y mejoras del sistema.
 
-import { supabase } from './supabase';
-
 const LOCAL_ERROR_LOGS_KEY = 'sebastian_g_error_logs_v1';
 const MAX_ERROR_LOGS = 50;
 
@@ -112,11 +110,11 @@ export async function auditServicesHealth() {
     push: { name: 'Notificaciones Push (OneSignal / Android)', status: 'checking', latencyMs: 0, message: '' }
   };
 
-  // Test 1: Base de Datos Cloud (MongoDB Atlas)
+  // Test 1: Base de Datos Cloud (MongoDB Atlas — Fuente Única de Verdad)
   const supaStart = performance.now();
   try {
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout > 5s')), 5000));
-    const supaPromise = fetch('/api/settings');
+    const supaPromise = fetch('/api/health');
     const res = await Promise.race([supaPromise, timeoutPromise]);
     const supaEnd = performance.now();
     results.supabase.latencyMs = Math.round(supaEnd - supaStart);
@@ -125,7 +123,7 @@ export async function auditServicesHealth() {
       results.supabase.message = `Respondió con código HTTP ${res.status}`;
     } else {
       results.supabase.status = 'ok';
-      results.supabase.message = `Conectado y sincronizado (${results.supabase.latencyMs} ms)`;
+      results.supabase.message = `MongoDB Atlas conectado (${results.supabase.latencyMs} ms)`;
     }
   } catch (err) {
     results.supabase.status = 'down';
@@ -267,7 +265,7 @@ export function auditPaymentConflicts(bookings = [], payments = []) {
     }
   }
 
-  // D. Detectar pagos huérfanos (pagos en Supabase sin reserva asociada)
+  // D. Detectar pagos huérfanos (pagos en MongoDB Atlas sin reserva asociada)
   const bookingIdSet = new Set(validBookings.map(b => String(b.id)));
   for (const p of validPayments) {
     if (p.sessionToken && !bookingIdSet.has(String(p.sessionToken)) && !String(p.sessionToken).startsWith('manual-')) {

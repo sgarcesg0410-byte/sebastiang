@@ -13,8 +13,24 @@ import {
   readAdminToken,
   verifyAdminToken,
   KNOWN_WEAK_PIN_HASH,
-  setPasswordVersionGetter
+  setPasswordVersionGetter,
+  generateGalleryToken,
+  isValidGalleryTokenFormat,
+  maskEmail,
+  maskPhone,
+  getTrustedClientIp,
+  toMinimalApkFeed,
+  createApkDeviceToken,
+  verifyApkDeviceToken,
+  recordFinancialAuditLog,
+  secureCompare
 } from './security.js';
+import {
+  validateImagePayload,
+  validateSessionPhotosBatch,
+  DEFAULT_MAX_IMAGE_BYTES,
+  DEFAULT_MAX_VOUCHER_BYTES
+} from './uploadValidator.js';
 import { registerPublicRoutes } from './publicRoutes.js';
 import { resolveBookingPrice } from './pricingGuard.js';
 import {
@@ -57,6 +73,7 @@ const ALLOWED_ORIGINS = [
 ];
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
@@ -72,7 +89,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-apk-device-token', 'x-apk-key']
 }));
 app.use(express.json({ limit: '50mb' }));
 
@@ -103,6 +120,9 @@ if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
 }
 
 async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    return { id: 'test-push-suppressed', simulated: true };
+  }
   if (!ONESIGNAL_REST_API_KEY || !ONESIGNAL_APP_ID) {
     console.warn('[OneSignal] Push omitido: credenciales no configuradas.');
     return null;
@@ -136,26 +156,17 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
 }
 
 // ==============================================================================
-// SUPABASE CLOUD (Fallback secundario; se omite si el host legado fue dado de baja)
+// BASE DE DATOS OFICIAL: MongoDB Atlas es la única fuente de verdad persistente.
 // ==============================================================================
-const DECOMMISSIONED_SUPABASE_HOST = 'maqqzcawbdhhfqxoabyq.supabase.co';
-const SUPABASE_REST_URL = process.env.SUPABASE_REST_URL || 'https://maqqzcawbdhhfqxoabyq.supabase.co';
-const rawSupabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_REST_KEY || '';
-const SUPABASE_REST_KEY = (isMongoConfigured() && SUPABASE_REST_URL.includes(DECOMMISSIONED_SUPABASE_HOST))
-  ? ''
-  : rawSupabaseKey;
-
-if (!SUPABASE_REST_KEY && !isMongoConfigured()) {
+if (!isMongoConfigured() && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
   console.warn(
-    '⚠️ [Database] Ni MongoDB Atlas ni SUPABASE_REST_KEY están configurados. ' +
-    'La sincronización con la nube estará limitada.'
+    '⚠️ [Database] MONGODB_URI no está configurado. ' +
+    'El servidor operará únicamente con caché en memoria volátil.'
   );
 }
 
 // Configurar validador de versión de contraseña en tiempo real para sesiones admin
 setPasswordVersionGetter(() => getActivePasswordVersionFromStore({
-  supaUrl: SUPABASE_REST_URL,
-  supaKey: SUPABASE_REST_KEY,
   runtimeDB
 }));
 
@@ -218,12 +229,11 @@ function mergeBookingObjectsServer(existing, incoming) {
   return normalizeBookingDoc(merged);
 }
 
-async function syncBookingToSupabaseServer(b) {
+async function persistBookingToMongo(b) {
   if (!b || !b.id) return;
   const supaId = b.id.startsWith('book-') ? b.id : `book-${b.id}`;
   const normalized = normalizeBookingDoc(b);
 
-  // 1. MongoDB Atlas (Persistencia Primaria)
   if (isMongoConfigured() && normalized) {
     try {
       await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id, supaId });
@@ -231,119 +241,18 @@ async function syncBookingToSupabaseServer(b) {
       console.warn('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
     }
   }
-
-  // 2. Supabase Cloud (siempre que haya clave, EN PARALELO a MongoDB):
-  //    - alimenta el canal Realtime y las lecturas directas del navegador (APK/PWA),
-  //    - actúa como respaldo redundante si MongoDB fallara.
-  // Antes se omitía Supabase cuando Mongo estaba configurado, lo que dejaba muertas
-  // las notificaciones en tiempo real (Realtime escucha la tabla `catalog` de Supabase).
-  if (!SUPABASE_REST_KEY) return;
-  try {
-    const r1 = await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: supaId,
-        client_name: b.clientName || 'Cliente',
-        client_whatsapp: b.clientWhatsApp || '',
-        client_email: b.clientEmail || '',
-        package_id: b.packageId || 'pkg-4fotos',
-        package_name: b.packageName || 'Sesión Fotográfica',
-        total_price: Number(b.totalPrice || 0),
-        location_type: b.locationType || 'san_antero',
-        specific_location: b.specificLocation || '',
-        date_time: b.dateTime || '',
-        description: b.description || '',
-        status: b.status || 'pending'
-      })
-    });
-    if (!r1.ok) console.warn(`[Supabase] Fallo al escribir en bookings (HTTP ${r1.status}):`, (await r1.text()).slice(0, 200));
-    const r2 = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: supaId,
-        title: b.clientName || 'Reserva',
-        category: 'booking_data',
-        location: b.specificLocation || '',
-        url: JSON.stringify(b)
-      })
-    });
-    if (!r2.ok) console.warn(`[Supabase] Fallo al escribir en catalog (HTTP ${r2.status}):`, (await r2.text()).slice(0, 200));
-  } catch (e) {
-    console.warn('Sync server -> Supabase:', e);
-  }
 }
 
-async function syncPaymentToSupabaseServer(p) {
+async function persistPaymentToMongo(p) {
   if (!p || !p.id) return;
   const supaId = p.id.startsWith('pay-') ? p.id : `pay-${p.id}`;
 
-  // 1. MongoDB Atlas (Persistencia Primaria)
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id, supaId });
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
     }
-  }
-
-  // 2. Supabase Cloud (siempre que haya clave, EN PARALELO a MongoDB):
-  //    - alimenta el canal Realtime y las lecturas directas del navegador (APK/PWA),
-  //    - actúa como respaldo redundante si MongoDB fallara.
-  // Antes se omitía Supabase cuando Mongo estaba configurado, lo que dejaba muertas
-  // las notificaciones en tiempo real (Realtime escucha la tabla `catalog` de Supabase).
-  if (!SUPABASE_REST_KEY) return;
-  try {
-    const r1 = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: supaId,
-        title: p.clientName || 'Pago',
-        category: 'payment_data',
-        location: p.method || p.gatewayProvider || '',
-        url: JSON.stringify(p)
-      })
-    });
-    if (!r1.ok) console.warn(`[Supabase] Fallo al escribir pago en catalog (HTTP ${r1.status}):`, (await r1.text()).slice(0, 200));
-    const r2 = await fetch(`${SUPABASE_REST_URL}/rest/v1/payments`, {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_REST_KEY,
-        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: supaId,
-        client_name: p.clientName || 'Cliente',
-        client_whatsapp: p.clientWhatsApp || '',
-        session_token: p.sessionToken || p.bookingId || '',
-        amount: Number(p.amount || 0),
-        method: p.method || 'wompi',
-        status: p.status || 'pending',
-        reference: p.reference || ''
-      })
-    });
-    if (!r2.ok) console.warn(`[Supabase] Fallo al escribir pago en payments (HTTP ${r2.status}):`, (await r2.text()).slice(0, 200));
-  } catch (e) {
-    console.warn('Sync payment server -> Supabase:', e);
   }
 }
 
@@ -353,7 +262,7 @@ async function findPaymentByReference(ref, txId) {
   let found = (runtimeDB.payments || []).find(p => p && ((ref && p.reference === ref) || (txId && p.transactionId === txId)));
   if (found) return found;
 
-  // 2. MongoDB Atlas (primario)
+  // 2. MongoDB Atlas (única fuente de verdad persistente)
   if (isMongoConfigured()) {
     try {
       const orConditions = [];
@@ -367,27 +276,6 @@ async function findPaymentByReference(ref, txId) {
     }
   }
 
-  // 3. Supabase (fallback secundario)
-  if (SUPABASE_REST_KEY) {
-    try {
-      const res = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.payment_data&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        for (const r of Array.isArray(rows) ? rows : []) {
-          try {
-            const p = JSON.parse(r.url);
-            if (p && ((ref && p.reference === ref) || (txId && p.transactionId === txId))) {
-              return p;
-            }
-          } catch {}
-        }
-      }
-    } catch (e) {
-      console.warn('Error reading payment from Supabase:', e);
-    }
-  }
   return null;
 }
 
@@ -400,7 +288,7 @@ async function findBookingById(bookingId) {
   const found = (runtimeDB.bookings || []).find(b => b && (b.id === cleanId || b.id === supaId));
   if (found) return found;
 
-  // 2. MongoDB Atlas (primario)
+  // 2. MongoDB Atlas (única fuente de verdad persistente)
   if (isMongoConfigured()) {
     try {
       const doc = await findMongoDoc('bookings', { $or: [{ id: cleanId }, { id: supaId }, { supaId }] });
@@ -410,24 +298,6 @@ async function findBookingById(bookingId) {
     }
   }
 
-  // 3. Supabase (fallback secundario)
-  if (SUPABASE_REST_KEY) {
-    try {
-      const res = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        if (rows && rows[0]?.url) {
-          try {
-            return JSON.parse(rows[0].url);
-          } catch {}
-        }
-      }
-    } catch (e) {
-      console.warn('Error finding booking in Supabase:', e);
-    }
-  }
   return null;
 }
 
@@ -440,9 +310,7 @@ const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
 const LOGIN_LOCKOUT_MS = 30 * 60 * 1000; // 30 minutos
 
 function getClientIp(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0]?.trim()
-    || req.socket?.remoteAddress
-    || 'unknown';
+  return getTrustedClientIp(req);
 }
 
 function checkRateLimit(ip) {
@@ -515,15 +383,16 @@ function checkCheckoutRateLimit(ip) {
   return true;
 }
 
-// Rate limit genérico para escrituras públicas sin limiter propio (reseñas, bot de WhatsApp)
-const publicWriteAttempts = new Map(); // IP -> { count, windowStart }
+// Rate limit por ámbito (scope) para endpoints públicos y sensibles
+const publicWriteAttempts = new Map(); // `${scope}:${ip}` -> { count, windowStart }
 const PUBLIC_WRITE_WINDOW_MS = 10 * 60 * 1000;
 
-function checkPublicWriteRateLimit(ip, maxAttempts) {
+export function checkPublicWriteRateLimit(ip, maxAttempts, scope = 'default') {
   const now = Date.now();
-  const record = publicWriteAttempts.get(ip);
+  const key = `${scope}:${ip || 'unknown'}`;
+  const record = publicWriteAttempts.get(key);
   if (!record || (now - record.windowStart > PUBLIC_WRITE_WINDOW_MS)) {
-    publicWriteAttempts.set(ip, { count: 1, windowStart: now });
+    publicWriteAttempts.set(key, { count: 1, windowStart: now });
     return true;
   }
   if (record.count >= maxAttempts) {
@@ -531,6 +400,12 @@ function checkPublicWriteRateLimit(ip, maxAttempts) {
   }
   record.count += 1;
   return true;
+}
+
+export function clearApiRateLimiters() {
+  loginAttempts.clear();
+  checkoutAttempts.clear();
+  publicWriteAttempts.clear();
 }
 
 // Limpieza periódica de entradas antiguas del rate limiter (cada 10 min)
@@ -560,23 +435,6 @@ const limpiezaPeriodica = setInterval(() => {
 if (typeof limpiezaPeriodica.unref === 'function') limpiezaPeriodica.unref();
 
 // ==============================================================================
-// HASHING Y COMPARACIÓN SEGURA
-// ==============================================================================
-// El hash del PIN conocido "0493" se conserva SOLO para avisar al arrancar
-// (ver isWeakConfiguredPin en ./security.js). Nunca se usa como valor válido.
-
-function hashSHA256(str) {
-  return crypto.createHash('sha256').update(String(str || '').trim()).digest('hex');
-}
-
-// Comparación en tiempo constante (anti-timing-attack)
-function secureCompare(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
-
-// ==============================================================================
 // SESIONES DE ADMINISTRADOR
 // ==============================================================================
 // La emisión y verificación de tokens vive en ./security.js (HMAC-SHA256 con
@@ -586,10 +444,9 @@ function secureCompare(a, b) {
 // ==============================================================================
 
 // ==============================================================================
-// BASE DE DATOS EN MEMORIA (Cache sincronizado con Supabase)
+// BASE DE DATOS EN MEMORIA (Caché de baja latencia sincronizado con MongoDB Atlas)
 // ==============================================================================
-// NOTA: Ya NO se usa /tmp/db.json. En Vercel serverless /tmp se pierde entre
-// cold starts. Supabase Cloud es la fuente canónica de verdad.
+// NOTA: MongoDB Atlas es la única fuente canónica de verdad persistente.
 // ==============================================================================
 function getDefaultDB() {
   return {
@@ -694,8 +551,7 @@ let runtimeDB = getDefaultDB();
 // debe necesitar sesión, pero tampoco recibe ningún dato personal.
 // ------------------------------------------------------------------------------
 registerPublicRoutes(app, {
-  getRuntimeDB: () => runtimeDB,
-  supabase: { url: SUPABASE_REST_URL, key: SUPABASE_REST_KEY }
+  getRuntimeDB: () => runtimeDB
 });
 
 // ==============================================================================
@@ -706,7 +562,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'ok',
     service: 'sebastiang-api',
-    database: isMongoConfigured() ? 'mongodb-atlas' : (SUPABASE_REST_KEY ? 'supabase' : 'memory'),
+    database: isMongoConfigured() ? 'mongodb-atlas' : 'memory',
     mongoConfigured: isMongoConfigured(),
     smtpConfigured: Boolean(process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS),
     pushConfigured: Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY),
@@ -886,8 +742,67 @@ app.post('/api/settings', requireAdminAuth, async (req, res) => {
   res.json({ success: true, settings: runtimeDB.settings });
 });
 
-// Endpoint exclusivo de alta eficiencia para la APK nativa Android (Background Service 24/7)
-app.get('/api/apk/feed', async (req, res) => {
+// Parser de fecha/hora para validar solapamiento de cupos en el servidor (duración estimada: 120 min)
+const SERVER_SESSION_DURATION_MIN = 120;
+const INACTIVE_BOOKING_STATUSES = new Set(['cancelled', 'canceled', 'cancelada', 'anulada', 'rejected', 'completed', 'delivered']);
+
+function parseServerBookingDateTime(str) {
+  if (!str) return null;
+  const s = String(str).trim();
+  let dateKey = null;
+  const dm = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (dm) {
+    dateKey = `${dm[3]}-${String(dm[2]).padStart(2, '0')}-${String(dm[1]).padStart(2, '0')}`;
+  } else {
+    const ym = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (ym) dateKey = `${ym[1]}-${String(ym[2]).padStart(2, '0')}-${String(ym[3]).padStart(2, '0')}`;
+  }
+  if (!dateKey) return null;
+
+  const tm = s.match(/(\d{1,2}):(\d{2})\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?/i);
+  if (!tm) return null;
+  let h = parseInt(tm[1], 10);
+  const m = parseInt(tm[2], 10);
+  const ap = (tm[3] || '').toLowerCase().replace(/[.\s]/g, '');
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  const startMin = h * 60 + m;
+  return { dateKey, startMin, endMin: startMin + SERVER_SESSION_DURATION_MIN };
+}
+
+// Endpoint exclusivo de alta eficiencia para la APK nativa Android:
+// Acepta token por dispositivo con alcance exclusivo apk_feed:read (rotativo y revocable),
+// secreto de compatibilidad x-apk-key, o sesión de administrador.
+app.get('/api/apk/feed', async (req, res, next) => {
+  const deviceToken = String(
+    req.headers['x-apk-device-token'] ||
+    (String(req.headers.authorization || '').startsWith('Bearer ')
+      ? String(req.headers.authorization).slice(7).trim()
+      : '')
+  ).trim();
+
+  if (deviceToken) {
+    const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+    const revokedDeviceIds = Array.isArray(runtimeDB.settings?.revokedApkDeviceIds)
+      ? runtimeDB.settings.revokedApkDeviceIds
+      : [];
+    const devicePayload = verifyApkDeviceToken(deviceToken, {
+      expectedPasswordVersion: activeVersion,
+      revokedDeviceIds
+    });
+    if (devicePayload) {
+      req.apkDevice = devicePayload;
+      return next();
+    }
+  }
+
+  const configuredSecret = (process.env.APK_FEED_SECRET || '').trim();
+  const providedKey = String(req.headers['x-apk-key'] || '').trim();
+  if (configuredSecret && providedKey && secureCompare(configuredSecret, providedKey)) {
+    return next();
+  }
+  return requireAdminAuth(req, res, next);
+}, async (req, res) => {
   try {
     let bookings = [];
     let payments = [];
@@ -917,14 +832,20 @@ app.get('/api/apk/feed', async (req, res) => {
     if (payments.length === 0 && Array.isArray(runtimeDB.payments)) {
       payments = runtimeDB.payments.slice(0, 10);
     }
+    if (sessions.length === 0 && Array.isArray(runtimeDB.sessions)) {
+      sessions = runtimeDB.sessions.slice(0, 10);
+    }
+    if (reviews.length === 0 && Array.isArray(runtimeDB.reviews)) {
+      reviews = runtimeDB.reviews.slice(0, 10);
+    }
+
+    // Respuesta reducida por dispositivo: cero teléfonos, cero correos, cero tokens de galería ni URLs privadas
+    const minimalFeed = toMinimalApkFeed({ bookings, payments, sessions, reviews });
 
     return res.json({
       success: true,
       timestamp: new Date().toISOString(),
-      bookings,
-      payments,
-      sessions,
-      reviews
+      ...minimalFeed
     });
   } catch (err) {
     console.error('Error en /api/apk/feed:', err);
@@ -933,6 +854,14 @@ app.get('/api/apk/feed', async (req, res) => {
 });
 
 app.post('/api/bookings', async (req, res) => {
+  const clientIp = getClientIp(req);
+  const cleanPhoneKey = String(req.body?.clientWhatsApp || '').replace(/\D/g, '').slice(-8);
+  if (
+    !checkPublicWriteRateLimit(clientIp, 12, 'bookings') ||
+    (cleanPhoneKey && !checkPublicWriteRateLimit(cleanPhoneKey, 6, 'bookings-phone'))
+  ) {
+    return res.status(429).json({ error: 'Demasiadas solicitudes de reserva desde tu conexión. Intenta nuevamente en unos minutos.' });
+  }
   const {
     clientName, clientWhatsApp, clientEmail, packageId,
     locationType, specificLocation, dateTime, description,
@@ -940,6 +869,39 @@ app.post('/api/bookings', async (req, res) => {
     printedPhotos15x20Count, retablosCount, printedSizes,
     paperPhotosSummary, retablosSummary, printedPhotosSummary
   } = req.body;
+
+  // Prevención de doble reserva en el servidor (409 Conflict si hay solapamiento en ventana de 120 min)
+  const requestedSlot = parseServerBookingDateTime(dateTime);
+  if (requestedSlot) {
+    let existingBookings = Array.isArray(runtimeDB.bookings) ? [...runtimeDB.bookings] : [];
+    if (isMongoConfigured()) {
+      try {
+        const mongoDocs = await findMongoDocs('bookings', {}, { createdAt: -1 }, 200);
+        if (Array.isArray(mongoDocs)) {
+          existingBookings = [...existingBookings, ...mongoDocs];
+        }
+      } catch (eMongo) {}
+    }
+
+    const seenBookingIds = new Set();
+    for (const existing of existingBookings) {
+      if (!existing || !existing.id || seenBookingIds.has(existing.id)) continue;
+      seenBookingIds.add(existing.id);
+      const status = String(existing.status || 'pending').toLowerCase();
+      if (INACTIVE_BOOKING_STATUSES.has(status)) continue;
+      const existingSlot = parseServerBookingDateTime(existing.dateTime);
+      if (!existingSlot || existingSlot.dateKey !== requestedSlot.dateKey) continue;
+      const overlaps =
+        requestedSlot.startMin < existingSlot.endMin &&
+        requestedSlot.endMin > existingSlot.startMin;
+      if (overlaps) {
+        return res.status(409).json({
+          error: 'Ese horario ya se encuentra reservado. Por favor elige otro horario disponible.',
+          code: 'SLOT_ALREADY_BOOKED'
+        });
+      }
+    }
+  }
 
   const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
 
@@ -986,13 +948,22 @@ app.post('/api/bookings', async (req, res) => {
   runtimeDB.bookings.unshift(newBooking);
 
   // En Vercel Serverless, res.json() congela el proceso inmediatamente y descarta
-  // cualquier promesa no resuelta. Es mandatorio esperar la sincronización a la nube,
+  // cualquier promesa no resuelta. Es mandatorio esperar la sincronización a MongoDB Atlas,
   // el envío de correos y la notificación push con Promise.allSettled antes de responder:
   await Promise.allSettled([
-    syncBookingToSupabaseServer(newBooking).catch(e => {
-      console.warn('Supabase sync server error:', e?.message || e);
+    persistBookingToMongo(newBooking).catch(e => {
+      console.warn('MongoDB booking sync error:', e?.message || e);
       return null;
     }),
+    recordFinancialAuditLog({
+      action: 'booking_created',
+      actor: 'public_client',
+      entityType: 'booking',
+      entityId: newBooking.id,
+      amount: newBooking.totalPrice,
+      status: newBooking.status,
+      ip: clientIp
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc }),
     sendNewBookingEmails(newBooking, runtimeDB.settings).catch(err => {
       console.error('Error enviando correos de nueva reserva:', err?.message || err);
       return null;
@@ -1033,6 +1004,9 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 app.post('/api/send-email', requireAdminAuth, async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 20, 'send-email')) {
+    return res.status(429).json({ error: 'Límite de envío de correos alcanzado temporalmente. Intenta en unos minutos.' });
+  }
   const { type, data } = req.body || {};
   try {
     if (type === '2fa_code') {
@@ -1076,7 +1050,13 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
 });
 
 app.get('/api/gallery/:token', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 60, 'gallery-read')) {
+    return res.status(429).json({ error: 'Demasiadas consultas de galería. Intenta en unos minutos.' });
+  }
   const { token } = req.params;
+  if (!isValidGalleryTokenFormat(token)) {
+    return res.status(404).json({ error: 'Galería no encontrada.' });
+  }
   let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
   if (!session && token === 'demo-cliente-2026') {
@@ -1102,7 +1082,7 @@ app.get('/api/gallery/:token', async (req, res) => {
     };
   }
 
-  // 1. MongoDB Atlas (primario)
+  // MongoDB Atlas (fuente única de verdad)
   if (!session && token !== 'demo-cliente-2026' && isMongoConfigured()) {
     try {
       const doc = await findMongoDoc('sessions', { token });
@@ -1119,26 +1099,10 @@ app.get('/api/gallery/:token', async (req, res) => {
     }
   }
 
-  // 2. Supabase Cloud (fallback secundario)
-  if (!session && token !== 'demo-cliente-2026' && SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (rows && rows.length > 0 && rows[0].url) {
-          session = JSON.parse(rows[0].url);
-          runtimeDB.sessions = runtimeDB.sessions || [];
-          runtimeDB.sessions.push(session);
-        }
-      }
-    } catch (errSupa) {
-      console.warn('Error consultando sesión en Supabase:', errSupa);
-    }
-  }
-
   if (!session) return res.status(404).json({ error: 'Galería no encontrada.' });
+  if (session.revoked || session.status === 'revoked') {
+    return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado por el estudio.' });
+  }
 
   const now = Date.now();
   const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
@@ -1164,8 +1128,14 @@ app.get('/api/gallery/:token', async (req, res) => {
 });
 
 app.post('/api/gallery/:token/live-selection', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 120, 'gallery-live')) {
+    return res.status(429).json({ error: 'Demasiadas actualizaciones simultáneas. Intenta en unos segundos.' });
+  }
   try {
     const { token } = req.params;
+    if (!isValidGalleryTokenFormat(token)) {
+      return res.status(404).json({ error: 'Galería no encontrada.' });
+    }
     const { selections, selectedCount } = req.body || {};
     let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
@@ -1183,21 +1153,10 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
       } catch (errMongo) {}
     }
 
-    if (!session && SUPABASE_REST_KEY) {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (rows && rows.length > 0 && rows[0].url) {
-          session = JSON.parse(rows[0].url);
-          runtimeDB.sessions = runtimeDB.sessions || [];
-          runtimeDB.sessions.push(session);
-        }
-      }
-    }
-
     if (session) {
+      if (session.revoked || session.status === 'revoked') {
+        return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
+      }
       const now = Date.now();
       const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
       if (expiresTime > 0 && now > expiresTime && session.status !== 'delivered') {
@@ -1229,18 +1188,6 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
           console.warn('⚠️ [MongoDB] Error actualizando live selection:', eMongo?.message || eMongo);
         }
       }
-
-      if (SUPABASE_REST_KEY) {
-        await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_REST_KEY,
-            'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ url: JSON.stringify(session) })
-        });
-      }
     }
     res.json({ success: true, selectedCount: session?.selectedCount || 0 });
   } catch (err) {
@@ -1249,7 +1196,13 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
 });
 
 app.post('/api/gallery/:token/submit', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 12, 'gallery-submit')) {
+    return res.status(429).json({ error: 'Demasiados intentos de envío. Espera unos minutos.' });
+  }
   const { token } = req.params;
+  if (!isValidGalleryTokenFormat(token)) {
+    return res.status(404).json({ error: 'Sesión no encontrada.' });
+  }
   const { selections } = req.body;
   let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
@@ -1267,23 +1220,10 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
     } catch (errMongo) {}
   }
 
-  if (!session && SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (rows && rows.length > 0 && rows[0].url) {
-          session = JSON.parse(rows[0].url);
-          runtimeDB.sessions = runtimeDB.sessions || [];
-          runtimeDB.sessions.push(session);
-        }
-      }
-    } catch (errSupa) {}
-  }
-
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
+  if (session.revoked || session.status === 'revoked') {
+    return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
+  }
   const now = Date.now();
   const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
   if (expiresTime > 0 && now > expiresTime && session.status !== 'delivered') {
@@ -1310,29 +1250,12 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   const selectedPhotos = session.photos.filter(p => p.selected);
   session.selectedCount = selectedPhotos.length;
 
-  // 1. Guardar en MongoDB Atlas
+  // Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('sessions', { token }, session);
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando selección enviada:', eMongo?.message || eMongo);
-    }
-  }
-
-  // 2. Fallback Supabase
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(token)}`, {
-        method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ url: JSON.stringify(session) })
-      });
-    } catch (errSupa) {
-      console.warn('Error al actualizar selección en Supabase:', errSupa);
     }
   }
 
@@ -1378,7 +1301,7 @@ async function getActiveAdminScryptHash() {
   if (runtimeDB.settings?.adminPinScrypt) {
     return runtimeDB.settings.adminPinScrypt;
   }
-  // 1. MongoDB Atlas (primario)
+  // MongoDB Atlas (fuente única de verdad)
   if (isMongoConfigured()) {
     try {
       const secDoc = await findMongoDoc('security', { id: 'system_admin_pin_hash' });
@@ -1389,31 +1312,6 @@ async function getActiveAdminScryptHash() {
       }
     } catch (eMongo) {
       console.warn('Aviso leyendo system_admin_pin_hash de MongoDB:', eMongo?.message || eMongo);
-    }
-  }
-
-  // 2. Supabase Cloud (fallback secundario)
-  if (SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.system_admin_pin_hash&select=*`, {
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`
-        }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (rows && rows[0]?.url) {
-          const parsed = JSON.parse(rows[0].url);
-          if (parsed && parsed.scryptHash) {
-            runtimeDB.settings = runtimeDB.settings || {};
-            runtimeDB.settings.adminPinScrypt = parsed.scryptHash;
-            return parsed.scryptHash;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Aviso leyendo system_admin_pin_hash de Supabase:', e.message || e);
     }
   }
   return process.env.ADMIN_PIN_SCRYPT || '';
@@ -1436,11 +1334,6 @@ app.post('/api/admin/auth', async (req, res) => {
   }
 
   // Verificación del PIN en el SERVIDOR (el navegador ya no conoce el hash).
-  // Prioridad:
-  // 1. Hash dinámico guardado en Supabase Cloud (cambiado desde el Dashboard)
-  // 2. ADMIN_PIN_SCRYPT (scrypt robusto de 8+ caracteres en variables de entorno)
-  // 3. ADMIN_PIN_HASH (SHA-256 explícito en variables de entorno)
-  // 4. Fallback a 0493 únicamente si aún no se configuró ninguna variable
   const activeScrypt = await getActiveAdminScryptHash();
   const hasConfiguredPin = Boolean(activeScrypt || process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash);
   const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || (!hasConfiguredPin ? KNOWN_WEAK_PIN_HASH : '');
@@ -1474,11 +1367,7 @@ app.post('/api/admin/auth', async (req, res) => {
   // Login exitoso: token firmado (HMAC-SHA256) con passwordVersion activa
   resetLoginAttempts(ip);
   try {
-    const activeVersion = await getActivePasswordVersionFromStore({
-      supaUrl: SUPABASE_REST_URL,
-      supaKey: SUPABASE_REST_KEY,
-      runtimeDB
-    });
+    const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
     const token = createAdminToken({ pwd: activeVersion });
     const bioRefreshToken = createBioRefreshToken({ pwd: activeVersion });
     return res.json({ success: true, token, bioRefreshToken, expiresInMs: 12 * 60 * 60 * 1000 });
@@ -1490,18 +1379,24 @@ app.post('/api/admin/auth', async (req, res) => {
 
 // Renovación de sesión rápida mediante huella biométrica
 app.post('/api/admin/auth/bio-refresh', async (req, res) => {
+  const ip = getClientIp(req);
+  const rateCheck = checkRateLimit(ip);
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      error: `Demasiados intentos. Bloqueado por ${rateCheck.retryAfterMin} minutos.`,
+      retryAfterMs: rateCheck.retryAfterMs
+    });
+  }
+
   try {
     const rawToken = readAdminToken(req) || req.body?.bioRefreshToken;
     const payload = verifyBioRefreshToken(rawToken);
     if (!payload) {
+      recordFailedLogin(ip);
       return res.status(401).json({ error: 'Sesión biométrica no válida o expirada. Ingresa con tu PIN.' });
     }
 
-    const activeVersion = await getActivePasswordVersionFromStore({
-      supaUrl: SUPABASE_REST_URL,
-      supaKey: SUPABASE_REST_KEY,
-      runtimeDB
-    });
+    const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
 
     if (payload.pwd !== activeVersion) {
       return res.status(401).json({ error: 'La contraseña fue cambiada. Ingresa con tu nueva contraseña.' });
@@ -1519,19 +1414,11 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
 // RUTAS PÚBLICAS DE RECUPERACIÓN DE CONTRASEÑA ADMIN (ZOHO SMTP)
 // ==============================================================================
 app.post('/api/admin/password/reset-request', async (req, res) => {
-  return handlePasswordResetRequest(req, res, {
-    supaUrl: SUPABASE_REST_URL,
-    supaKey: SUPABASE_REST_KEY,
-    runtimeDB
-  });
+  return handlePasswordResetRequest(req, res, { runtimeDB });
 });
 
 app.post('/api/admin/password/reset-confirm', async (req, res) => {
-  return handlePasswordResetConfirm(req, res, {
-    supaUrl: SUPABASE_REST_URL,
-    supaKey: SUPABASE_REST_KEY,
-    runtimeDB
-  });
+  return handlePasswordResetConfirm(req, res, { runtimeDB });
 });
 
 // ==============================================================================
@@ -1550,7 +1437,7 @@ app.get('/api/admin/bookings', async (req, res) => {
       if (norm) map.set(norm.id, norm);
     });
 
-    // 1. MongoDB Atlas (primario)
+    // MongoDB Atlas (fuente única de verdad)
     if (isMongoConfigured()) {
       try {
         const mongoBookings = await findMongoDocs('bookings', {}, { createdAt: -1 });
@@ -1568,56 +1455,6 @@ app.get('/api/admin/bookings', async (req, res) => {
         }
       } catch (errMongo) {
         console.warn('⚠️ [MongoDB] Error recuperando reservas:', errMongo?.message || errMongo);
-      }
-    }
-
-    // 2. Supabase fallback (solo fusiona campos válidos, nunca sobrescribe con undefined ni $0)
-    if (SUPABASE_REST_KEY) {
-      try {
-        const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.booking_data&select=*`, {
-          headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-        });
-        if (supaRes.ok) {
-          const rows = await supaRes.json();
-          if (Array.isArray(rows)) {
-            rows.forEach(r => {
-              try {
-                const b = JSON.parse(r.url);
-                if (b && b.id) {
-                  const norm = normalizeBookingDoc(b);
-                  if (norm) {
-                    const existing = map.get(norm.id);
-                    map.set(norm.id, existing ? mergeBookingObjectsServer(existing, norm) : norm);
-                  }
-                }
-              } catch (err) {}
-            });
-          }
-        }
-      } catch (errCloud) {
-        console.warn('Error recuperando reservas de Supabase catalog:', errCloud);
-      }
-
-      try {
-        const supaBookingsRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?select=*`, {
-          headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-        });
-        if (supaBookingsRes.ok) {
-          const rows = await supaBookingsRes.json();
-          if (Array.isArray(rows)) {
-            rows.forEach(b => {
-              if (b && b.id) {
-                const norm = normalizeBookingDoc(b);
-                if (norm) {
-                  const existing = map.get(norm.id);
-                  map.set(norm.id, existing ? mergeBookingObjectsServer(existing, norm) : norm);
-                }
-              }
-            });
-          }
-        }
-      } catch (errDirect) {
-        console.warn('Error recuperando reservas de Supabase bookings:', errDirect);
       }
     }
 
@@ -1657,22 +1494,7 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
     }
   }
 
-  if (!booking && SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (Array.isArray(rows) && rows.length > 0 && rows[0].url) {
-          try { booking = normalizeBookingDoc(JSON.parse(rows[0].url)); } catch (e) {}
-        }
-      }
-    } catch (e) {}
-  }
-
   if (!booking) {
-    // No existe en ningún almacén: se crea con lo que llegue (comportamiento previo).
     booking = normalizeBookingDoc({ id, ...updates, isReal: true });
     if (!runtimeDB.bookings) runtimeDB.bookings = [];
     runtimeDB.bookings.unshift(booking);
@@ -1682,7 +1504,16 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
     if (idx !== -1) runtimeDB.bookings[idx] = booking;
   }
 
-  await syncBookingToSupabaseServer(booking).catch(e => console.warn('Supabase sync server error:', e));
+  await persistBookingToMongo(booking).catch(e => console.warn('MongoDB sync error:', e));
+  await recordFinancialAuditLog({
+    action: 'booking_updated',
+    actor: 'admin',
+    entityType: 'booking',
+    entityId: booking.id,
+    amount: booking.totalPrice,
+    status: booking.status,
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
   res.json({ success: true, booking });
 });
 
@@ -1691,7 +1522,6 @@ app.delete('/api/admin/bookings/:id', async (req, res) => {
   const supaId = id.startsWith('book-') ? id : `book-${id}`;
   runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id && b.id !== supaId);
 
-  // 1. Eliminar de MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await deleteMongoDoc('bookings', { $or: [{ id }, { id: supaId }, { supaId }] });
@@ -1699,28 +1529,13 @@ app.delete('/api/admin/bookings/:id', async (req, res) => {
       console.warn('⚠️ [MongoDB] Error eliminando reserva:', eMongo?.message || eMongo);
     }
   }
-
-  // 2. Eliminar de Supabase Cloud
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(supaId)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/bookings?id=eq.${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-    } catch (e) {}
-  }
+  await recordFinancialAuditLog({
+    action: 'booking_deleted',
+    actor: 'admin',
+    entityType: 'booking',
+    entityId: id,
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
   res.json({ success: true });
 });
 
@@ -1753,6 +1568,9 @@ app.get('/api/admin/payments', async (req, res) => {
 });
 
 app.post('/api/payments', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 15, 'payments')) {
+    return res.status(429).json({ error: 'Demasiados registros de pago desde tu conexión. Intenta nuevamente en unos minutos.' });
+  }
   const {
     clientName, clientWhatsApp, sessionToken, packageTitle, amount, method,
     reference, voucherUrl, extraPhotosCount, printedPhotosCount,
@@ -1760,6 +1578,13 @@ app.post('/api/payments', async (req, res) => {
     printedSizes, paperPhotosSummary, retablosSummary, printedPhotosSummary,
     status, concept
   } = req.body;
+
+  if (voucherUrl) {
+    const voucherCheck = validateImagePayload(voucherUrl, { maxBytes: DEFAULT_MAX_VOUCHER_BYTES });
+    if (!voucherCheck.valid) {
+      return res.status(400).json({ error: `Comprobante inválido: ${voucherCheck.error}` });
+    }
+  }
 
   // Solo un administrador con sesión válida puede dar por verificado un pago.
   // Un cliente anónimo puede registrar su comprobante, pero siempre queda pendiente.
@@ -1827,7 +1652,7 @@ app.post('/api/payments', async (req, res) => {
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
 
-  // 1. Guardar en MongoDB Atlas (primario)
+  // Guardar en MongoDB Atlas (fuente única de verdad)
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('payments', { id: newPayment.id }, newPayment);
@@ -1836,29 +1661,16 @@ app.post('/api/payments', async (req, res) => {
     }
   }
 
-  // 2. Sincronización serverless con Supabase (fallback secundario sólo si Mongo no está configurado)
-  if (!isMongoConfigured() && SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: `pay-${newPayment.id.replace(/^pay-/, '')}`,
-          title: newPayment.clientName,
-          category: 'payment_data',
-          location: newPayment.method || '',
-          url: JSON.stringify(newPayment)
-        })
-      });
-    } catch (e) {
-      console.warn('Error syncing payment to Supabase:', e?.message || e);
-    }
-  }
+  await recordFinancialAuditLog({
+    action: 'payment_registered',
+    actor: isAdminCaller ? 'admin' : 'public_client',
+    entityType: 'payment',
+    entityId: newPayment.id,
+    amount: newPayment.amount,
+    status: newPayment.status,
+    ip: getClientIp(req),
+    metadata: { method: newPayment.method, reference: newPayment.reference }
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
   await sendOneSignalPush({
     title: '💰 ¡Nuevo Pago Registrado!',
@@ -1954,8 +1766,18 @@ app.post('/api/payments/checkout', async (req, res) => {
   if (!runtimeDB.payments) runtimeDB.payments = [];
   runtimeDB.payments.unshift(paymentRecord);
 
-  // Persistencia inmediata en Supabase
-  await syncPaymentToSupabaseServer(paymentRecord);
+  // Persistencia inmediata en MongoDB Atlas
+  await persistPaymentToMongo(paymentRecord);
+  await recordFinancialAuditLog({
+    action: 'wompi_checkout_created',
+    actor: 'public_client',
+    entityType: 'payment',
+    entityId: paymentRecord.id,
+    amount: paymentRecord.amount,
+    status: paymentRecord.status,
+    ip,
+    metadata: { reference, concept, bookingId: paymentRecord.bookingId }
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
   let signature = '';
   try {
@@ -1987,6 +1809,10 @@ app.post('/api/payments/checkout', async (req, res) => {
 });
 
 app.post('/api/payments/webhook', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 60, 'wompi-webhook')) {
+    return res.status(429).json({ error: 'Demasiadas solicitudes al webhook de pagos.' });
+  }
+
   const eventsSecret = process.env.WOMPI_EVENTS_SECRET;
   if (!eventsSecret) {
     console.error('⚠️ [Wompi Webhook] WOMPI_EVENTS_SECRET no configurada.');
@@ -2010,16 +1836,18 @@ app.post('/api/payments/webhook', async (req, res) => {
     return res.status(404).json({ error: 'Pago con la referencia proporcionada no encontrado.' });
   }
 
-  // Idempotencia: si el evento entrante coincide con el estado actual, responder 200 sin duplicar acciones
+  // Idempotencia y protección de máquina de estados:
+  // 1) Si el evento entrante coincide con el estado actual, responder 200 sin duplicar acciones.
+  // 2) Si un pago ya está verificado/aprobado, jamás puede ser degradado a rechazado por un evento tardío.
   const isCurrentlyVerified = payment.status === 'verified' || payment.status === 'approved';
-  const isIncomingApproved = tx.status === 'APPROVED';
   const isCurrentlyRejected = payment.status === 'rejected';
   const isIncomingTerminalFail = ['DECLINED', 'VOIDED', 'ERROR'].includes(tx.status);
 
-  if ((isCurrentlyVerified && isIncomingApproved) || (isCurrentlyRejected && isIncomingTerminalFail)) {
+  if (isCurrentlyVerified || (isCurrentlyRejected && isIncomingTerminalFail)) {
     return res.status(200).json({
       success: true,
-      message: 'Transacción ya procesada previamente en este estado (idempotente).',
+      idempotent: true,
+      message: 'Transacción ya procesada previamente en estado final (idempotente).',
       reference: payment.reference
     });
   }
@@ -2060,8 +1888,18 @@ app.post('/api/payments/webhook', async (req, res) => {
     }
 
     await Promise.allSettled([
-      syncPaymentToSupabaseServer(payment),
-      bookingToUpdate ? syncBookingToSupabaseServer(bookingToUpdate) : Promise.resolve(),
+      persistPaymentToMongo(payment),
+      bookingToUpdate ? persistBookingToMongo(bookingToUpdate) : Promise.resolve(),
+      recordFinancialAuditLog({
+        action: 'wompi_payment_approved',
+        actor: 'wompi_webhook',
+        entityType: 'payment',
+        entityId: payment.id,
+        amount: payment.amount,
+        status: payment.status,
+        ip: getClientIp(req),
+        metadata: { reference: payment.reference, transactionId: tx.id }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc }),
       sendOneSignalPush({
         title: '💰 ¡Abono Confirmado en Wompi!',
         message: `${payment.clientName} pagó $${payment.amount.toLocaleString('es-CO')} COP (${payment.concept === 'booking_deposit' ? 'Abono de Reserva' : 'Saldo'})`,
@@ -2092,8 +1930,18 @@ app.post('/api/payments/webhook', async (req, res) => {
     }
 
     await Promise.allSettled([
-      syncPaymentToSupabaseServer(payment),
-      bookingToRevert ? syncBookingToSupabaseServer(bookingToRevert) : Promise.resolve()
+      persistPaymentToMongo(payment),
+      bookingToRevert ? persistBookingToMongo(bookingToRevert) : Promise.resolve(),
+      recordFinancialAuditLog({
+        action: 'wompi_payment_rejected',
+        actor: 'wompi_webhook',
+        entityType: 'payment',
+        entityId: payment.id,
+        amount: payment.amount,
+        status: payment.status,
+        ip: getClientIp(req),
+        metadata: { reference: payment.reference, transactionId: tx.id, gatewayStatus: tx.status }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc })
     ]);
 
     return res.status(200).json({ success: true, status: tx.status, reference: payment.reference });
@@ -2150,19 +1998,15 @@ app.patch('/api/admin/payments/:id', async (req, res) => {
     }
   }
 
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(payment.id.startsWith('pay-') ? payment.id : `pay-${payment.id}`)}`, {
-        method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ url: JSON.stringify(payment) })
-      });
-    } catch (e) {}
-  }
+  await recordFinancialAuditLog({
+    action: 'payment_status_updated',
+    actor: 'admin',
+    entityType: 'payment',
+    entityId: payment.id,
+    amount: payment.amount,
+    status: payment.status,
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
   res.json({ success: true, payment });
 });
@@ -2181,18 +2025,14 @@ app.delete('/api/admin/payments/:id', async (req, res) => {
     }
   }
 
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(supaId)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.${encodeURIComponent(cleanId)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-    } catch (e) {}
-  }
+  await recordFinancialAuditLog({
+    action: 'payment_deleted',
+    actor: 'admin',
+    entityType: 'payment',
+    entityId: cleanId,
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
   res.json({ success: true, id: cleanId });
 });
 
@@ -2253,7 +2093,7 @@ app.delete('/api/admin/sessions/:id', async (req, res) => {
     return !match;
   });
 
-  // 1. Eliminar de MongoDB Atlas
+  // Eliminar de MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await deleteMongoDoc('sessions', {
@@ -2270,20 +2110,6 @@ app.delete('/api/admin/sessions/:id', async (req, res) => {
       console.warn('⚠️ [MongoDB] Error eliminando sesión:', eMongo?.message || eMongo);
     }
   }
-
-  // 2. Eliminar de Supabase Cloud
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(cleanId)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(rawId)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-    } catch (e) {}
-  }
   res.json({ success: true });
 });
 
@@ -2297,11 +2123,15 @@ app.post('/api/admin/sessions', async (req, res) => {
     return res.status(400).json({ error: 'Faltan datos del cliente o fotos para la sesión.' });
   }
 
+  const photosBatchCheck = validateSessionPhotosBatch(photos);
+  if (!photosBatchCheck.valid) {
+    return res.status(400).json({ error: photosBatchCheck.error });
+  }
+
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  const cleanName = clientName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 15);
-  // Token de la galeria: aleatorio CRIPTOGRAFICO y sin el nombre del cliente.
-  const token = crypto.randomUUID();
+  // Token de la galería: aleatorio CRIPTOGRÁFICO (UUID v4) y sin el nombre del cliente.
+  const token = generateGalleryToken();
   const finalPrice = Number(totalPrice || packagePrice || sessionBasePrice || 0);
 
   const newSession = {
@@ -2331,35 +2161,13 @@ app.post('/api/admin/sessions', async (req, res) => {
 
   runtimeDB.sessions.unshift(newSession);
 
-  // 1. Guardar en MongoDB Atlas
+  // Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('sessions', { token: newSession.token }, newSession);
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando sesión:', eMongo?.message || eMongo);
     }
-  }
-
-  // 2. Supabase Cloud fallback
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: `sess-${token}`,
-          title: newSession.clientName,
-          category: 'session_data',
-          location: newSession.clientWhatsApp,
-          url: JSON.stringify(newSession)
-        })
-      }).catch(e => console.warn('Sync session to Supabase warning:', e));
-    } catch(e) {}
   }
 
   res.status(201).json({
@@ -2372,15 +2180,45 @@ app.post('/api/admin/sessions', async (req, res) => {
 app.post('/api/admin/sessions/:id/reopen', async (req, res) => {
   const { id } = req.params;
   const { additionalDays = 3, allowReSelection = true } = req.body;
-  const session = (runtimeDB.sessions || []).find(s => s.id === id);
+  const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   const newExpires = new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000);
   session.expiresAt = newExpires.toISOString();
-  if (allowReSelection) {
+  session.revoked = false;
+  if (allowReSelection || session.status === 'revoked') {
     session.status = 'pending';
     session.submittedAt = null;
   }
+
+  if (isMongoConfigured()) {
+    try {
+      await upsertMongoDoc('sessions', { token: session.token }, session);
+    } catch (eMongo) {}
+  }
+
+  res.json({ success: true, session });
+});
+
+app.post('/api/admin/sessions/:id/revoke', async (req, res) => {
+  const { id } = req.params;
+  let session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
+  if (!session && isMongoConfigured()) {
+    try {
+      const doc = await findMongoDoc('sessions', { $or: [{ id }, { token: id }] });
+      if (doc) {
+        const { _id, ...cleanSession } = doc;
+        session = cleanSession;
+        runtimeDB.sessions = runtimeDB.sessions || [];
+        runtimeDB.sessions.push(session);
+      }
+    } catch (eMongo) {}
+  }
+  if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
+
+  session.revoked = true;
+  session.status = 'revoked';
+  session.revokedAt = new Date().toISOString();
 
   if (isMongoConfigured()) {
     try {
@@ -2408,22 +2246,6 @@ app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
     } catch (eMongo) {}
   }
 
-  if (!session && SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(id)}&select=*`, {
-        headers: { 'apikey': SUPABASE_REST_KEY, 'Authorization': `Bearer ${SUPABASE_REST_KEY}` }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (rows && rows.length > 0 && rows[0].url) {
-          session = JSON.parse(rows[0].url);
-          runtimeDB.sessions = runtimeDB.sessions || [];
-          runtimeDB.sessions.push(session);
-        }
-      }
-    } catch (e) {}
-  }
-
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   session.status = 'delivered';
@@ -2435,29 +2257,12 @@ app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
     session.finalPhotos = finalPhotos;
   }
 
-  // 1. Guardar en MongoDB Atlas
+  // Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('sessions', { token: session.token }, session);
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando entrega:', eMongo?.message || eMongo);
-    }
-  }
-
-  // 2. Supabase Cloud fallback
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.sess-${encodeURIComponent(session.token)}`, {
-        method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ url: JSON.stringify(session) })
-      });
-    } catch (e) {
-      console.warn('Error al persistir entrega en Supabase:', e?.message || e);
     }
   }
 
@@ -2502,6 +2307,10 @@ app.post('/api/admin/catalog', async (req, res) => {
   const { id, title, category, url, location } = req.body;
   if (!title || !url) {
     return res.status(400).json({ error: 'Faltan título o imagen de la foto.' });
+  }
+  const imgCheck = validateImagePayload(url, { maxBytes: DEFAULT_MAX_IMAGE_BYTES });
+  if (!imgCheck.valid) {
+    return res.status(400).json({ error: imgCheck.error });
   }
   const newItem = {
     id: id || `cat-${Date.now()}`,
@@ -2558,7 +2367,7 @@ app.post('/api/admin/catalog/delete-samples', (req, res) => {
 });
 
 // ==============================================================================
-// SEGURIDAD: CAMBIO DE CONTRASEÑA EN EL DASHBOARD (PERSISTENTE EN SUPABASE CON SCRYPT)
+// SEGURIDAD: CAMBIO DE CONTRASEÑA EN EL DASHBOARD (PERSISTENTE EN MONGODB ATLAS CON SCRYPT)
 // ==============================================================================
 app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   const { currentPin, newPin } = req.body || {};
@@ -2591,20 +2400,23 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   const newScryptHash = 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
 
   // Incrementar passwordVersion y persistir hash
-  const currentVersion = await getActivePasswordVersionFromStore({
-    supaUrl: SUPABASE_REST_URL,
-    supaKey: SUPABASE_REST_KEY,
-    runtimeDB
-  });
+  const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });
   const newVersion = (currentVersion || 1) + 1;
 
   await updateAdminPasswordInStore({
-    supaUrl: SUPABASE_REST_URL,
-    supaKey: SUPABASE_REST_KEY,
     runtimeDB,
     newScryptHash,
     newVersion
   });
+
+  await recordFinancialAuditLog({
+    action: 'admin_password_changed',
+    actor: 'admin',
+    entityType: 'security',
+    entityId: 'system_admin_pin_hash',
+    status: `v${newVersion}`,
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
   // Alerta de seguridad por correo vía Zoho
   const targetEmail = getAdminEmail();
@@ -2621,14 +2433,126 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
 });
 
 // ==============================================================================
-// RECUPERACIÓN DE PIN POR TELÉFONO: ELIMINADA
+// TOKENS DE DISPOSITIVO APK (ALCANCE EXCLUSIVO apk_feed:read, ROTATIVOS Y REVOCABLES)
 // ==============================================================================
-// Antes este endpoint permitía fijar un PIN nuevo (o leer el vigente) con solo
-// conocer los últimos 7 dígitos de un WhatsApp público: era una toma de control
-// del panel sin credenciales. La recuperación ahora es una operación de
-// administración del servidor: se cambia ADMIN_PIN_SCRYPT / ADMIN_PIN_HASH en
-// las variables de entorno y se vuelve a desplegar.
+app.post('/api/admin/apk-devices/register', requireAdminAuth, async (req, res) => {
+  try {
+    const deviceName = String(req.body?.deviceName || 'Android APK').trim().slice(0, 80);
+    const deviceId = String(req.body?.deviceId || `apk-${crypto.randomBytes(6).toString('hex')}`).trim().slice(0, 64);
+    const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+    const issued = createApkDeviceToken({
+      deviceId,
+      deviceName,
+      pwd: activeVersion
+    });
+
+    await recordFinancialAuditLog({
+      action: 'apk_device_registered',
+      actor: 'admin',
+      entityType: 'apk_device',
+      entityId: issued.deviceId,
+      status: 'active',
+      ip: getClientIp(req),
+      metadata: { deviceName: issued.deviceName, expiresAt: issued.expiresAt }
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+    return res.status(201).json({
+      success: true,
+      deviceId: issued.deviceId,
+      deviceName: issued.deviceName,
+      scope: 'apk_feed:read',
+      expiresAt: issued.expiresAt,
+      deviceToken: issued.token
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || 'No se pudo emitir el token de dispositivo APK.' });
+  }
+});
+
+app.post('/api/admin/apk-devices/revoke', requireAdminAuth, async (req, res) => {
+  const deviceId = String(req.body?.deviceId || '').trim();
+  if (!deviceId) {
+    return res.status(400).json({ error: 'Se requiere deviceId para revocar el dispositivo.' });
+  }
+  runtimeDB.settings = runtimeDB.settings || {};
+  const currentRevoked = Array.isArray(runtimeDB.settings.revokedApkDeviceIds)
+    ? runtimeDB.settings.revokedApkDeviceIds
+    : [];
+  if (!currentRevoked.includes(deviceId)) {
+    currentRevoked.push(deviceId);
+  }
+  runtimeDB.settings.revokedApkDeviceIds = currentRevoked;
+
+  if (isMongoConfigured()) {
+    try {
+      await upsertMongoDoc('settings', { id: 'app_settings' }, {
+        id: 'app_settings',
+        revokedApkDeviceIds: currentRevoked
+      });
+    } catch (eMongo) {}
+  }
+
+  await recordFinancialAuditLog({
+    action: 'apk_device_revoked',
+    actor: 'admin',
+    entityType: 'apk_device',
+    entityId: deviceId,
+    status: 'revoked',
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+  return res.json({
+    success: true,
+    revokedDeviceId: deviceId,
+    revokedApkDeviceIds: currentRevoked
+  });
+});
+
 // ==============================================================================
+// AUDITORÍA FINANCIERA Y RESPALDO / RESTAURACIÓN MONGODB ATLAS
+// ==============================================================================
+app.get('/api/admin/audit-logs', requireAdminAuth, async (req, res) => {
+  let logs = Array.isArray(runtimeDB.auditLogs) ? [...runtimeDB.auditLogs] : [];
+  if (isMongoConfigured()) {
+    try {
+      const mongoLogs = await findMongoDocs('audit_logs', {}, { createdAt: -1 }, 100);
+      if (Array.isArray(mongoLogs) && mongoLogs.length > 0) {
+        const seen = new Set();
+        logs = [...mongoLogs.map(({ _id, ...l }) => l), ...logs].filter(item => {
+          if (!item?.id || seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+      }
+    } catch (eMongo) {}
+  }
+  return res.json({ success: true, logs: logs.slice(0, 100) });
+});
+
+app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
+  await recordFinancialAuditLog({
+    action: 'database_backup_exported',
+    actor: 'admin',
+    entityType: 'system',
+    entityId: 'mongodb_snapshot',
+    ip: getClientIp(req)
+  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+  return res.json({
+    success: true,
+    exportedAt: new Date().toISOString(),
+    sourceOfTruth: 'mongodb-atlas',
+    snapshot: {
+      settings: runtimeDB.settings || {},
+      packages: runtimeDB.packages || [],
+      catalog: runtimeDB.catalog || [],
+      bookings: runtimeDB.bookings || [],
+      payments: runtimeDB.payments || [],
+      sessions: runtimeDB.sessions || [],
+      reviews: runtimeDB.reviews || []
+    }
+  });
+});
 
 // ==============================================================================
 // RESEÑAS
@@ -2636,7 +2560,7 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
 app.get('/api/reviews', async (req, res) => {
   let reviews = runtimeDB.reviews || [];
 
-  // 1. MongoDB Atlas (primario)
+  // MongoDB Atlas (fuente única de verdad)
   if (isMongoConfigured()) {
     try {
       const mongoReviews = await findMongoDocs('reviews', {}, { createdAt: -1 });
@@ -2653,34 +2577,6 @@ app.get('/api/reviews', async (req, res) => {
     }
   }
 
-  // 2. Supabase Cloud (fallback secundario)
-  if (SUPABASE_REST_KEY) {
-    try {
-      const supaRes = await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?category=eq.review_data&select=*&order=created_at.desc`, {
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`
-        }
-      });
-      if (supaRes.ok) {
-        const rows = await supaRes.json();
-        if (Array.isArray(rows)) {
-          const cloudReviews = rows.map(r => {
-            try { return JSON.parse(r.url); } catch (e) { return null; }
-          }).filter(Boolean);
-          const map = new Map();
-          [...reviews, ...cloudReviews].forEach(rev => {
-            if (rev && rev.id) map.set(rev.id, rev);
-          });
-          reviews = Array.from(map.values());
-          runtimeDB.reviews = reviews;
-        }
-      }
-    } catch (err) {
-      console.warn('Error obteniendo reseñas desde Supabase:', err);
-    }
-  }
-
   reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')).map(r => {
     const clean = { ...r };
     delete clean.sessionTitle;
@@ -2692,7 +2588,7 @@ app.get('/api/reviews', async (req, res) => {
 });
 
 app.post('/api/reviews', async (req, res) => {
-  if (!checkPublicWriteRateLimit(getClientIp(req), 20)) {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 20, 'reviews')) {
     return res.status(429).json({ error: 'Demasiadas reseñas desde tu conexión. Intenta más tarde.' });
   }
   const { clientName, rating, recommend, comment } = req.body || {};
@@ -2712,36 +2608,12 @@ app.post('/api/reviews', async (req, res) => {
   if (!runtimeDB.reviews) runtimeDB.reviews = [];
   runtimeDB.reviews.unshift(newReview);
 
-  // 1. Guardar en MongoDB Atlas
+  // Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('reviews', { id: newReview.id }, newReview);
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando reseña:', eMongo?.message || eMongo);
-    }
-  }
-
-  // 2. Supabase Cloud fallback
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: `rev-${newReview.id}`,
-          title: newReview.clientName,
-          category: 'review_data',
-          location: `${newReview.rating} estrellas`,
-          url: JSON.stringify(newReview)
-        })
-      });
-    } catch (err) {
-      console.warn('Error al guardar reseña en Supabase:', err);
     }
   }
 
@@ -2756,6 +2628,30 @@ app.post('/api/reviews', async (req, res) => {
 });
 
 app.post('/api/gallery/:token/review', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 10, 'gallery-review')) {
+    return res.status(429).json({ error: 'Demasiadas reseñas desde tu conexión. Intenta más tarde.' });
+  }
+  const { token } = req.params;
+  if (!isValidGalleryTokenFormat(token)) {
+    return res.status(404).json({ error: 'Galería no encontrada.' });
+  }
+  let session = (runtimeDB.sessions || []).find(s => s.token === token);
+  if (!session && token !== 'demo-cliente-2026' && isMongoConfigured()) {
+    try {
+      const doc = await findMongoDoc('sessions', { token });
+      if (doc) {
+        const { _id, ...cleanSession } = doc;
+        session = cleanSession;
+      }
+    } catch (eMongo) {}
+  }
+  if (!session && token !== 'demo-cliente-2026') {
+    return res.status(404).json({ error: 'Galería no encontrada.' });
+  }
+  if (session && (session.revoked || session.status === 'revoked')) {
+    return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
+  }
+
   const { clientName, rating, recommend, comment } = req.body || {};
   const newReview = {
     id: `rev-${Date.now()}`,
@@ -2770,35 +2666,13 @@ app.post('/api/gallery/:token/review', async (req, res) => {
   if (!runtimeDB.reviews) runtimeDB.reviews = [];
   runtimeDB.reviews.unshift(newReview);
 
-  // 1. Guardar en MongoDB Atlas
+  // Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('reviews', { id: newReview.id }, newReview);
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando reseña desde galería:', eMongo?.message || eMongo);
     }
-  }
-
-  // 2. Supabase Cloud fallback
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: `rev-${newReview.id}`,
-          title: newReview.clientName,
-          category: 'review_data',
-          location: `${newReview.rating} estrellas`,
-          url: JSON.stringify(newReview)
-        })
-      });
-    } catch (err) {}
   }
 
   await sendOneSignalPush({
@@ -2815,26 +2689,13 @@ app.delete('/api/admin/reviews/:id', async (req, res) => {
   const { id } = req.params;
   runtimeDB.reviews = (runtimeDB.reviews || []).filter(r => r.id !== id);
 
-  // 1. Eliminar de MongoDB Atlas
+  // Eliminar de MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await deleteMongoDoc('reviews', { id });
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error eliminando reseña:', eMongo?.message || eMongo);
     }
-  }
-
-  // 2. Eliminar de Supabase Cloud
-  if (SUPABASE_REST_KEY) {
-    try {
-      await fetch(`${SUPABASE_REST_URL}/rest/v1/catalog?id=eq.rev-${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: {
-          'apikey': SUPABASE_REST_KEY,
-          'Authorization': `Bearer ${SUPABASE_REST_KEY}`
-        }
-      });
-    } catch (err) {}
   }
   res.json({ success: true, id });
 });
@@ -2899,11 +2760,8 @@ app.all('/api/bot-webhook', async (req, res) => {
 });
 
 // ==============================================================================
-// PROXY DE BASE DE DATOS AUTENTICADO (Fase 2 - Opcion A)
+// PROXY DE BASE DE DATOS AUTENTICADO (MongoDB Atlas — Fuente Única de Verdad)
 // ==============================================================================
-// El navegador ya no escribe directo en Supabase con la clave publica: manda la
-// operacion aqui, con su sesion de administrador, y el servidor la ejecuta con
-// service_role. Lista blanca estricta de tablas y operaciones.
 const DB_ALLOWED_TABLES = ['catalog', 'bookings', 'sessions', 'payments', 'reviews', 'system_config', 'settings', 'packages', 'vip_clients'];
 const DB_ALLOWED_OPS = ['upsert', 'insert', 'update', 'delete', 'select'];
 
@@ -2916,91 +2774,42 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
   if (!DB_ALLOWED_OPS.includes(String(op))) {
     return res.status(400).json({ error: `Operacion no permitida: ${op}` });
   }
-
-  // 1. Si MongoDB Atlas está configurado, ejecutar primariamente en MongoDB
-  if (isMongoConfigured()) {
-    try {
-      const colName = table;
-      if (op === 'select') {
-        const docs = await findMongoDocs(colName, match || {});
-        return res.json({ success: true, data: (docs || []).map(({ _id, ...d }) => d) });
-      } else if (op === 'upsert' || op === 'insert') {
-        const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
-        const filter = (docToSave && docToSave.id) ? { id: docToSave.id } : (match || {});
-        await upsertMongoDoc(colName, filter, docToSave);
-        return res.json({ success: true, data: [docToSave] });
-      } else if (op === 'update') {
-        const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
-        await upsertMongoDoc(colName, match || {}, docToSave);
-        return res.json({ success: true, data: [docToSave] });
-      } else if (op === 'delete') {
-        await deleteMongoDoc(colName, match || {});
-        return res.json({ success: true, data: [] });
-      }
-    } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error en /api/admin/db:', eMongo?.message || eMongo);
-    }
-  }
-
-  // 2. Supabase Cloud fallback
-  if (!SUPABASE_REST_KEY) {
-    return res.status(503).json({ error: 'El servidor no tiene configurada la base de datos en la nube.' });
-  }
   if ((op === 'update' || op === 'delete') && (!match || !Object.keys(match).length)) {
-    return res.status(400).json({ error: 'Actualizar o borrar exige "match" para no afectar a toda la tabla.' });
+    return res.status(400).json({ error: 'Actualizar o borrar exige "match" para no afectar a toda la colección.' });
   }
 
-  const headers = {
-    'apikey': SUPABASE_REST_KEY,
-    'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': op === 'upsert' ? 'resolution=merge-duplicates,return=representation' : 'return=representation'
-  };
-
-  let url = `${SUPABASE_REST_URL}/rest/v1/${table}`;
-  const filters = Object.entries(match || {})
-    .map(([col, val]) => {
-      if (Array.isArray(val)) {
-        return `${encodeURIComponent(col)}=in.(${val.map(v => encodeURIComponent(v)).join(',')})`;
-      }
-      return `${encodeURIComponent(col)}=eq.${encodeURIComponent(val)}`;
-    });
-  if (filters.length) url += `?${filters.join('&')}`;
-
-  const method = op === 'delete' ? 'DELETE' : (op === 'update' ? 'PATCH' : 'POST');
-  const body = op === 'delete' ? undefined : JSON.stringify(payload ?? {});
+  if (!isMongoConfigured()) {
+    return res.status(503).json({ error: 'El servidor no tiene configurada MONGODB_URI para la base de datos en la nube.' });
+  }
 
   try {
-    const r = await fetch(url, { method, headers, body });
-    const text = await r.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
-    if (!r.ok) {
-      console.error(`[db] ${op} ${table} fallo (${r.status}):`, String(text).slice(0, 300));
-      return res.status(r.status).json({ error: 'Supabase rechazo la operacion.', detail: data });
+    const colName = table;
+    if (op === 'select') {
+      const docs = await findMongoDocs(colName, match || {});
+      return res.json({ success: true, data: (docs || []).map(({ _id, ...d }) => d) });
+    } else if (op === 'upsert' || op === 'insert') {
+      const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
+      const filter = (docToSave && docToSave.id) ? { id: docToSave.id } : (match || {});
+      await upsertMongoDoc(colName, filter, docToSave);
+      return res.json({ success: true, data: [docToSave] });
+    } else if (op === 'update') {
+      const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
+      await upsertMongoDoc(colName, match || {}, docToSave);
+      return res.json({ success: true, data: [docToSave] });
+    } else if (op === 'delete') {
+      await deleteMongoDoc(colName, match || {});
+      return res.json({ success: true, data: [] });
     }
-    return res.json({ success: true, data: Array.isArray(data) ? data : (data ? [data] : []) });
-  } catch (e) {
-    console.error('[db] error de red:', e?.message || e);
-    return res.status(502).json({ error: 'No se pudo contactar con Supabase.' });
+  } catch (eMongo) {
+    console.warn('⚠️ [MongoDB] Error en /api/admin/db:', eMongo?.message || eMongo);
+    return res.status(502).json({ error: 'Error ejecutando operación en MongoDB Atlas.' });
   }
 });
 
 // ==============================================================================
-// CLIENTES VIP (viven en catalog con id vip-<telefono> y url = JSON del cliente)
+// CLIENTES VIP (MongoDB Atlas — colección vip_clients + memoria runtimeDB)
 // ==============================================================================
-async function supaFetch(path, init = {}) {
-  const headers = {
-    'apikey': SUPABASE_REST_KEY,
-    'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
-    'Content-Type': 'application/json',
-    ...(init.headers || {})
-  };
-  return fetch(`${SUPABASE_REST_URL}/rest/v1/${path}`, { ...init, headers });
-}
-
 app.get('/api/admin/vip', requireAdminAuth, async (req, res) => {
-  // 1. MongoDB Atlas (primario)
   if (isMongoConfigured()) {
     try {
       const docs = await findMongoDocs('vip_clients', {});
@@ -3011,20 +2820,7 @@ app.get('/api/admin/vip', requireAdminAuth, async (req, res) => {
       console.warn('⚠️ [MongoDB] Error leyendo VIPs:', eMongo?.message || eMongo);
     }
   }
-
-  // 2. Supabase fallback
-  if (!SUPABASE_REST_KEY) return res.json([]);
-  try {
-    const r = await supaFetch('catalog?category=eq.vip_client&select=*');
-    const rows = r.ok ? await r.json() : [];
-    const clients = (Array.isArray(rows) ? rows : []).map(row => {
-      try { return JSON.parse(row.url); } catch (e) { return null; }
-    }).filter(Boolean);
-    return res.json(clients);
-  } catch (e) {
-    console.error('[vip] error al listar:', e?.message || e);
-    return res.status(502).json({ error: 'No se pudieron cargar los clientes VIP.' });
-  }
+  return res.json(Array.isArray(runtimeDB.vipClients) ? runtimeDB.vipClients : []);
 });
 
 app.post('/api/admin/vip', requireAdminAuth, async (req, res) => {
@@ -3037,33 +2833,15 @@ app.post('/api/admin/vip', requireAdminAuth, async (req, res) => {
   if (!phone && !id) return res.status(400).json({ error: 'El cliente necesita telefono o id.' });
 
   const vipDoc = { ...client, id: rowId };
+  runtimeDB.vipClients = Array.isArray(runtimeDB.vipClients)
+    ? [vipDoc, ...runtimeDB.vipClients.filter(v => v?.id !== rowId)]
+    : [vipDoc];
 
-  // 1. MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('vip_clients', { id: rowId }, vipDoc);
     } catch (eMongo) {
       console.warn('⚠️ [MongoDB] Error guardando VIP:', eMongo?.message || eMongo);
-    }
-  }
-
-  // 2. Supabase fallback
-  if (SUPABASE_REST_KEY) {
-    try {
-      const r = await supaFetch('catalog', {
-        method: 'POST',
-        headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' },
-        body: JSON.stringify({
-          id: rowId,
-          title: client.clientName || client.name || 'Cliente VIP',
-          category: 'vip_client',
-          location: phone,
-          url: JSON.stringify(vipDoc)
-        })
-      });
-      if (!r.ok && !isMongoConfigured()) return res.status(r.status).json({ error: 'Supabase rechazo el guardado del VIP.' });
-    } catch (e) {
-      console.error('[vip] error al guardar en Supabase:', e?.message || e);
     }
   }
 
@@ -3074,22 +2852,14 @@ app.delete('/api/admin/vip/:id', requireAdminAuth, async (req, res) => {
   const raw = String(req.params.id || '');
   const variants = [raw, raw.startsWith('vip-') ? raw : `vip-${raw}`, `vip-vip-${raw.replace(/^vip-/, '')}`];
 
-  // 1. MongoDB Atlas
+  if (Array.isArray(runtimeDB.vipClients)) {
+    runtimeDB.vipClients = runtimeDB.vipClients.filter(v => !variants.includes(v?.id));
+  }
+
   if (isMongoConfigured()) {
     try {
       await deleteMongoDoc('vip_clients', { $or: variants.map(v => ({ id: v })) });
     } catch (eMongo) {}
-  }
-
-  // 2. Supabase fallback
-  if (SUPABASE_REST_KEY) {
-    try {
-      for (const v of [...new Set(variants)]) {
-        await supaFetch(`catalog?id=eq.${encodeURIComponent(v)}`, { method: 'DELETE' });
-      }
-    } catch (e) {
-      console.error('[vip] error al borrar en Supabase:', e?.message || e);
-    }
   }
 
   return res.json({ success: true });

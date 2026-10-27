@@ -29,6 +29,7 @@ describe('Recuperación Segura de Contraseña de Administrador (Zoho SMTP)', () 
       }
     };
     process.env.ADMIN_EMAIL = 'sgarcesg0410@gmail.com';
+    process.env.TRUST_PROXY = 'true';
   });
 
   // --------------------------------------------------------------------------

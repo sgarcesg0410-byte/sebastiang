@@ -25,6 +25,9 @@ let client = null;
 let clientPromise = null;
 
 export function isMongoConfigured() {
+  if ((process.env.NODE_ENV === 'test' || process.env.VITEST) && process.env.ALLOW_MONGO_IN_TESTS !== 'true') {
+    return false;
+  }
   const currentUri = getMongoUri();
   return Boolean(currentUri && currentUri.startsWith('mongodb'));
 }

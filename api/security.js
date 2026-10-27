@@ -25,9 +25,8 @@ export function getAdminAuthSecret() {
   const usable = secret.length >= 32 && !FORBIDDEN_SECRETS.has(secret);
   if (usable) return secret;
 
-  // Respaldo SOLO con semillas que NO sean públicas. Nunca SUPABASE_REST_KEY:
-  // hoy contiene la clave anon, que viaja en el bundle del navegador.
-  const seed = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.ADMIN_PIN_SCRYPT || '';
+  // Respaldo SOLO con semillas privadas del servidor (nunca claves públicas del cliente).
+  const seed = process.env.ADMIN_PIN_SCRYPT || process.env.MONGODB_URI || '';
   if (!seed) {
     // Sin semilla no se puede firmar ni verificar: se falla cerrado (401/503).
     return null;
@@ -213,7 +212,7 @@ export async function requireAdminAuth(req, res, next) {
         activeVersion = Number(fetched) || activeVersion;
       }
     } catch (err) {
-      // Fallar cerrado: si Supabase o el getter falla, proteger los datos
+      // Fallar cerrado: si el almacén de seguridad falla, proteger los datos
       return res.status(401).json({ error: 'Error de verificación de sesión (servicio de autenticación no disponible).' });
     }
   }
@@ -299,3 +298,213 @@ export function toPublicBooking(booking, { receiptToken, paidAmount } = {}) {
     paidAmount: Number.isFinite(Number(paidAmount)) ? Number(paidAmount) : undefined
   };
 }
+
+// ------------------------------------------------------------------------------
+// Enmascaramiento de PII para logs seguros (cumplimiento Ley 1581 / Habeas Data)
+// ------------------------------------------------------------------------------
+
+export function maskEmail(email) {
+  const raw = String(email ?? '').trim();
+  if (!raw || !raw.includes('@')) return '[sin-email]';
+  const [local, domain] = raw.split('@');
+  if (!local || !domain) return '[email-oculto]';
+  const visible = local.length <= 2 ? local.slice(0, 1) : local.slice(0, 2);
+  return `${visible}***@${domain}`;
+}
+
+export function maskPhone(phone) {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  if (digits.length < 4) return '[tel-oculto]';
+  return `***${digits.slice(-4)}`;
+}
+
+// ------------------------------------------------------------------------------
+// Tokens criptográficos para galerías privadas
+// ------------------------------------------------------------------------------
+
+export function generateGalleryToken() {
+  return crypto.randomUUID();
+}
+
+export function isValidGalleryTokenFormat(token) {
+  const raw = String(token ?? '').trim();
+  if (!raw || raw.length < 8 || raw.length > 128) return false;
+  if (raw === 'demo-cliente-2026') return true;
+  return /^[a-zA-Z0-9_-]+$/.test(raw);
+}
+
+// ------------------------------------------------------------------------------
+// Obtención de IP confiable (anti-spoofing de X-Forwarded-For)
+// ------------------------------------------------------------------------------
+
+export function getTrustedClientIp(req) {
+  if (!req) return 'unknown';
+
+  // 1. En Vercel Edge/Serverless, x-vercel-forwarded-for y x-real-ip son inyectados por la plataforma
+  if (process.env.VERCEL === '1') {
+    const vercelIp = String(req.headers?.['x-vercel-forwarded-for'] || req.headers?.['x-real-ip'] || '')
+      .split(',')[0]
+      .trim();
+    if (vercelIp) return vercelIp;
+  }
+
+  // 2. Solo si TRUST_PROXY=true explícito se acepta el último salto añadido por el proxy reverso confiable
+  if (process.env.TRUST_PROXY === 'true') {
+    const xff = String(req.headers?.['x-forwarded-for'] || '');
+    if (xff) {
+      const hops = xff.split(',').map((s) => s.trim()).filter(Boolean);
+      if (hops.length > 0) return hops[hops.length - 1];
+    }
+    if (req.ip) return String(req.ip).trim();
+  }
+
+  // 3. Por defecto se ignora X-Forwarded-For enviado por el cliente para impedir falsificación de IP
+  const rawAddr = String(req.socket?.remoteAddress || req.ip || '127.0.0.1').trim();
+  return rawAddr.replace(/^::ffff:/i, '') || '127.0.0.1';
+}
+
+// ------------------------------------------------------------------------------
+// Reducción de PII para el feed de notificaciones en segundo plano (/api/apk/feed)
+// ------------------------------------------------------------------------------
+
+function extractFirstName(fullName) {
+  const clean = String(fullName || 'Cliente').trim();
+  if (!clean) return 'Cliente';
+  return clean.split(/\s+/)[0];
+}
+
+export function toMinimalApkFeed({ bookings = [], payments = [], sessions = [], reviews = [] } = {}) {
+  return {
+    bookings: (Array.isArray(bookings) ? bookings : []).map((b) => ({
+      id: b?.id || '',
+      clientFirstName: extractFirstName(b?.clientName),
+      packageName: b?.packageName || 'Sesión Fotográfica',
+      dateTime: b?.dateTime || '',
+      status: b?.status || 'pending',
+      createdAt: b?.createdAt || ''
+    })),
+    payments: (Array.isArray(payments) ? payments : []).map((p) => ({
+      id: p?.id || '',
+      clientFirstName: extractFirstName(p?.clientName),
+      amount: Number(p?.amount) || 0,
+      method: p?.method || '',
+      status: p?.status || 'pending',
+      createdAt: p?.createdAt || ''
+    })),
+    sessions: (Array.isArray(sessions) ? sessions : []).map((s) => ({
+      id: s?.id || '',
+      clientFirstName: extractFirstName(s?.clientName),
+      packageTitle: s?.packageTitle || '',
+      status: s?.status || 'active',
+      selectedCount: Number(s?.selectedCount) || (Array.isArray(s?.photos) ? s.photos.filter((p) => p?.selected).length : 0),
+      createdAt: s?.createdAt || ''
+    })),
+    reviews: (Array.isArray(reviews) ? reviews : []).map((r) => ({
+      id: r?.id || '',
+      clientFirstName: extractFirstName(r?.clientName),
+      rating: Number(r?.rating) || 5,
+      createdAt: r?.createdAt || ''
+    }))
+  };
+}
+
+// ------------------------------------------------------------------------------
+// Tokens de dispositivo APK con scope restringido (solo lectura de feed reducido)
+// y revocación individual por deviceId (nunca equivalen a sesión de administrador)
+// ------------------------------------------------------------------------------
+
+const APK_DEVICE_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 días
+
+export function createApkDeviceToken({ deviceId, deviceName = 'APK Android', pwd } = {}) {
+  const secret = getAdminAuthSecret();
+  if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir token de dispositivo APK.');
+  const cleanDeviceId = String(deviceId || crypto.randomUUID()).trim();
+  const payload = {
+    role: 'apk_device',
+    scope: 'apk_feed:read',
+    deviceId: cleanDeviceId,
+    deviceName: String(deviceName || 'APK Android').trim().slice(0, 64),
+    iat: Date.now(),
+    exp: Date.now() + APK_DEVICE_TOKEN_TTL_MS,
+    nonce: crypto.randomBytes(12).toString('hex'),
+    pwd: pwd ?? getCachedPasswordVersion()
+  };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', `${secret}:apk_device`).update(body).digest('base64url');
+  return {
+    token: `${body}.${signature}`,
+    deviceId: cleanDeviceId,
+    deviceName: payload.deviceName,
+    expiresAt: new Date(payload.exp).toISOString()
+  };
+}
+
+export function verifyApkDeviceToken(token, { expectedPasswordVersion, revokedDeviceIds = [] } = {}) {
+  const secret = getAdminAuthSecret();
+  if (!secret) return null;
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+
+  const [body, signature] = token.split('.');
+  if (!body || !signature) return null;
+
+  const expected = crypto.createHmac('sha256', `${secret}:apk_device`).update(body).digest('base64url');
+  if (!secureCompare(signature, expected)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (payload?.role !== 'apk_device' || payload?.scope !== 'apk_feed:read') return null;
+    if (!payload?.deviceId || !payload?.exp || Date.now() > payload.exp) return null;
+    if (expectedPasswordVersion !== undefined && expectedPasswordVersion !== null) {
+      if (payload.pwd !== expectedPasswordVersion) return null;
+    }
+    const revokedSet = new Set(Array.isArray(revokedDeviceIds) ? revokedDeviceIds : []);
+    if (revokedSet.has(payload.deviceId)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------------------
+// Bitácora estructurada de auditoría financiera y de seguridad
+// ------------------------------------------------------------------------------
+
+const MAX_IN_MEMORY_AUDIT_LOGS = 500;
+
+export async function recordFinancialAuditLog(
+  { action, actor = 'system', entityType = 'system', entityId = '', amount = null, ip = '', details = {} } = {},
+  { runtimeDB, isMongoConfigured, upsertMongoDoc } = {}
+) {
+  const entry = {
+    id: `audit-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+    timestamp: new Date().toISOString(),
+    action: String(action || 'UNKNOWN_ACTION'),
+    actor: String(actor || 'system'),
+    entityType: String(entityType || 'system'),
+    entityId: String(entityId || ''),
+    amount: amount !== null && amount !== undefined ? Number(amount) : null,
+    ip: String(ip || ''),
+    details: details && typeof details === 'object' ? details : {}
+  };
+
+  if (runtimeDB && typeof runtimeDB === 'object') {
+    if (!Array.isArray(runtimeDB.auditLogs)) runtimeDB.auditLogs = [];
+    runtimeDB.auditLogs.unshift(entry);
+    if (runtimeDB.auditLogs.length > MAX_IN_MEMORY_AUDIT_LOGS) {
+      runtimeDB.auditLogs.length = MAX_IN_MEMORY_AUDIT_LOGS;
+    }
+  }
+
+  if (typeof isMongoConfigured === 'function' && isMongoConfigured() && typeof upsertMongoDoc === 'function') {
+    try {
+      await upsertMongoDoc('audit_logs', { id: entry.id }, entry);
+    } catch (e) {
+      console.warn('⚠️ [AuditLog] Error persistiendo evento en MongoDB:', e?.message || e);
+    }
+  }
+
+  return entry;
+}
+
+
+

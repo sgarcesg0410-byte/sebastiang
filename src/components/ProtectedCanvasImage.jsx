@@ -2,12 +2,35 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 /**
  * ProtectedCanvasImage
- * Renderiza fotografías exclusivamente sobre un elemento <canvas> de HTML5.
- * Elimina las etiquetas <img> del DOM para que las fotos no puedan ser inspeccionadas,
- * descargadas, extraídas del árbol de elementos ni capturadas mediante DevTools.
+ * - Cuando `watermark === false` (catálogo público): usa `<img>` nativo con `loading="lazy"` y `decoding="async"`,
+ *   evitando crear decenas de `<canvas>`, `ResizeObserver` y listeners por tarjeta.
+ * - Cuando `watermark === true` (galerías privadas de clientes): renderiza en `<canvas>` con marca de agua
+ *   incrustada en píxeles, carga diferida por `IntersectionObserver` y caché LRU acotada en memoria.
  */
-// Caché en memoria para carga ultrarrápida (0ms) en móviles y APK
+const MAX_IMAGE_CACHE_SIZE = 40;
 const memoryImageCache = new Map();
+
+export function getCachedImage(src) {
+  if (!memoryImageCache.has(src)) return null;
+  const img = memoryImageCache.get(src);
+  // Refrescar posición LRU
+  memoryImageCache.delete(src);
+  memoryImageCache.set(src, img);
+  return img;
+}
+
+export function setCachedImage(src, img) {
+  if (!src || !img) return;
+  if (memoryImageCache.has(src)) {
+    memoryImageCache.delete(src);
+  } else if (memoryImageCache.size >= MAX_IMAGE_CACHE_SIZE) {
+    const oldestKey = memoryImageCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      memoryImageCache.delete(oldestKey);
+    }
+  }
+  memoryImageCache.set(src, img);
+}
 
 export default function ProtectedCanvasImage({
   src,
@@ -21,9 +44,33 @@ export default function ProtectedCanvasImage({
   const containerRef = useRef(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [isInViewport, setIsInViewport] = useState(() => !watermark);
   const imgRef = useRef(null);
 
+  // Observar visibilidad únicamente cuando se usa modo canvas con marca de agua
+  useEffect(() => {
+    if (!watermark) return;
+    const container = containerRef.current;
+    if (!container || typeof IntersectionObserver === 'undefined') {
+      setIsInViewport(true);
+      return;
+    }
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setIsInViewport(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '250px' }
+    );
+    io.observe(container);
+    return () => io.disconnect();
+  }, [watermark]);
+
   const drawToCanvas = useCallback(() => {
+    if (!watermark) return;
     const canvas = canvasRef.current;
     const container = containerRef.current;
     const img = imgRef.current;
@@ -44,7 +91,6 @@ export default function ProtectedCanvasImage({
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
 
     if (!img || !img.complete || img.naturalWidth === 0) {
       ctx.fillStyle = '#0c0a09';
@@ -74,7 +120,6 @@ export default function ProtectedCanvasImage({
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, targetWidth, targetHeight);
     } else {
-      // cover
       if (imgRatio > canvasRatio) {
         drawHeight = targetHeight;
         drawWidth = targetHeight * imgRatio;
@@ -93,71 +138,63 @@ export default function ProtectedCanvasImage({
     ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
 
     // Marca de agua protegida en pixeles del canvas (mosaico diagonal + sello central)
-    if (watermark) {
-      ctx.save();
+    ctx.save();
 
-      // 1. Mosaico diagonal repetido a lo largo de toda la fotografía
-      ctx.save();
-      ctx.rotate(-28 * Math.PI / 180);
-      const stepX = Math.max(180, Math.floor(targetWidth * 0.45));
-      const stepY = Math.max(80, Math.floor(targetHeight * 0.15));
-      const diagSize = Math.max(targetWidth, targetHeight) * 2;
-      const mosaicFontSize = Math.max(12, Math.floor(targetWidth * 0.035));
-      ctx.font = `800 ${mosaicFontSize}px sans-serif`;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-      ctx.lineWidth = 2;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+    ctx.save();
+    ctx.rotate(-28 * Math.PI / 180);
+    const stepX = Math.max(180, Math.floor(targetWidth * 0.45));
+    const stepY = Math.max(80, Math.floor(targetHeight * 0.15));
+    const diagSize = Math.max(targetWidth, targetHeight) * 2;
+    const mosaicFontSize = Math.max(12, Math.floor(targetWidth * 0.035));
+    ctx.font = `800 ${mosaicFontSize}px sans-serif`;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.lineWidth = 2;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
 
-      const mosaicText = 'SEBASTIAN G • MUESTRA';
-      for (let y = -diagSize; y < diagSize; y += stepY) {
-        for (let x = -diagSize; x < diagSize; x += stepX) {
-          ctx.strokeText(mosaicText, x, y);
-          ctx.fillText(mosaicText, x, y);
-        }
+    const mosaicText = 'SEBASTIAN G • MUESTRA';
+    for (let y = -diagSize; y < diagSize; y += stepY) {
+      for (let x = -diagSize; x < diagSize; x += stepX) {
+        ctx.strokeText(mosaicText, x, y);
+        ctx.fillText(mosaicText, x, y);
       }
-      ctx.restore();
-
-      // 2. Marca de agua central destacada
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const centerTitleSize = Math.max(18, Math.floor(targetWidth * 0.065));
-      ctx.font = `900 ${centerTitleSize}px sans-serif`;
-      ctx.lineWidth = Math.max(3, centerTitleSize * 0.14);
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-      ctx.shadowBlur = 10;
-      ctx.strokeText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
-      ctx.fillText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
-
-      // Subtexto central
-      const subSize = Math.max(10, Math.floor(targetWidth * 0.026));
-      ctx.font = `700 ${subSize}px sans-serif`;
-      ctx.lineWidth = 2;
-      ctx.strokeText('MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA', targetWidth / 2, (targetHeight / 2) + centerTitleSize * 1.1);
-      ctx.fillText('MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA', targetWidth / 2, (targetHeight / 2) + centerTitleSize * 1.1);
-
-      ctx.restore();
     }
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const centerTitleSize = Math.max(18, Math.floor(targetWidth * 0.065));
+    ctx.font = `900 ${centerTitleSize}px sans-serif`;
+    ctx.lineWidth = Math.max(3, centerTitleSize * 0.14);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+    ctx.shadowBlur = 10;
+    ctx.strokeText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
+    ctx.fillText(watermarkText || 'SEBASTIAN G', targetWidth / 2, targetHeight / 2);
+
+    const subSize = Math.max(10, Math.floor(targetWidth * 0.026));
+    ctx.font = `700 ${subSize}px sans-serif`;
+    ctx.lineWidth = 2;
+    ctx.strokeText('MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA', targetWidth / 2, (targetHeight / 2) + centerTitleSize * 1.1);
+    ctx.fillText('MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA', targetWidth / 2, (targetHeight / 2) + centerTitleSize * 1.1);
+
+    ctx.restore();
   }, [objectFit, watermark, watermarkText]);
 
   useEffect(() => {
-    if (!src) return;
+    if (!watermark || !isInViewport || !src) return;
 
     let isMounted = true;
 
-    // 1. Revisar si la imagen ya está en caché en memoria (0ms)
-    if (memoryImageCache.has(src)) {
-      const cached = memoryImageCache.get(src);
-      if (cached && cached.complete && cached.naturalWidth > 0) {
-        imgRef.current = cached;
-        setIsLoaded(true);
-        setHasError(false);
-        drawToCanvas();
-        return;
-      }
+    const cached = getCachedImage(src);
+    if (cached && cached.complete && cached.naturalWidth > 0) {
+      imgRef.current = cached;
+      setIsLoaded(true);
+      setHasError(false);
+      drawToCanvas();
+      return;
     }
 
     setIsLoaded(false);
@@ -170,7 +207,7 @@ export default function ProtectedCanvasImage({
 
     img.onload = () => {
       if (!isMounted) return;
-      memoryImageCache.set(src, img);
+      setCachedImage(src, img);
       imgRef.current = img;
       setIsLoaded(true);
       drawToCanvas();
@@ -186,79 +223,70 @@ export default function ProtectedCanvasImage({
     return () => {
       isMounted = false;
     };
-  }, [src, drawToCanvas]);
+  }, [watermark, isInViewport, src, drawToCanvas]);
 
-  // Redibujar en resize del contenedor o ventana
+  // Redibujar en resize del contenedor únicamente cuando usa canvas (watermark === true)
   useEffect(() => {
+    if (!watermark || !isInViewport) return;
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || typeof ResizeObserver === 'undefined') return;
 
-    let resizeObserver = null;
-    if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(() => {
-        drawToCanvas();
-      });
-      resizeObserver.observe(container);
-    }
-
-    const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
-
-    const handleWindowEvents = () => {
-      drawToCanvas();
-    };
-
-    const handleWindowBlur = () => {
-      if (isTouchDevice && !document.hidden) return;
-      drawToCanvas();
-    };
-
-    window.addEventListener('resize', handleWindowEvents);
-    window.addEventListener('focus', handleWindowEvents);
-    window.addEventListener('blur', handleWindowBlur);
-    document.addEventListener('visibilitychange', handleWindowEvents);
-
-    // Observar cambios de clase en html (como security-blackout)
-    const mutationObserver = new MutationObserver(() => {
+    const resizeObserver = new ResizeObserver(() => {
       drawToCanvas();
     });
-    mutationObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    resizeObserver.observe(container);
 
     return () => {
-      if (resizeObserver) resizeObserver.disconnect();
-      mutationObserver.disconnect();
-      window.removeEventListener('resize', handleWindowEvents);
-      window.removeEventListener('focus', handleWindowEvents);
-      window.removeEventListener('blur', handleWindowBlur);
-      document.removeEventListener('visibilitychange', handleWindowEvents);
+      resizeObserver.disconnect();
     };
-  }, [drawToCanvas]);
+  }, [watermark, isInViewport, drawToCanvas]);
+
+  // Modo ligero y accesible para el catálogo público (sin marca de agua pesada en canvas)
+  if (!watermark) {
+    return (
+      <div
+        ref={containerRef}
+        className={`relative w-full h-full overflow-hidden bg-stone-950 ${className}`}
+      >
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onLoad={() => setIsLoaded(true)}
+          onError={() => setHasError(true)}
+          className={`w-full h-full block transition-transform duration-500 ${
+            objectFit === 'contain' ? 'object-contain' : 'object-cover'
+          }`}
+        />
+        {!isLoaded && !hasError && (
+          <div className="absolute inset-0 bg-stone-900/80 flex items-center justify-center pointer-events-none">
+            <div className="w-7 h-7 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin" />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
       ref={containerRef}
       className={`relative w-full h-full overflow-hidden select-none pointer-events-none bg-stone-950 ${className}`}
-      onContextMenu={(e) => e.preventDefault()}
       onDragStart={(e) => e.preventDefault()}
     >
       <canvas
         ref={canvasRef}
+        role="img"
         aria-label={alt}
         className="w-full h-full block select-none pointer-events-none transition-transform duration-500"
-        onContextMenu={(e) => e.preventDefault()}
       />
 
-      {/* Spinner de carga inicial */}
       {!isLoaded && !hasError && (
         <div className="absolute inset-0 bg-stone-900/80 flex items-center justify-center pointer-events-none">
           <div className="w-7 h-7 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin" />
         </div>
       )}
-
-      {/* Capa de protección física transparente */}
-      <div 
-        className="absolute inset-0 z-10 bg-transparent select-none pointer-events-none" 
-        onContextMenu={(e) => e.preventDefault()} 
-      />
     </div>
   );
 }

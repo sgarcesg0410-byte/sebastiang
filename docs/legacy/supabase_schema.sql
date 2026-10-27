@@ -1,7 +1,8 @@
 -- ==============================================================================
--- ESQUEMA OFICIAL SUPABASE PARA SEBASTIAN G (sebastiang.app)
--- Versión Optimizada: Cero consumo excesivo de cuota, tablas relacionales ligeras,
--- soporte en tiempo real (WebSockets) y políticas de seguridad RLS.
+-- [LEGADO - DEPRECADO] ESQUEMA HISTÓRICO SUPABASE PARA SEBASTIAN G (sebastiang.app)
+-- NOTA ARQUITECTÓNICA: MongoDB Atlas es la única base de datos oficial en producción.
+-- Este archivo se conserva únicamente como referencia histórica con RLS cerrado (service_role).
+-- Para endurecer o cerrar un proyecto Supabase existente, ejecuta: supabase_rls_hardening.sql
 -- ==============================================================================
 
 -- 1. TABLA: RESERVAS DE SESIONES FOTOGRÁFICAS
@@ -114,70 +115,15 @@ DROP POLICY IF EXISTS "Permitir acceso completo anónimo a catalog" ON public.ca
 DROP POLICY IF EXISTS "Permitir acceso completo anónimo a system_config" ON public.system_config;
 DROP POLICY IF EXISTS "Permitir acceso completo anónimo a reviews" ON public.reviews;
 
--- 1. CATALOG: Lectura pública del portafolio (excluye metadatos de sistema y VIPs)
-CREATE POLICY "Lectura pública de fotos de catálogo" ON public.catalog
-  FOR SELECT USING (
-    category NOT IN ('vip_client', 'security_data', 'session_data') 
-    AND id NOT LIKE 'system_%'
-    AND id NOT LIKE 'vip-%'
-  );
+-- Bloqueo de acceso público (anon / authenticated): solo service_role permitido
+REVOKE ALL ON TABLE public.bookings, public.sessions, public.payments, public.catalog, public.system_config, public.reviews FROM anon, authenticated;
 
--- Escritura en catálogo (creación, edición y borrado por admin autenticado o anon autorizado)
-CREATE POLICY "Escritura administrativa en catálogo" ON public.catalog
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Actualización administrativa en catálogo" ON public.catalog
-  FOR UPDATE USING (true) WITH CHECK (true);
-
-CREATE POLICY "Eliminación administrativa en catálogo" ON public.catalog
-  FOR DELETE USING (true);
-
--- 2. BOOKINGS: Clientes pueden registrar reservas; lectura protegida
-CREATE POLICY "Clientes pueden crear reservas" ON public.bookings
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Lectura de reservas del estudio" ON public.bookings
-  FOR SELECT USING (true);
-
-CREATE POLICY "Actualización de reservas por administración" ON public.bookings
-  FOR UPDATE USING (true) WITH CHECK (true);
-
-CREATE POLICY "Eliminación de reservas por administración" ON public.bookings
-  FOR DELETE USING (true);
-
--- 3. SESSIONS: Creación y consulta de galerías de clientes
-CREATE POLICY "Lectura de sesiones por token o id" ON public.sessions
-  FOR SELECT USING (true);
-
-CREATE POLICY "Gestión administrativa de sesiones" ON public.sessions
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Actualización administrativa de sesiones" ON public.sessions
-  FOR UPDATE USING (true) WITH CHECK (true);
-
--- 4. PAYMENTS: Registro público de comprobantes de pago
-CREATE POLICY "Clientes pueden registrar pagos" ON public.payments
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Lectura administrativa de pagos" ON public.payments
-  FOR SELECT USING (true);
-
--- 5. REVIEWS: Lectura pública y creación por clientes satisfechos
-CREATE POLICY "Lectura pública de testimonios" ON public.reviews
-  FOR SELECT USING (true);
-
-CREATE POLICY "Clientes pueden enviar testimonios" ON public.reviews
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Eliminación de testimonios por administración" ON public.reviews
-  FOR DELETE USING (true);
-
--- 6. SYSTEM_CONFIG: Lectura pública de configuración comercial
-CREATE POLICY "Lectura pública de configuración comercial" ON public.system_config
-  FOR SELECT USING (true);
-
-CREATE POLICY "Edición administrativa de configuración" ON public.system_config
-  FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_only_bookings" ON public.bookings FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_only_sessions" ON public.sessions FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_only_payments" ON public.payments FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_only_catalog" ON public.catalog FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_only_system_config" ON public.system_config FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_only_reviews" ON public.reviews FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- ==============================================================================
 -- TIEMPO REAL NATIVO (WEBSOCKETS DE SUPABASE)

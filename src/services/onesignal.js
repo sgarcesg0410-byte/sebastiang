@@ -2,14 +2,46 @@
 // Funciona en Android APK, PWA y Navegadores incluso con la App totalmente cerrada.
 
 const ONESIGNAL_APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
+const ONESIGNAL_SDK_SRC = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
 
 let oneSignalInitialized = false;
+let oneSignalScriptPromise = null;
+
+function ensureOneSignalSdkLoaded() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve(false);
+  }
+  if (window.OneSignal && typeof window.OneSignal.init === 'function') {
+    return Promise.resolve(true);
+  }
+  if (oneSignalScriptPromise) return oneSignalScriptPromise;
+
+  oneSignalScriptPromise = new Promise((resolve) => {
+    const existing = document.querySelector(`script[src="${ONESIGNAL_SDK_SRC}"]`);
+    if (existing) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = ONESIGNAL_SDK_SRC;
+    script.defer = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      oneSignalScriptPromise = null;
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+
+  return oneSignalScriptPromise;
+}
 
 export async function initOneSignal() {
   if (typeof window === 'undefined') return;
   if (oneSignalInitialized) return;
 
   try {
+    await ensureOneSignalSdkLoaded();
     window.OneSignalDeferred = window.OneSignalDeferred || [];
     window.OneSignalDeferred.push(async function(OneSignal) {
       await OneSignal.init({
@@ -21,7 +53,6 @@ export async function initOneSignal() {
       });
 
       oneSignalInitialized = true;
-      console.log('✓ OneSignal SDK inicializado con éxito');
 
       // Escuchar cambios de suscripción
       OneSignal.User.PushSubscription.addEventListener('change', (event) => {
@@ -35,6 +66,7 @@ export async function initOneSignal() {
 
 export async function requestOneSignalPermission() {
   if (typeof window === 'undefined') return false;
+  await initOneSignal();
 
   return new Promise((resolve) => {
     window.OneSignalDeferred = window.OneSignalDeferred || [];

@@ -10,6 +10,34 @@ export const DAY_LAST_START_MIN = 19 * 60 + 30; // última hora de inicio sugeri
 
 const INACTIVE_STATUSES = ['cancelled', 'canceled', 'rejected', 'completed', 'delivered'];
 
+/**
+ * Devuelve la fecha actual en zona horaria de Colombia (America/Bogota, UTC-5)
+ * en formato ISO YYYY-MM-DD, evitando el desfase de toISOString() a las 7:00 p. m.
+ */
+export function getColombiaTodayIso(now = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(now);
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const d = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && d) return `${y}-${m}-${d}`;
+  } catch (e) {}
+  // Fallback manual UTC-5
+  const bogotaTime = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  return bogotaTime.toISOString().split('T')[0];
+}
+
+export function isDateFullyBooked(daySlots = []) {
+  if (!Array.isArray(daySlots) || daySlots.length === 0) return false;
+  const lastEnd = Math.max(...daySlots.map((s) => s.endMin || 0));
+  return lastEnd > DAY_LAST_START_MIN || daySlots.length >= 6;
+}
+
 // "28/09/2026 a las 4:00 p. m." -> { dateKey: '2026-09-28', startMin: 960 }
 export function parseDateTimeString(str) {
   if (!str) return null;

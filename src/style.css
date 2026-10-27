@@ -20,7 +20,7 @@
   user-select: none !important;
 }
 
-.protected-photo-zone img, img {
+.protected-photo-zone img {
   -webkit-touch-callout: none !important;
   -webkit-user-select: none !important;
   user-select: none !important;
@@ -60,14 +60,6 @@ html.security-blackout [role="dialog"] img {
   filter: blur(100px) brightness(0) !important;
   transform: scale(0) !important;
   transition: none !important;
-}
-
-/* Bloqueo total al intentar imprimir */
-@media print {
-  html, body {
-    display: none !important;
-    visibility: hidden !important;
-  }
 }
 
 /* Marca de Agua Protectora Anti-Robo */

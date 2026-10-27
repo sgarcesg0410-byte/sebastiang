@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const emptyDepPath = path.resolve(__dirname, 'src/services/emptyOptionalDep.js')
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -9,18 +14,19 @@ export default defineConfig({
     react(),
     tailwindcss()
   ],
+  resolve: {
+    alias: {
+      html2canvas: emptyDepPath,
+      canvg: emptyDepPath,
+      dompurify: emptyDepPath
+    }
+  },
   build: {
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('qrcode')) {
-              return 'vendor-pdf';
-            }
-            if (id.includes('@supabase')) {
-              return 'vendor-supabase';
-            }
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
             }

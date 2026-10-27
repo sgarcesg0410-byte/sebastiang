@@ -1,5 +1,3 @@
-import jsPDF from 'jspdf';
-import QRCode from 'qrcode';
 import { LOGO_WATERMARK_APP, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 import { formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from './api';
 
@@ -70,6 +68,12 @@ export async function generateLuxuryReceiptPdf({
 
   const verifyUrl = `https://sebastiang.app/#recibo=${booking.receiptToken || booking.id}&paid=${actualPaid}&method=${encodeURIComponent(paymentMethod)}`;
   const displayHash = auditHash || `SG-${String(booking.id).slice(-6)}-${Date.now().toString(36).toUpperCase()}`;
+
+  // 0. Carga bajo demanda de jsPDF y QRCode (evita descargar ~416 KB en la carga inicial)
+  const [{ default: jsPDF }, { default: QRCode }] = await Promise.all([
+    import('jspdf'),
+    import('qrcode')
+  ]);
 
   // 1. Generar Código QR nítido
   let qrDataUrl = null;

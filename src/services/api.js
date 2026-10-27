@@ -1,4 +1,3 @@
-import { supabase } from './supabase';
 import {
   idbGetCatalog,
   idbSaveCatalogItem,
@@ -928,20 +927,6 @@ export async function fetchCloudWalletBaseBalances() {
     }
   } catch (e) {}
 
-  try {
-    const { data } = await supabase
-      .from('catalog')
-      .select('url')
-      .eq('id', 'system_wallet_balances')
-      .maybeSingle();
-    if (data && data.url) {
-      const parsed = JSON.parse(data.url);
-      if (parsed && typeof parsed === 'object') {
-        localStorage.setItem(LOCAL_WALLET_BASE_BALANCES_KEY, JSON.stringify(parsed));
-        return parsed;
-      }
-    }
-  } catch (e) {}
   return getWalletBaseBalances();
 }
 
@@ -955,7 +940,7 @@ export async function saveWalletBaseBalances(balances) {
     }
   } catch (e) {}
 
-  // 1. Sincronización directa en MongoDB Atlas mediante endpoint autenticado
+  // Sincronización directa en MongoDB Atlas mediante endpoint autenticado
   try {
     const token = getAdminSessionToken();
     await fetch(`${API_BASE}/admin/wallets`, {
@@ -967,17 +952,6 @@ export async function saveWalletBaseBalances(balances) {
       body: JSON.stringify(balances)
     });
   } catch (errApi) {}
-
-  // 2. Sincronización transparente de respaldo
-  try {
-    await supabase.from('catalog').upsert({
-      id: 'system_wallet_balances',
-      title: 'Wallet Balances',
-      category: 'wallet_data',
-      location: 'system',
-      url: JSON.stringify(balances)
-    });
-  } catch (err) {}
 }
 
 export function getDeletedPaymentIds() {
@@ -1111,44 +1085,6 @@ export function saveLocalBooking(booking) {
       idbSaveBooking(enriched).catch(() => {});
     } catch (e) {}
 
-    // 2. Sincronización inmutable directa a Supabase Cloud / API Proxy (2 capas: catalog y bookings)
-    try {
-      const supaId = enriched.id.startsWith('book-') ? enriched.id : `book-${enriched.id}`;
-      supabase.from('catalog').upsert({
-        id: supaId,
-        title: enriched.clientName || 'Reserva',
-        category: 'booking_data',
-        location: enriched.specificLocation || '',
-        url: JSON.stringify(enriched)
-      }).then(() => {}).catch(() => {});
-
-      supabase.from('bookings').upsert({
-        id: supaId,
-        client_name: enriched.clientName || 'Cliente',
-        clientName: enriched.clientName || 'Cliente',
-        client_whatsapp: enriched.clientWhatsApp || '',
-        clientWhatsApp: enriched.clientWhatsApp || '',
-        client_email: enriched.clientEmail || '',
-        clientEmail: enriched.clientEmail || '',
-        package_id: enriched.packageId || 'pkg-4fotos',
-        packageId: enriched.packageId || 'pkg-4fotos',
-        package_name: enriched.packageName || 'Sesión Fotográfica',
-        packageName: enriched.packageName || 'Sesión Fotográfica',
-        total_price: Number(enriched.totalPrice || 0),
-        totalPrice: Number(enriched.totalPrice || 0),
-        location_type: enriched.locationType || 'san_antero',
-        locationType: enriched.locationType || 'san_antero',
-        specific_location: enriched.specificLocation || '',
-        specificLocation: enriched.specificLocation || '',
-        date_time: enriched.dateTime || '',
-        dateTime: enriched.dateTime || '',
-        description: enriched.description || '',
-        status: enriched.status || 'pending',
-        created_at: enriched.createdAt || new Date().toISOString(),
-        createdAt: enriched.createdAt || new Date().toISOString()
-      }).then(() => {}).catch(() => {});
-    } catch (e) {}
-
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         const bc = new BroadcastChannel('bookings_realtime_sync');
@@ -1209,28 +1145,13 @@ export async function getSettings() {
     console.warn('Consultando configuración local o respaldo:', err);
   }
 
-  try {
-    const { data: supaSt } = await supabase
-      .from('catalog')
-      .select('url')
-      .eq('id', 'system_settings')
-      .maybeSingle();
-    if (supaSt && supaSt.url) {
-      const parsed = JSON.parse(supaSt.url);
-      if (parsed && typeof parsed === 'object') {
-        saveLocalSettings(parsed);
-        return { ...DEFAULT_SETTINGS, ...parsed };
-      }
-    }
-  } catch (e) {}
-
   return { ...DEFAULT_SETTINGS, ...(localSt || {}) };
 }
 
 export async function updateSettings(newSettings) {
   saveLocalSettings(newSettings);
   try {
-    const res = await fetch(`${API_BASE}/settings`, {
+    await fetch(`${API_BASE}/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newSettings)
@@ -1238,17 +1159,6 @@ export async function updateSettings(newSettings) {
   } catch (err) {
     console.warn('Servidor offline al guardar settings, guardado localmente:', err);
   }
-
-  // Sincronizar en Supabase para que la APK y la Web se actualicen al instante
-  try {
-    await supabase.from('catalog').upsert({
-      id: 'system_settings',
-      title: 'Configuración del Sistema',
-      category: 'settings_data',
-      location: 'system',
-      url: JSON.stringify(newSettings)
-    });
-  } catch (e) {}
 
   return newSettings;
 }
@@ -1308,42 +1218,7 @@ export async function getCatalog() {
     console.warn('Consultando catálogo de servidor:', err);
   }
 
-  let supabaseCatalog = [];
-  if (serverCatalog.length === 0) {
-    try {
-      const { data, error } = await supabase
-        .from('catalog')
-        .select('id, title, category, location, url')
-        .not('id', 'like', 'sess-%')
-        .not('id', 'like', 'book-%')
-        .not('id', 'like', 'pay-%')
-        .not('id', 'like', 'rev-%')
-        .not('id', 'like', 'vip-%')
-        .not('id', 'like', 'system_%')
-        .not('category', 'eq', 'vip_client')
-        .not('category', 'like', '%_data');
-      if (!error && Array.isArray(data)) {
-        supabaseCatalog = data.filter(item => 
-          item && 
-          item.category !== 'session_data' && 
-          item.category !== 'vip_client' && 
-          !item.category?.endsWith('_data') && 
-          !item.id?.startsWith('system_') && 
-          !item.id?.startsWith('book-') && 
-          !item.id?.startsWith('pay-') && 
-          !item.id?.startsWith('rev-') && 
-          !item.id?.startsWith('sess-') && 
-          !item.id?.startsWith('vip-') &&
-          typeof item.url === 'string' &&
-          !item.url.trim().startsWith('{') &&
-          !item.url.trim().startsWith('[') &&
-          !item.url.includes('fbcdn.net')
-        );
-      }
-    } catch (err) {}
-  }
-
-  // 3. Consultar IndexedDB de alta capacidad (persistencia local protegida ante caída de red o límites de cuota)
+  // Consultar IndexedDB de alta capacidad (persistencia local protegida ante caída de red o límites de cuota)
   const idbCatalog = await idbGetCatalog().catch(() => []);
 
   const rawLocal = getLocalCatalog();
@@ -1354,10 +1229,9 @@ export async function getCatalog() {
 
   // Fuentes combinadas y deduplicadas inteligentemente:
   // 1. IndexedDB de primero (contiene las fotos reales de alta fidelidad sin truncar)
-  // 2. Supabase -> LocalStorage -> Servidor -> Catálogo base predeterminado
+  // 2. LocalStorage -> Servidor (MongoDB Atlas) -> Catálogo base predeterminado
   const allCandidates = [
     ...idbCatalog,
-    ...supabaseCatalog, 
     ...localItems, 
     ...serverCatalog, 
     ...DEFAULT_REAL_CATALOG
@@ -1435,21 +1309,6 @@ export async function getPackages() {
     console.warn('Aviso: Servidor /api/packages inaccesible, usando local/defecto:', err);
   }
 
-  try {
-    const { data: supaPkgs } = await supabase
-      .from('catalog')
-      .select('url')
-      .eq('id', 'system_packages')
-      .maybeSingle();
-    if (supaPkgs && supaPkgs.url) {
-      const parsed = JSON.parse(supaPkgs.url);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        saveLocalPackages(parsed);
-        return parsed;
-      }
-    }
-  } catch (e) {}
-
   if (localPkgs && Array.isArray(localPkgs) && localPkgs.length > 0) {
     return localPkgs;
   }
@@ -1459,7 +1318,7 @@ export async function getPackages() {
 export async function updatePackages(packages) {
   saveLocalPackages(packages);
   try {
-    const res = await fetch(`${API_BASE}/packages`, {
+    await fetch(`${API_BASE}/packages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ packages })
@@ -1467,17 +1326,6 @@ export async function updatePackages(packages) {
   } catch (err) {
     console.warn('Servidor offline al guardar paquetes, guardado localmente:', err);
   }
-
-  // Sincronizar en Supabase para que la APK y la Web lo reciban al instante
-  try {
-    await supabase.from('catalog').upsert({
-      id: 'system_packages',
-      title: 'Paquetes de Fotografía',
-      category: 'package_data',
-      location: 'system',
-      url: JSON.stringify(packages)
-    });
-  } catch (e) {}
 
   return packages;
 }
@@ -1517,43 +1365,7 @@ export async function createBooking(data) {
   // 1. Guardar localmente
   saveLocalBooking(newBooking);
 
-  // 2. SINCRONIZACIÓN OBLIGATORIA EN SUPABASE (EN LA NUBE)
-  // Esto garantiza que la reserva quede grabada de por vida, nunca desaparezca,
-  // y active en < 200 ms la notificación PUSH sonora en el PC y la APK móvil del fotógrafo.
-  try {
-    const supaId = newBooking.id.startsWith('book-') ? newBooking.id : `book-${newBooking.id}`;
-    await supabase.from('catalog').upsert({
-      id: supaId,
-      title: newBooking.clientName || 'Reserva',
-      category: 'booking_data',
-      location: newBooking.specificLocation || '',
-      url: JSON.stringify(newBooking)
-    });
-
-    try {
-      await supabase.from('bookings').upsert({
-        id: supaId,
-        client_name: newBooking.clientName || 'Cliente',
-        client_whatsapp: newBooking.clientWhatsApp || '',
-        client_email: newBooking.clientEmail || '',
-        package_id: newBooking.packageId || 'pkg-4fotos',
-        package_name: newBooking.packageName || 'Sesión Fotográfica',
-        total_price: Number(newBooking.totalPrice || 0),
-        location_type: newBooking.locationType || 'san_antero',
-        specific_location: newBooking.specificLocation || '',
-        date_time: newBooking.dateTime || '',
-        description: newBooking.description || '',
-        status: newBooking.status || 'pending'
-      });
-    } catch (tblErr) {
-      console.warn('Sync en tabla bookings:', tblErr);
-    }
-    console.log('✓ Reserva guardada y sincronizada en Supabase con éxito:', newBooking.clientName);
-  } catch (supaErr) {
-    console.error('Error sincronizando reserva con Supabase:', supaErr);
-  }
-
-  // 3. Notificación instantánea entre pestañas / ventanas en el mismo equipo
+  // 2. Notificación instantánea entre pestañas / ventanas en el mismo equipo
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
       const bc = new BroadcastChannel('bookings_realtime_sync');
@@ -1693,39 +1505,6 @@ export async function getGalleryByToken(token) {
     console.warn('Consultando galería por API:', errApi);
   }
 
-  // 3b. Fallback directo a Supabase
-  try {
-    const { data: supaData, error: supaErr } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('id', `sess-${token}`)
-      .single();
-    if (!supaErr && supaData && supaData.url) {
-      try {
-        const parsed = JSON.parse(supaData.url);
-        if (parsed && parsed.token === token) {
-          saveLocalSession(parsed);
-          const now = Date.now();
-          const expiresTime = new Date(parsed.expiresAt).getTime();
-          return {
-            ...parsed,
-            isExpired: now > expiresTime,
-            isSubmitted: parsed.status === 'submitted' || parsed.status === 'delivered',
-            isDelivered: parsed.status === 'delivered',
-            timeRemainingMs: Math.max(0, expiresTime - now),
-            watermarkSettings: {
-              watermarkText: DEFAULT_SETTINGS.watermarkText,
-              watermarkSubtext: DEFAULT_SETTINGS.watermarkSubtext,
-              watermarkLogoUrl: DEFAULT_SETTINGS.watermarkLogoUrl
-            }
-          };
-        }
-      } catch (parseErr) {}
-    }
-  } catch (errSupa) {
-    console.warn('Error al consultar sesión en Supabase:', errSupa);
-  }
-
   // 4. Buscar en fallback local
   const local = getLocalSessions().find(s => s.token === token);
   if (local) {
@@ -1795,28 +1574,6 @@ export async function submitGallerySelection(token, selections) {
     selectedPhotos = selections.filter(s => s.selected);
   }
 
-  // Actualizar también en Supabase Cloud para que el fotógrafo reciba la selección en tiempo real
-  try {
-    const { data: supaData } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('id', `sess-${token}`)
-      .single();
-    if (supaData && supaData.url) {
-      const parsed = JSON.parse(supaData.url);
-      parsed.status = 'submitted';
-      parsed.submittedAt = new Date().toISOString();
-      parsed.selectedCount = selectedPhotos.length;
-      parsed.photos = (parsed.photos || []).map(p => {
-        const u = selMap.get(p.id);
-        return u ? { ...p, selected: u.selected, clientComment: u.comment } : p;
-      });
-      await supabase.from('catalog').update({ url: JSON.stringify(parsed) }).eq('id', `sess-${token}`);
-    }
-  } catch (errSupaSync) {
-    console.warn('Error al actualizar selección en Supabase:', errSupaSync);
-  }
-
   // Notificar instantáneamente a todos los navegadores/pestañas del Administrador
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -1876,7 +1633,7 @@ export async function submitGallerySelection(token, selections) {
 export async function syncLiveGallerySelection(token, selections, selectedCount) {
   if (!token || token === 'demo-cliente-2026') return;
 
-  // 1. Notificar al backend de Vercel
+  // 1. Notificar al backend de Vercel (MongoDB Atlas)
   try {
     fetch(`${API_BASE}/gallery/${token}/live-selection`, {
       method: 'POST',
@@ -1885,16 +1642,11 @@ export async function syncLiveGallerySelection(token, selections, selectedCount)
     }).catch(() => {});
   } catch (e) {}
 
-  // 2. Actualizar Supabase Cloud para que Realtime dispare en el panel del administrador en 0ms
+  // 2. Actualizar sesión local y notificar pestañas en tiempo real
   try {
-    const { data: supaData } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('id', `sess-${token}`)
-      .single();
-
-    if (supaData && supaData.url) {
-      const parsed = JSON.parse(supaData.url);
+    const localSessions = getLocalSessions();
+    const session = localSessions.find(s => s.token === token);
+    if (session) {
       const selMap = new Map();
       (selections || []).forEach(item => {
         selMap.set(item.id, {
@@ -1903,25 +1655,17 @@ export async function syncLiveGallerySelection(token, selections, selectedCount)
         });
       });
 
-      parsed.photos = (parsed.photos || []).map(p => {
+      session.photos = (session.photos || []).map(p => {
         const u = selMap.get(p.id);
         return u ? { ...p, selected: u.selected, clientComment: u.comment } : p;
       });
-      parsed.selectedCount = selectedCount;
-      parsed.lastSelectionUpdate = new Date().toISOString();
+      session.selectedCount = selectedCount;
+      session.lastSelectionUpdate = new Date().toISOString();
+      saveLocalSession(session);
 
-      await supabase
-        .from('catalog')
-        .update({ url: JSON.stringify(parsed) })
-        .eq('id', `sess-${token}`);
-
-      // Actualizar local
-      saveLocalSession(parsed);
-
-      // Notificar pestañas locales en tiempo real
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         const bc = new BroadcastChannel('sessions_realtime_sync');
-        bc.postMessage({ token, status: 'selecting', count: selectedCount, clientName: parsed.clientName });
+        bc.postMessage({ token, status: 'selecting', count: selectedCount, clientName: session.clientName });
         bc.close();
       }
     }
@@ -2110,20 +1854,6 @@ export async function getAdminBookings() {
     console.warn('Consultando reservas del servidor:', err);
   }
 
-  let cloudBookings = [];
-  try {
-    const { data: supaB } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('category', 'booking_data')
-      .order('created_at', { ascending: false });
-    if (Array.isArray(supaB)) {
-      cloudBookings = supaB.map(sb => {
-        try { return JSON.parse(sb.url); } catch(e) { return null; }
-      }).filter(b => b && (b.clientName || b.client_name));
-    }
-  } catch (e) {}
-
   const localBookings = getLocalBookings();
   const map = new Map();
 
@@ -2136,7 +1866,7 @@ export async function getAdminBookings() {
 
   // 2. Fusionar con todas las fuentes garantizando no pérdida de reservas nuevas o viejas
   // El orden prioriza serverBookings (MongoDB Atlas) sin que campos undefined destruyan datos previos
-  [...idbBookings, ...localBookings, ...cloudBookings, ...serverBookings].forEach(b => {
+  [...idbBookings, ...localBookings, ...serverBookings].forEach(b => {
     if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       const existing = map.get(b.id);
       map.set(b.id, safeMergeBookingObjects(existing, b));
@@ -2199,36 +1929,6 @@ export async function updateAdminBooking(id, updates) {
     idbSaveBooking(updatedBooking).catch(() => {});
   } catch (e) {}
 
-  // Sincronizar actualización de reserva en la nube (Supabase)
-  if (updatedBooking) {
-    try {
-      const supaId = id.startsWith('book-') ? id : `book-${id}`;
-      await supabase.from('catalog').upsert({
-        id: supaId,
-        title: updatedBooking.clientName || 'Reserva',
-        category: 'booking_data',
-        location: updatedBooking.specificLocation || '',
-        url: JSON.stringify(updatedBooking)
-      });
-      try {
-        await supabase.from('bookings').upsert({
-          id: supaId,
-          client_name: updatedBooking.clientName || 'Cliente',
-          client_whatsapp: updatedBooking.clientWhatsApp || '',
-          client_email: updatedBooking.clientEmail || '',
-          package_id: updatedBooking.packageId || 'pkg-4fotos',
-          package_name: updatedBooking.packageName || 'Sesión Fotográfica',
-          total_price: Number(updatedBooking.totalPrice || 0),
-          location_type: updatedBooking.locationType || 'san_antero',
-          specific_location: updatedBooking.specificLocation || '',
-          date_time: updatedBooking.dateTime || '',
-          description: updatedBooking.description || '',
-          status: updatedBooking.status || 'pending'
-        });
-      } catch (tblErr) {}
-    } catch (e) {}
-  }
-
   // Notificar al instante a pestañas y dispositivos
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -2265,13 +1965,6 @@ export async function deleteAdminBooking(id) {
   } catch (err) {
     console.warn('Error al eliminar reserva en servidor:', err);
   }
-
-  try {
-    await supabase.from('catalog').delete().eq('id', supaId);
-    await supabase.from('catalog').delete().eq('id', id);
-    await supabase.from('bookings').delete().eq('id', supaId);
-    await supabase.from('bookings').delete().eq('id', id);
-  } catch (e) {}
 
   const list = getLocalBookings().filter(b => b.id !== id && b.id !== supaId);
   try {
@@ -2317,27 +2010,8 @@ export async function getVipClients() {
     console.warn('Consultando VIPs del servidor:', err);
   }
 
-  let cloudList = [];
-  try {
-    const { data } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('category', 'vip_client');
-    if (data && data.length > 0) {
-      cloudList = data.map(item => {
-        try {
-          return typeof item.url === 'string' && item.url.startsWith('{')
-            ? JSON.parse(item.url)
-            : { id: item.id, name: item.title, phone: item.location };
-        } catch (e) {
-          return null;
-        }
-      }).filter(Boolean);
-    }
-  } catch (e) {}
-
   const map = new Map();
-  const all = [...(Array.isArray(serverList) ? serverList : []), ...cloudList, ...idbList, ...localList];
+  const all = [...(Array.isArray(serverList) ? serverList : []), ...idbList, ...localList];
   for (const c of all) {
     if (!c) continue;
     const phoneKey = (c.phone || c.clientWhatsApp || '').replace(/\D/g, '');
@@ -2417,7 +2091,7 @@ export async function saveVipClient(clientData) {
     idbSaveVipClient(clientToSave);
   } catch (e) {}
 
-  // 1. Guardar en MongoDB Atlas mediante endpoint autenticado
+  // Guardar en MongoDB Atlas mediante endpoint autenticado
   try {
     const token = getAdminSessionToken();
     await fetch(`${API_BASE}/admin/vip`, {
@@ -2427,18 +2101,6 @@ export async function saveVipClient(clientData) {
         ...(token ? { 'Authorization': `Bearer ${token}` } : {})
       },
       body: JSON.stringify({ client: clientToSave, id: clientToSave.id })
-    });
-  } catch (e) {}
-
-  // 2. Respaldo transparente en proxy Supabase
-  try {
-    const supaVipId = String(id).startsWith('vip-') ? id : `vip-${id}`;
-    await supabase.from('catalog').upsert({
-      id: supaVipId,
-      title: clientToSave.name,
-      category: 'vip_client',
-      location: clientToSave.phone,
-      url: JSON.stringify(clientToSave)
     });
   } catch (e) {}
 
@@ -2464,12 +2126,6 @@ export async function deleteVipClient(id) {
       }
     });
 
-    try {
-      await supabase.from('catalog').delete().eq('id', id);
-      await supabase.from('catalog').delete().eq('id', `vip-${cleanPhone}`);
-      await supabase.from('catalog').delete().eq('id', `vip-vip-${cleanPhone}`);
-    } catch (e) {}
-
     return res ? res.ok : true;
   } catch (e) {
     return false;
@@ -2489,23 +2145,9 @@ export async function getAdminPayments() {
     console.warn('Consultando pagos del servidor:', err);
   }
 
-  let cloudPayments = [];
-  try {
-    const { data: supaP } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('category', 'payment_data')
-      .order('created_at', { ascending: false });
-    if (Array.isArray(supaP)) {
-      cloudPayments = supaP.map(sp => {
-        try { return JSON.parse(sp.url); } catch(e) { return null; }
-      }).filter(Boolean);
-    }
-  } catch (e) {}
-
   const localPayments = getLocalPayments();
   const map = new Map();
-  [...localPayments, ...serverPayments, ...cloudPayments].forEach(p => {
+  [...localPayments, ...serverPayments].forEach(p => {
     if (p && p.id) {
       const pid = String(p.id);
       if (deletedIds.has(pid) || deletedIds.has(`pay-${pid}`) || deletedIds.has(pid.replace(/^pay-/, ''))) return;
@@ -2530,11 +2172,6 @@ export async function deleteAdminPayment(id) {
 
   try {
     await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(cleanId)}`, { method: 'DELETE' });
-  } catch (e) {}
-
-  try {
-    await supabase.from('catalog').delete().eq('id', supaId);
-    await supabase.from('catalog').delete().eq('id', cleanId);
   } catch (e) {}
 
   try {
@@ -2592,18 +2229,6 @@ export async function createPayment(paymentData) {
     createdAt: new Date().toISOString()
   };
   saveLocalPayment(newPayment);
-
-  // Sincronizar pago en la nube (Supabase) para avisar al instante al PC y a la APK
-  try {
-    const supaId = newPayment.id.startsWith('pay-') ? newPayment.id : `pay-${newPayment.id}`;
-    await supabase.from('catalog').upsert({
-      id: supaId,
-      title: newPayment.clientName || 'Pago',
-      category: 'payment_data',
-      location: newPayment.method || '',
-      url: JSON.stringify(newPayment)
-    });
-  } catch (e) {}
 
   // Notificación exclusiva de ingresos de fotografía en Android APK
   if (typeof window !== 'undefined' && window.AndroidNotificationBridge && typeof window.AndroidNotificationBridge.showNotification === 'function') {
@@ -2686,21 +2311,6 @@ export async function updatePaymentStatus(id, status) {
   const local = getLocalPayments().map(p => p.id === id ? { ...p, status } : p);
   localStorage.setItem(LOCAL_PAYMENTS_KEY, JSON.stringify(local));
 
-  // Sincronizar actualización de pago en Supabase
-  try {
-    const target = local.find(p => p.id === id);
-    if (target) {
-      const supaId = id.startsWith('pay-') ? id : `pay-${id}`;
-      await supabase.from('catalog').upsert({
-        id: supaId,
-        title: target.clientName || 'Pago',
-        category: 'payment_data',
-        location: target.method || '',
-        url: JSON.stringify(target)
-      });
-    }
-  } catch (e) {}
-
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
       const bc = new BroadcastChannel('payments_realtime_sync');
@@ -2717,11 +2327,6 @@ export async function updatePaymentStatus(id, status) {
 export async function deleteReview(id) {
   try {
     await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  } catch (e) {}
-
-  try {
-    await supabase.from('catalog').delete().eq('id', `rev-${id}`);
-    await supabase.from('catalog').delete().eq('id', id);
   } catch (e) {}
 
   try {
@@ -2755,23 +2360,9 @@ export async function getReviews() {
     console.warn('Consultando reseñas del servidor:', err);
   }
 
-  let cloudReviews = [];
-  try {
-    const { data: supaRev } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('category', 'review_data')
-      .order('created_at', { ascending: false });
-    if (Array.isArray(supaRev)) {
-      cloudReviews = supaRev.map(sr => {
-        try { return JSON.parse(sr.url); } catch(e) { return null; }
-      }).filter(Boolean);
-    }
-  } catch (e) {}
-
   const localReviews = getLocalReviews().filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
   const map = new Map();
-  [...localReviews, ...serverReviews, ...cloudReviews].forEach(r => {
+  [...localReviews, ...serverReviews].forEach(r => {
     if (r && r.id) map.set(r.id, r);
   });
   const combined = Array.from(map.values()).map(r => {
@@ -2782,7 +2373,7 @@ export async function getReviews() {
     delete clean.packageTitle;
     return clean;
   });
-  if (cloudReviews.length > 0) {
+  if (serverReviews.length > 0) {
     try {
       localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
     } catch (e) {}
@@ -2817,17 +2408,6 @@ export async function submitGalleryReview(token, reviewData) {
   };
 
   saveLocalReview(newReview);
-
-  // Sincronizar reseña en la nube (Supabase) para avisar al instante al PC y a la APK
-  try {
-    await supabase.from('catalog').upsert({
-      id: `rev-${newReview.id}`,
-      title: newReview.clientName || 'Reseña',
-      category: 'review_data',
-      location: `${newReview.rating} estrellas`,
-      url: JSON.stringify(newReview)
-    });
-  } catch (e) {}
 
   try {
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -2963,31 +2543,9 @@ export async function getAdminSessions() {
     console.warn('Consultando sesiones locales:', err);
   }
 
-  let cloudSessions = [];
-  try {
-    const { data: supaData } = await supabase
-      .from('catalog')
-      .select('*')
-      .eq('category', 'session_data')
-      .order('created_at', { ascending: false });
-    if (Array.isArray(supaData)) {
-      cloudSessions = supaData
-        .map(item => {
-          try {
-            return JSON.parse(item.url);
-          } catch (e) {
-            return null;
-          }
-        })
-        .filter(Boolean);
-    }
-  } catch (errSupa) {
-    console.warn('Error obteniendo sesiones de Supabase:', errSupa);
-  }
-
   const localSessions = getLocalSessions();
   const map = new Map();
-  [...localSessions, ...serverSessions, ...cloudSessions].forEach(s => {
+  [...localSessions, ...serverSessions].forEach(s => {
     if (s && s.token && s.id !== 'sess-demo' && s.token !== 'demo-cliente-2026') {
       const now = Date.now();
       const expiresTime = new Date(s.expiresAt).getTime();
@@ -3001,7 +2559,7 @@ export async function getAdminSessions() {
   });
 
   const combined = Array.from(map.values());
-  if (cloudSessions.length > 0) {
+  if (serverSessions.length > 0) {
     try {
       localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(combined));
     } catch (e) {}
@@ -3019,7 +2577,7 @@ export async function deleteAdminSession(id, token) {
   const cleanId = (sId || '').trim();
   const cleanToken = (sToken || '').trim();
 
-  // 1. Servidor Vercel / Express
+  // 1. Servidor Vercel / Express (MongoDB Atlas)
   try {
     if (cleanId) {
       await fetch(`${API_BASE}/admin/sessions/${encodeURIComponent(cleanId)}`, { method: 'DELETE' });
@@ -3031,69 +2589,7 @@ export async function deleteAdminSession(id, token) {
     console.warn('Error al eliminar sesión en servidor:', err);
   }
 
-  // 2. Supabase (Eliminación definitiva en la nube)
-  try {
-    const candidateIds = new Set();
-    if (cleanId) {
-      candidateIds.add(cleanId);
-      candidateIds.add(`sess-${cleanId}`);
-      candidateIds.add(cleanId.replace(/^sess-/, ''));
-      candidateIds.add(`sess-${cleanId.replace(/^sess-/, '')}`);
-    }
-    if (cleanToken) {
-      candidateIds.add(cleanToken);
-      candidateIds.add(`sess-${cleanToken}`);
-      candidateIds.add(cleanToken.replace(/^sess-/, ''));
-      candidateIds.add(`sess-${cleanToken.replace(/^sess-/, '')}`);
-    }
-
-    const idsArray = Array.from(candidateIds).filter(Boolean);
-    if (idsArray.length > 0) {
-      await supabase
-        .from('catalog')
-        .delete()
-        .eq('category', 'session_data')
-        .in('id', idsArray);
-    }
-
-    // Escanear por coincidencia interna en JSON para no dejar nada huérfano
-    const { data: supaRows } = await supabase
-      .from('catalog')
-      .select('id, url')
-      .eq('category', 'session_data');
-
-    if (Array.isArray(supaRows)) {
-      const rowIdsToDelete = [];
-      for (const row of supaRows) {
-        try {
-          const parsed = JSON.parse(row.url);
-          if (
-            (cleanId && (parsed.id === cleanId || parsed.token === cleanId)) ||
-            (cleanToken && (parsed.token === cleanToken || parsed.id === cleanToken))
-          ) {
-            rowIdsToDelete.push(row.id);
-          }
-        } catch (e) {
-          if (
-            (cleanId && row.url.includes(cleanId)) ||
-            (cleanToken && row.url.includes(cleanToken))
-          ) {
-            rowIdsToDelete.push(row.id);
-          }
-        }
-      }
-      if (rowIdsToDelete.length > 0) {
-        await supabase
-          .from('catalog')
-          .delete()
-          .in('id', rowIdsToDelete);
-      }
-    }
-  } catch (e) {
-    console.warn('Error al eliminar en Supabase:', e);
-  }
-
-  // 3. LocalStorage
+  // 2. LocalStorage
   const sessions = getLocalSessions().filter(s => 
     s.id !== cleanId && 
     s.token !== cleanId && 
@@ -3160,19 +2656,6 @@ export async function createAdminSession(data) {
 
   saveLocalSession(newSession);
 
-  // Sincronizar en la nube (Supabase) para que el cliente la abra desde cualquier dispositivo en el mundo
-  try {
-    await supabase.from('catalog').upsert({
-      id: `sess-${newSession.token}`,
-      title: newSession.clientName || 'Cliente',
-      category: 'session_data',
-      location: newSession.clientWhatsApp || '',
-      url: JSON.stringify(newSession)
-    });
-  } catch (errSupa) {
-    console.warn('Error al sincronizar sesión en Supabase:', errSupa);
-  }
-
   return {
     success: true,
     session: newSession,
@@ -3205,20 +2688,6 @@ export async function reopenAdminSession(id, additionalDays = 3) {
   });
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions));
 
-  // Sincronizar reapertura en la nube (Supabase)
-  try {
-    const sessionObj = sessions.find(s => s.id === id || s.token === id);
-    if (sessionObj) {
-      await supabase.from('catalog').upsert({
-        id: `sess-${sessionObj.token}`,
-        title: sessionObj.clientName || 'Cliente',
-        category: 'session_data',
-        location: sessionObj.clientWhatsApp || '',
-        url: JSON.stringify(sessionObj)
-      });
-    }
-  } catch (e) {}
-
   return { success: true };
 }
 
@@ -3243,7 +2712,7 @@ export async function deliverSession(id, deliveryData) {
   });
   localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(updated));
 
-  // 2. Servidor / Vercel
+  // 2. Servidor / Vercel (MongoDB Atlas)
   try {
     const res = await fetch(`${API_BASE}/admin/sessions/${id}/deliver`, {
       method: 'POST',
@@ -3257,20 +2726,6 @@ export async function deliverSession(id, deliveryData) {
   } catch (err) {
     console.warn('Fallback local para entrega de fotos:', err);
   }
-
-  // 3. Supabase en tiempo real (tabla catalog, category: 'session_data')
-  try {
-    const sessionObj = updated.find(s => s.id === id || s.token === id);
-    if (sessionObj) {
-      await supabase.from('catalog').upsert({
-        id: `sess-${sessionObj.token}`,
-        title: sessionObj.clientName || 'Cliente',
-        category: 'session_data',
-        location: sessionObj.clientWhatsApp || '',
-        url: JSON.stringify(sessionObj)
-      });
-    }
-  } catch (e) {}
 
   return {
     success: true,
@@ -3289,17 +2744,6 @@ export async function updateAdminSettings(settings, packages) {
   } catch (err) {
     console.warn(err);
   }
-
-  // Sincronizar ajustes y paquetes en Supabase para sincronización en tiempo real PC <-> APK
-  try {
-    await supabase.from('catalog').upsert({
-      id: 'system_settings_packages',
-      title: 'Settings & Packages',
-      category: 'settings_data',
-      location: 'system',
-      url: JSON.stringify({ settings, packages })
-    });
-  } catch (e) {}
 
   return { success: true, settings, packages };
 }
@@ -3357,24 +2801,7 @@ export async function addCatalogPhoto(photoData) {
   saveLocalCatalogItem(newItem);
   broadcastCatalogUpdate();
 
-  // 2. Intentar guardar en Supabase en la nube (si el proyecto tiene cuota disponible)
-  try {
-    const { data, error } = await supabase.from('catalog').upsert({
-      id: newItem.id,
-      title: newItem.title,
-      category: newItem.category,
-      location: newItem.location,
-      url: cleanUrl
-    }).select();
-    if (!error && data && data.length > 0) {
-      await idbSaveCatalogItem(data[0]).catch(() => {});
-      saveLocalCatalogItem(data[0]);
-    }
-  } catch (err) {
-    console.warn('Supabase no disponible o con límite de cuota (guardado en IndexedDB):', err);
-  }
-
-  // 3. Fallback a servidor / Vercel con el ID exacto del cliente
+  // 2. Guardar en servidor / MongoDB Atlas con el ID exacto del cliente
   try {
     const res = await fetch(`${API_BASE}/admin/catalog`, {
       method: 'POST',
@@ -3412,16 +2839,10 @@ export async function deleteCatalogPhoto(id, title = null) {
 
   const normTitle = title ? title.trim().toLowerCase() : null;
 
-  // 1. Borrar en Supabase en la nube por ID único
-  try {
-    await supabase.from('catalog').delete().eq('id', id);
-  } catch (err) {
-    console.warn('Error eliminando de Supabase:', err);
-  }
-
-  // 2. Borrar en almacenamiento local (IndexedDB y localStorage) por ID único
+  // 1. Borrar en almacenamiento local (IndexedDB y localStorage) por ID único
   removeLocalCatalogItem(id);
 
+  // 2. Borrar en servidor / MongoDB Atlas
   try {
     const res = await fetch(`${API_BASE}/admin/catalog/${id}`, {
       method: 'DELETE',
@@ -3438,7 +2859,7 @@ export async function deleteCatalogPhoto(id, title = null) {
   return { success: true };
 }
 
-// Sincroniza fotos que están guardadas en IndexedDB/localStorage de este dispositivo hacia Supabase Cloud
+// Sincroniza fotos que están guardadas en IndexedDB/localStorage de este dispositivo hacia MongoDB Atlas Cloud
 export async function syncLocalCatalogToCloud() {
   try {
     const idbItems = await idbGetCatalog().catch(() => []);
@@ -3465,45 +2886,52 @@ export async function syncLocalCatalogToCloud() {
       return { synced: 0, total: 0, pending: 0, alreadyInSync: true };
     }
 
-    // Consultar IDs existentes en Supabase
-    const { data: supaItems, error: fetchErr } = await supabase
-      .from('catalog')
-      .select('id')
-      .not('id', 'like', 'system_%');
-
-    if (fetchErr) {
-      console.warn('[SyncCloud] Error consultando Supabase:', fetchErr);
+    // Consultar IDs existentes en MongoDB Atlas via API
+    let cloudItems = [];
+    try {
+      const res = await fetch(`${API_BASE}/catalog`);
+      if (res.ok) {
+        const data = await res.json();
+        cloudItems = Array.isArray(data) ? data : [];
+      } else {
+        return { error: `HTTP ${res.status}` };
+      }
+    } catch (fetchErr) {
       return { error: fetchErr.message };
     }
 
-    const supaIds = new Set(Array.isArray(supaItems) ? supaItems.map(s => s.id) : []);
-
-    // Detectar fotos locales que faltan en Supabase Cloud
-    const missingInCloud = combinedLocal.filter(item => !supaIds.has(item.id));
+    const cloudIds = new Set(cloudItems.map(s => s?.id).filter(Boolean));
+    const missingInCloud = combinedLocal.filter(item => !cloudIds.has(item.id));
 
     if (missingInCloud.length === 0) {
       return { synced: 0, total: combinedLocal.length, pending: 0, alreadyInSync: true };
     }
 
-    console.log(`[SyncCloud] Subiendo ${missingInCloud.length} fotos locales a Supabase Cloud...`);
-
     let syncedCount = 0;
-    for (const photo of missingInCloud) {
-      try {
-        const { error: upsertErr } = await supabase.from('catalog').upsert({
-          id: photo.id,
-          title: photo.title || 'Foto de Catálogo',
-          category: photo.category || 'Retratos',
-          location: photo.location || 'Colombia',
-          url: photo.url
-        });
-        if (!upsertErr) {
-          syncedCount++;
-        } else {
-          console.warn('[SyncCloud] Error al subir foto a Supabase:', photo.id, upsertErr);
+    const token = getAdminSessionToken();
+    if (token) {
+      for (const photo of missingInCloud) {
+        try {
+          const res = await fetch(`${API_BASE}/admin/catalog`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              id: photo.id,
+              title: photo.title || 'Foto de Catálogo',
+              category: photo.category || 'Retratos',
+              location: photo.location || 'Colombia',
+              url: photo.url
+            })
+          });
+          if (res.ok) {
+            syncedCount++;
+          }
+        } catch (err) {
+          console.warn('[SyncCloud] Excepción al subir foto:', photo.id, err);
         }
-      } catch (err) {
-        console.warn('[SyncCloud] Excepción al subir foto:', photo.id, err);
       }
     }
 
@@ -3523,7 +2951,7 @@ export async function syncLocalCatalogToCloud() {
   }
 }
 
-// Forzar subida y resincronización de todas las fotos a Supabase Cloud
+// Forzar subida y resincronización de todas las fotos a MongoDB Atlas Cloud
 export async function forceSyncAllCatalogToCloud(itemsToSync = null) {
   try {
     let items = itemsToSync;
@@ -3548,16 +2976,24 @@ export async function forceSyncAllCatalogToCloud(itemsToSync = null) {
     }
 
     let count = 0;
+    const token = getAdminSessionToken();
     for (const photo of cleanList) {
       try {
-        const { error } = await supabase.from('catalog').upsert({
-          id: photo.id,
-          title: photo.title || 'Foto de Catálogo',
-          category: photo.category || 'Retratos',
-          location: photo.location || 'Colombia',
-          url: photo.url
+        const res = await fetch(`${API_BASE}/admin/catalog`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            id: photo.id,
+            title: photo.title || 'Foto de Catálogo',
+            category: photo.category || 'Retratos',
+            location: photo.location || 'Colombia',
+            url: photo.url
+          })
         });
-        if (!error) count++;
+        if (res.ok) count++;
       } catch (e) {}
     }
 
@@ -3571,7 +3007,7 @@ export async function forceSyncAllCatalogToCloud(itemsToSync = null) {
   }
 }
 
-// Verifica el estado de sincronización local vs nube
+// Verifica el estado de sincronización local vs nube (MongoDB Atlas)
 export async function checkCatalogSyncStatus() {
   try {
     const idbItems = await idbGetCatalog().catch(() => []);
@@ -3589,17 +3025,21 @@ export async function checkCatalogSyncStatus() {
       combinedLocal.push(item);
     }
 
-    const { data: supaItems } = await supabase
-      .from('catalog')
-      .select('id')
-      .not('id', 'like', 'system_%');
+    let cloudItems = [];
+    try {
+      const res = await fetch(`${API_BASE}/catalog`);
+      if (res.ok) {
+        const data = await res.json();
+        cloudItems = Array.isArray(data) ? data : [];
+      }
+    } catch (e) {}
 
-    const supaIds = new Set(Array.isArray(supaItems) ? supaItems.map(s => s.id) : []);
-    const missing = combinedLocal.filter(item => !supaIds.has(item.id));
+    const cloudIds = new Set(cloudItems.map(s => s?.id).filter(Boolean));
+    const missing = combinedLocal.filter(item => !cloudIds.has(item.id));
 
     return {
       localTotal: combinedLocal.length,
-      cloudTotal: supaIds.size,
+      cloudTotal: cloudIds.size,
       missingInCloud: missing.length,
       missingItems: missing
     };

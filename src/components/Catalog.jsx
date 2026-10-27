@@ -5,12 +5,17 @@ import { sortCatalogDescending } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 
 const HERO_WORDS = ['retratos', 'parejas', 'bodas', 'quinceañeras', 'eventos', 'campo y playa'];
+const CATALOG_PAGE_SIZE = 12;
 
 export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin, packages = [] }) {
   const [selectedCategory, setSelectedCategory] = useState('Todas');
+  const [visibleCount, setVisibleCount] = useState(CATALOG_PAGE_SIZE);
   const [likes, setLikes] = useState({});
   const [previewPhoto, setPreviewPhoto] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const previewModalRef = useRef(null);
+  const previewCloseBtnRef = useRef(null);
+  const previousFocusRef = useRef(null);
 
   // --- Animaciones e interacción del hero ---
   const heroRef = useRef(null);
@@ -66,15 +71,56 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     };
   }, [previewPhoto]);
 
-  // Cerrar con tecla Escape
+  // Accesibilidad del modal de vista previa: bloqueo de scroll, foco inicial, focus trap y tecla Escape
   useEffect(() => {
     if (!previewPhoto) return;
+
+    previousFocusRef.current = document.activeElement;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusTimer = setTimeout(() => {
+      previewCloseBtnRef.current?.focus();
+    }, 20);
+
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape') setPreviewPhoto(null);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setPreviewPhoto(null);
+        return;
+      }
+      if (e.key === 'Tab' && previewModalRef.current) {
+        const focusable = previewModalRef.current.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(focusTimer);
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+        try {
+          previousFocusRef.current.focus();
+        } catch (err) {}
+      }
+    };
   }, [previewPhoto]);
+
+  useEffect(() => {
+    setVisibleCount(CATALOG_PAGE_SIZE);
+  }, [selectedCategory]);
 
   const categories = ['Todas', 'Retratos', 'Playas & Atardeceres', 'Campo & Naturaleza', 'Parejas & Bodas', 'Quinceañeras & Eventos'];
 
@@ -104,6 +150,9 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     ? sortedCatalog
     : sortedCatalog.filter(photo => photo && photo.category === selectedCategory);
 
+  const visiblePhotos = filteredPhotos.slice(0, visibleCount);
+  const remainingPhotosCount = Math.max(0, filteredPhotos.length - visiblePhotos.length);
+
   const toggleLike = (id, e) => {
     e.stopPropagation();
     setLikes(prev => ({
@@ -112,7 +161,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
     }));
   };
 
-  // Compartir portafolio oficial por WhatsApp (soporte para APK nativa Android y web)
+  // Compartir portafolio oficial por WhatsApp / Portapapeles (soporte para APK nativa Android y web)
   const handleShareApp = async () => {
     const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
     const shareTitle = 'Sebastian G • Fotografía & Edición Profesional';
@@ -122,6 +171,14 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
       `✨ Mira el portafolio oficial completo, fotos en alta resolución y paquetes aquí:\n` +
       `👉 ${shareUrl}\n\n` +
       `📞 WhatsApp de reservas: +57 324 472 5167`;
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2500);
+      }
+    } catch (e) {}
 
     // 1. Enlace nativo dentro de la APK de Android
     if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
@@ -274,10 +331,12 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
           </div>
 
           {/* Filtros de Categoría */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar scrollbar-none">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar scrollbar-none" role="group" aria-label="Filtrar catálogo por categoría">
             {categories.map(cat => (
               <button
                 key={cat}
+                type="button"
+                aria-pressed={selectedCategory === cat}
                 onClick={() => setSelectedCategory(cat)}
                 className={`text-xs font-semibold px-4 py-2.5 rounded-full whitespace-nowrap transition-all ${
                   selectedCategory === cat
@@ -301,60 +360,86 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5 lg:gap-6">
-            {filteredPhotos.map((photo) => (
-              <div
-                key={photo.id}
-                onClick={() => setPreviewPhoto(photo)}
-                className="group relative rounded-xl sm:rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-md hover:border-amber-500/50 hover:shadow-xl transition-all duration-300 cursor-pointer"
-              >
-                {/* Contenedor de Imagen con Protección Canvas Anti-Descarga y Anti-Inspección */}
-                <div className="relative aspect-[3/4] sm:aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
-                  <ProtectedCanvasImage
-                    src={photo.url}
-                    alt={photo.title}
-                    objectFit="cover"
-                    className="group-hover:scale-105 transition-transform duration-500"
-                  />
-                </div>
-
-                {/* Degradado oscuro inferior */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/35 to-transparent opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none" />
-
-                {/* Badge de Categoría */}
-                <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-20">
-                  <span className="text-[9px] sm:text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md bg-stone-950/80 backdrop-blur-md text-amber-300 border border-amber-500/20">
-                    {photo.category}
-                  </span>
-                </div>
-
-                {/* Botón de Like */}
-                <button
-                  type="button"
-                  onClick={(e) => toggleLike(photo.id, e)}
-                  className="absolute top-2 right-2 sm:top-3 sm:right-3 p-1.5 sm:p-2.5 rounded-full bg-stone-950/60 backdrop-blur-md border border-white/10 text-stone-300 hover:text-red-400 hover:scale-110 active:scale-95 transition-all z-20"
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5 lg:gap-6">
+              {visiblePhotos.map((photo) => (
+                <div
+                  key={photo.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Ver fotografía ${photo.title} (${photo.category})`}
+                  onClick={() => setPreviewPhoto(photo)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setPreviewPhoto(photo);
+                    }
+                  }}
+                  className="group relative rounded-xl sm:rounded-2xl overflow-hidden bg-stone-900 border border-stone-800/80 shadow-md hover:border-amber-500/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 hover:shadow-xl transition-all duration-300 cursor-pointer"
                 >
-                  <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${likes[photo.id] ? 'fill-red-500 text-red-500' : ''}`} />
-                </button>
+                  {/* Contenedor de Imagen con carga perezosa nativa */}
+                  <div className="relative aspect-[3/4] sm:aspect-[4/5] w-full overflow-hidden bg-stone-950 select-none">
+                    <ProtectedCanvasImage
+                      src={photo.url}
+                      alt={photo.title}
+                      objectFit="cover"
+                      className="group-hover:scale-105 transition-transform duration-500"
+                    />
+                  </div>
 
-                {/* Información de la Foto (Optimizada para pantalla móvil) */}
-                <div className="absolute bottom-0 inset-x-0 p-2.5 sm:p-4 z-20 pointer-events-none">
-                  <h3 className="text-xs sm:text-base font-bold text-white font-serif line-clamp-1 group-hover:text-amber-300 transition-colors">
-                    {photo.title}
-                  </h3>
-                  <div className="flex items-center justify-between text-[10px] sm:text-xs text-stone-300 mt-0.5 sm:mt-1">
-                    <span className="flex items-center gap-1 text-stone-400 truncate max-w-[70%]">
-                      <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                      <span className="truncate">{photo.location}</span>
-                    </span>
-                    <span className="text-amber-400 font-semibold group-hover:underline text-[10px] sm:text-xs shrink-0">
-                      Ver foto
+                  {/* Degradado oscuro inferior */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/35 to-transparent opacity-80 group-hover:opacity-95 transition-opacity pointer-events-none" />
+
+                  {/* Badge de Categoría */}
+                  <div className="absolute top-2 left-2 sm:top-3 sm:left-3 z-20">
+                    <span className="text-[9px] sm:text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md bg-stone-950/80 backdrop-blur-md text-amber-300 border border-amber-500/20">
+                      {photo.category}
                     </span>
                   </div>
+
+                  {/* Botón de Like */}
+                  <button
+                    type="button"
+                    aria-label={likes[photo.id] ? `Quitar me gusta a ${photo.title}` : `Me gusta ${photo.title}`}
+                    aria-pressed={Boolean(likes[photo.id])}
+                    onClick={(e) => toggleLike(photo.id, e)}
+                    className="absolute top-2 right-2 sm:top-3 sm:right-3 p-1.5 sm:p-2.5 rounded-full bg-stone-950/60 backdrop-blur-md border border-white/10 text-stone-300 hover:text-red-400 hover:scale-110 active:scale-95 transition-all z-20"
+                  >
+                    <Heart className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${likes[photo.id] ? 'fill-red-500 text-red-500' : ''}`} />
+                  </button>
+
+                  {/* Información de la Foto (Optimizada para pantalla móvil) */}
+                  <div className="absolute bottom-0 inset-x-0 p-2.5 sm:p-4 z-20 pointer-events-none">
+                    <h3 className="text-xs sm:text-base font-bold text-white font-serif line-clamp-1 group-hover:text-amber-300 transition-colors">
+                      {photo.title}
+                    </h3>
+                    <div className="flex items-center justify-between text-[10px] sm:text-xs text-stone-300 mt-0.5 sm:mt-1">
+                      <span className="flex items-center gap-1 text-stone-400 truncate max-w-[70%]">
+                        <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span className="truncate">{photo.location}</span>
+                      </span>
+                      <span className="text-amber-400 font-semibold group-hover:underline text-[10px] sm:text-xs shrink-0">
+                        Ver foto
+                      </span>
+                    </div>
+                  </div>
                 </div>
+              ))}
+            </div>
+
+            {remainingPhotosCount > 0 && (
+              <div className="mt-10 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((prev) => prev + CATALOG_PAGE_SIZE)}
+                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-2xl bg-stone-900 hover:bg-stone-800 border border-amber-500/40 hover:border-amber-400 text-amber-300 hover:text-amber-200 font-bold text-xs sm:text-sm shadow-lg transition-all active:scale-95 cursor-pointer"
+                >
+                  <Camera className="w-4 h-4 text-amber-400" />
+                  <span>Ver más fotografías ({remainingPhotosCount} restantes)</span>
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
 
         {/* Banner informativo de cierre */}
@@ -371,9 +456,13 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
         </div>
       </section>
 
-      {/* MODAL DE VISTA PREVIA INDIVIDUAL DE FOTO (PROTEGIDO Y EN ALTA RESOLUCIÓN) */}
+      {/* MODAL DE VISTA PREVIA INDIVIDUAL DE FOTO (ACCESIBLE Y EN ALTA RESOLUCIÓN) */}
       {previewPhoto && (
-        <div 
+        <div
+          ref={previewModalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="catalog-preview-title"
           onClick={() => setPreviewPhoto(null)}
           className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-xl flex flex-col justify-between p-3 sm:p-5 select-none animate-fadeIn cursor-pointer"
         >
@@ -398,7 +487,9 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
 
             <div>
               <button
+                ref={previewCloseBtnRef}
                 type="button"
+                aria-label="Cerrar vista previa"
                 onClick={() => setPreviewPhoto(null)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-700/80 text-stone-200 hover:text-white text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-lg"
                 title="Cerrar vista (Escape o toca afuera)"
@@ -422,13 +513,6 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
                 alt={previewPhoto.title}
                 className="max-h-[75vh] sm:max-h-[80vh] max-w-[95vw] sm:max-w-[88vw] w-auto h-auto object-contain rounded-xl sm:rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] border border-stone-800/80 select-none pointer-events-none"
                 draggable={false}
-                onContextMenu={(e) => e.preventDefault()}
-              />
-
-              {/* Escudo protector invisible anti-descarga */}
-              <div 
-                className="absolute inset-0 z-10 bg-transparent select-none"
-                onContextMenu={(e) => e.preventDefault()}
               />
 
               {/* Marca de agua central transparente */}
@@ -448,7 +532,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
             className="w-full max-w-7xl mx-auto pt-3 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs flex-shrink-0 cursor-default"
           >
             <div className="text-center sm:text-left min-w-0">
-              <h3 className="text-sm sm:text-base font-serif font-bold text-white truncate">
+              <h3 id="catalog-preview-title" className="text-sm sm:text-base font-serif font-bold text-white truncate">
                 {previewPhoto.title}
               </h3>
               <p className="text-[11px] text-stone-400 flex items-center justify-center sm:justify-start gap-1 mt-0.5 truncate">

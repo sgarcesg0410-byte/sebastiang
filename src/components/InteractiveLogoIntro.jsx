@@ -2,12 +2,40 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Sparkles, ArrowRight, Camera, X } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
+export const INTRO_SEEN_STORAGE_KEY = 'sebastian_g_intro_seen_v1';
+
 export default function InteractiveLogoIntro({ onComplete }) {
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
   const [isInteracting, setIsInteracting] = useState(false);
   const [particlesCount, setParticlesCount] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
   const containerRef = useRef(null);
+
+  const markIntroSeen = () => {
+    try {
+      localStorage.setItem(INTRO_SEEN_STORAGE_KEY, '1');
+      sessionStorage.setItem(INTRO_SEEN_STORAGE_KEY, '1');
+    } catch (e) {}
+  };
+
+  const handleEnter = () => {
+    markIntroSeen();
+    setFadeOut(true);
+    setTimeout(() => {
+      onComplete();
+    }, 350);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault();
+        handleEnter();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // Manejador de movimiento 3D (para ratón y dedos táctiles)
   const handlePointerMove = (e) => {
@@ -56,16 +84,12 @@ export default function InteractiveLogoIntro({ onComplete }) {
     }
   };
 
-  const handleEnter = () => {
-    setFadeOut(true);
-    setTimeout(() => {
-      onComplete();
-    }, 450);
-  };
-
   return (
     <div
       ref={containerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="intro-brand-title"
       onMouseMove={handlePointerMove}
       onTouchMove={handlePointerMove}
       onMouseLeave={handlePointerLeave}
@@ -132,7 +156,7 @@ export default function InteractiveLogoIntro({ onComplete }) {
               className="h-32 w-32 sm:h-40 sm:w-40 md:h-44 md:w-44 rounded-3xl object-contain shadow-2xl shadow-pink-500/40 transform transition-transform duration-300 group-hover:scale-105 active:scale-95 border border-white/20"
             />
 
-            <span className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide mt-4">
+            <span id="intro-brand-title" className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide mt-4">
               Sebastian G
             </span>
             <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-pink-400 to-purple-400 mt-1">

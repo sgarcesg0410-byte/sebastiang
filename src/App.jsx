@@ -23,95 +23,107 @@ function ModuleLoader({ message = "Cargando módulo..." }) {
 }
 import AboutSection from './components/AboutSection';
 import HowItWorksSection from './components/HowItWorksSection';
-import InteractiveLogoIntro from './components/InteractiveLogoIntro';
+import InteractiveLogoIntro, { INTRO_SEEN_STORAGE_KEY } from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import MobileStickyBookingBar from './components/MobileStickyBookingBar';
 import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds, syncLocalCatalogToCloud, sortCatalogDescending } from './services/api';
-import { supabase } from './services/supabase';
 import { trackPageVisit } from './services/analytics';
 import { initOneSignal } from './services/onesignal';
 import { initErrorCapture } from './services/systemAuditor';
 import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
+/**
+ * Resuelve la vista y parámetros de ruta a partir de un objeto tipo window.location.
+ * Centraliza toda la lógica de ruteo para evitar duplicación entre estado inicial,
+ * useEffect y el evento popstate.
+ */
+export function resolveRouteFromLocation(loc) {
+  if (!loc) {
+    return { view: 'home', receiptId: null, galleryToken: null };
+  }
+  const path = String(loc.pathname || '/');
+  const hash = String(loc.hash || '');
+  const urlParams = new URLSearchParams(String(loc.search || ''));
+
+  let receiptId = null;
+  if (hash.startsWith('#recibo=')) {
+    receiptId = hash.replace('#recibo=', '').split('&')[0] || null;
+  } else if (urlParams.get('recibo')) {
+    receiptId = urlParams.get('recibo');
+  }
+  if (receiptId) {
+    return { view: 'receipt', receiptId, galleryToken: null };
+  }
+
+  if (path.startsWith('/galeria/')) {
+    const tokenFromUrl = path.replace('/galeria/', '').trim();
+    return {
+      view: 'gallery',
+      receiptId: null,
+      galleryToken: tokenFromUrl || 'demo-cliente-2026',
+    };
+  }
+
+  if (
+    path === '/calificar' || path === '/calificar/' ||
+    path === '/opiniones' || path === '/opiniones/' ||
+    path === '/review' || hash === '#calificar' || urlParams.get('calificar')
+  ) {
+    return { view: 'review', receiptId: null, galleryToken: null };
+  }
+
+  if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/' || hash === '#admin') {
+    return { view: 'admin', receiptId: null, galleryToken: null };
+  }
+
+  if (
+    path === '/tarifas' || path === '/tarifas/' ||
+    path === '/precios' || path === '/precios/' ||
+    path === '/paquetes' || path === '/paquetes/' ||
+    path === '/propuesta' || path === '/propuesta/' || path.startsWith('/propuesta/') ||
+    path === '/paquetes-cliente' || path === '/paquetes-cliente/' ||
+    hash === '#tarifas' || hash === '#precios' || hash === '#paquetes' || hash === '#propuesta' ||
+    urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta')
+  ) {
+    return { view: 'packages', receiptId: null, galleryToken: null };
+  }
+
+  return { view: 'home', receiptId: null, galleryToken: null };
+}
+
 export default function App() {
-  const [activeReceiptId, setActiveReceiptId] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash || '';
-      const urlParams = new URLSearchParams(window.location.search);
-      if (hash.startsWith('#recibo=')) {
-        return hash.replace('#recibo=', '').split('&')[0];
-      }
-      if (urlParams.get('recibo')) {
-        return urlParams.get('recibo');
-      }
-    }
-    return null;
-  });
+  const initialRoute = typeof window !== 'undefined'
+    ? resolveRouteFromLocation(window.location)
+    : { view: 'home', receiptId: null, galleryToken: null };
 
-  const [currentView, setCurrentView] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      const hash = window.location.hash || '';
-      const urlParams = new URLSearchParams(window.location.search);
-      if (hash.startsWith('#recibo=') || urlParams.get('recibo')) {
-        return 'receipt';
-      }
-      if (path.startsWith('/galeria/')) {
-        return 'gallery';
-      }
-      if (path === '/calificar' || path === '/calificar/' || path === '/opiniones' || path === '/opiniones/' || path === '/review' || hash === '#calificar' || urlParams.get('calificar')) {
-        return 'review';
-      }
-      if (urlParams.get('mode') === 'admin' || path === '/admin' || path === '/admin/' || hash === '#admin') {
-        return 'admin';
-      }
-      if (
-        path === '/tarifas' || path === '/tarifas/' ||
-        path === '/precios' || path === '/precios/' ||
-        path === '/paquetes' || path === '/paquetes/' ||
-        path === '/propuesta' || path === '/propuesta/' || path.startsWith('/propuesta/') ||
-        path === '/paquetes-cliente' || path === '/paquetes-cliente/' ||
-        hash === '#tarifas' || hash === '#precios' || hash === '#paquetes' || hash === '#propuesta' ||
-        urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta')
-      ) {
-        return 'packages';
-      }
-    }
-    return 'home';
-  }); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt' | 'review'
-
-  const [activeGalleryToken, setActiveGalleryToken] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      if (path.startsWith('/galeria/')) {
-        const tokenFromUrl = path.replace('/galeria/', '').trim();
-        if (tokenFromUrl) return tokenFromUrl;
-      }
-    }
-    return 'demo-cliente-2026';
-  });
+  const [activeReceiptId, setActiveReceiptId] = useState(initialRoute.receiptId);
+  const [currentView, setCurrentView] = useState(initialRoute.view); // 'home' | 'packages' | 'gallery' | 'admin' | 'receipt' | 'review'
+  const [activeGalleryToken, setActiveGalleryToken] = useState(initialRoute.galleryToken || 'demo-cliente-2026');
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [selectedPackageForBooking, setSelectedPackageForBooking] = useState(null);
   const [selectedComboForBooking, setSelectedComboForBooking] = useState(null);
   const [selectedPhotoForBooking, setSelectedPhotoForBooking] = useState(null);
   const [selectedDateForBooking, setSelectedDateForBooking] = useState('');
 
-  // Bienvenida e intro con logo 3D interactivo (activo para visitantes web, apagado en app de admin y tarifas/paquetes directos)
+  // Bienvenida e intro con logo 3D interactivo: no bloquea visitas recurrentes, rutas directas ni usuarios con movimiento reducido
   const [showIntro, setShowIntro] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname;
-      const hash = window.location.hash || '';
-      const urlParams = new URLSearchParams(window.location.search);
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-      const isPricingRoute = ['/tarifas', '/tarifas/', '/precios', '/precios/', '/paquetes', '/paquetes/'].includes(path) ||
-        path.startsWith('/propuesta') || path.startsWith('/paquetes-cliente') ||
-        hash.includes('tarifas') || hash.includes('precios') || hash.includes('paquetes') || hash.includes('propuesta') ||
-        urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta');
+    if (typeof window === 'undefined') return false;
+    try {
+      if (
+        localStorage.getItem(INTRO_SEEN_STORAGE_KEY) === '1' ||
+        sessionStorage.getItem(INTRO_SEEN_STORAGE_KEY) === '1'
+      ) {
+        return false;
+      }
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        return false;
+      }
+    } catch (e) {}
 
-      if (path.startsWith('/galeria/')) return false;
-      if (path.startsWith('/calificar') || path.startsWith('/opiniones') || urlParams.get('calificar')) return false;
-      if (isPricingRoute || isStandalone || urlParams.get('mode') === 'admin') return false;
+    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    if (isStandalone || initialRoute.view !== 'home') {
+      return false;
     }
     return true;
   });
@@ -182,66 +194,24 @@ export default function App() {
     // Inicializar capturador de errores y caídas del software
     initErrorCapture();
 
-    // Inicializar OneSignal para Push en segundo plano (Android APK / PWA)
-    initOneSignal();
+    // Inicializar OneSignal solo en modo administrativo o PWA instalada (bajo demanda)
+    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    if (initialRoute.view === 'admin' || isStandalone) {
+      initOneSignal();
+    }
 
     // Registrar visita en analítica en tiempo real
     trackPageVisit();
 
-    // Detectar si la URL contiene una ruta de galería tipo /galeria/token o privada /admin
-    const path = window.location.pathname;
-    const urlParams = new URLSearchParams(window.location.search);
-    if (path.startsWith('/galeria/')) {
-      const urlToken = path.replace('/galeria/', '').trim();
-      if (urlToken) {
-        setActiveGalleryToken(urlToken);
-        setCurrentView('gallery');
-      }
-    } else if (path === '/calificar' || path === '/calificar/' || path === '/opiniones' || path === '/opiniones/' || path === '/review' || window.location.hash === '#calificar' || urlParams.get('calificar')) {
-      setCurrentView('review');
-    } else if (path === '/admin' || path === '/admin/' || urlParams.get('mode') === 'admin') {
-      setCurrentView('admin');
-    } else if (
-      path === '/tarifas' || path === '/tarifas/' ||
-      path === '/precios' || path === '/precios/' ||
-      path === '/paquetes' || path === '/paquetes/' ||
-      path === '/propuesta' || path === '/propuesta/' || path.startsWith('/propuesta/') ||
-      path === '/paquetes-cliente' || path === '/paquetes-cliente/' ||
-      window.location.hash === '#tarifas' || window.location.hash === '#precios' || window.location.hash === '#paquetes' || window.location.hash === '#propuesta' ||
-      urlParams.get('tarifas') || urlParams.get('precios') || urlParams.get('paquetes') || urlParams.get('propuesta')
-    ) {
-      setCurrentView('packages');
-    }
-
-    const handlePopState = () => {
-      const p = window.location.pathname;
-      const params = new URLSearchParams(window.location.search);
-      const h = window.location.hash || '';
-      if (p.startsWith('/galeria/')) {
-        const urlToken = p.replace('/galeria/', '').trim();
-        if (urlToken) {
-          setActiveGalleryToken(urlToken);
-          setCurrentView('gallery');
-        }
-      } else if (p === '/calificar' || p === '/calificar/' || p === '/opiniones' || p === '/opiniones/' || p === '/review' || h === '#calificar' || params.get('calificar')) {
-        setCurrentView('review');
-      } else if (p === '/admin' || p === '/admin/' || params.get('mode') === 'admin') {
-        setCurrentView('admin');
-      } else if (
-        p === '/tarifas' || p === '/tarifas/' ||
-        p === '/precios' || p === '/precios/' ||
-        p === '/paquetes' || p === '/paquetes/' ||
-        p === '/propuesta' || p === '/propuesta/' || p.startsWith('/propuesta/') ||
-        p === '/paquetes-cliente' || p === '/paquetes-cliente/' ||
-        h === '#tarifas' || h === '#precios' || h === '#paquetes' || h === '#propuesta' ||
-        params.get('tarifas') || params.get('precios') || params.get('paquetes') || params.get('propuesta')
-      ) {
-        setCurrentView('packages');
-      } else {
-        setCurrentView('home');
-      }
+    const applyLocationRoute = () => {
+      const resolved = resolveRouteFromLocation(window.location);
+      if (resolved.receiptId) setActiveReceiptId(resolved.receiptId);
+      if (resolved.galleryToken) setActiveGalleryToken(resolved.galleryToken);
+      setCurrentView(resolved.view);
     };
-    window.addEventListener('popstate', handlePopState);
+
+    applyLocationRoute();
+    window.addEventListener('popstate', applyLocationRoute);
 
     loadInitialData();
 
@@ -258,7 +228,7 @@ export default function App() {
       }, 500);
     };
 
-    // 1. Sincronización instantánea simultánea en 0ms entre pestañas / ventanas (0 costo de Supabase)
+    // 1. Sincronización instantánea simultánea en 0ms entre pestañas / ventanas
     let bc;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -267,17 +237,6 @@ export default function App() {
           triggerDebouncedCatalog();
         };
       }
-    } catch (e) {}
-
-    // 2. Supabase Realtime para que cualquier cliente en otro celular o PC reciba fotos publicadas al instante
-    let supaCatalogChannel;
-    try {
-      supaCatalogChannel = supabase
-        .channel('app_catalog_realtime_sync')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-          triggerDebouncedCatalog();
-        })
-        .subscribe();
     } catch (e) {}
 
     const handleStorageSync = (e) => {
@@ -290,35 +249,8 @@ export default function App() {
     return () => {
       if (syncDebounce) clearTimeout(syncDebounce);
       if (bc) bc.close();
-      if (supaCatalogChannel) supabase.removeChannel(supaCatalogChannel);
       window.removeEventListener('storage', handleStorageSync);
-      window.removeEventListener('popstate', handlePopState);
-    };
-  }, []);
-
-  useEffect(() => {
-    // Bloqueo global de inspección y clic derecho en toda la aplicación (Admin, Web y Galería)
-    const blockInspect = (e) => {
-      if (
-        e.key === 'F12' ||
-        ((e.ctrlKey || e.metaKey) && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) ||
-        ((e.ctrlKey || e.metaKey) && ['u', 'U', 's', 'S'].includes(e.key))
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    };
-    const blockContextMenu = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    window.addEventListener('keydown', blockInspect, true);
-    window.addEventListener('contextmenu', blockContextMenu, true);
-    return () => {
-      window.removeEventListener('keydown', blockInspect, true);
-      window.removeEventListener('contextmenu', blockContextMenu, true);
+      window.removeEventListener('popstate', applyLocationRoute);
     };
   }, []);
 
@@ -838,8 +770,9 @@ export default function App() {
 
             {/* 3. SUB-FOOTER INFERIOR: COPYRIGHT & ACCESO ADMINISTRATIVO DISCRETO */}
             <div className="pt-6 border-t border-stone-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-stone-500">
-              <div className="text-center sm:text-left">
-                <span>© {new Date().getFullYear()} {settings.photographerName || 'Sebastian G'}. Todos los derechos reservados. Colombia • Cobertura Nacional y Destinos.</span>
+              <div className="text-center sm:text-left space-y-1">
+                <span className="block">© {new Date().getFullYear()} {settings.photographerName || 'Sebastian G'}. Todos los derechos reservados. Colombia • Cobertura Nacional y Destinos.</span>
+                <span className="block text-[11px] text-stone-600">Protección de Datos Personales (Ley 1581 de 2012 • Habeas Data Colombia) • Galerías privadas cifradas y garantía de clima oficial.</span>
               </div>
 
               <div className="flex items-center gap-3">

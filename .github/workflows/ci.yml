@@ -31,3 +31,6 @@ jobs:
 
       - name: Build production bundle
         run: npm run build
+
+      - name: Security audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high

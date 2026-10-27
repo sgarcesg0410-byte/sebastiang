@@ -215,6 +215,25 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
     };
   }, [selections, token, galleryData, submissionResult]);
 
+  // Cierre con Escape y bloqueo de scroll de fondo en el modal de confirmación
+  useEffect(() => {
+    if (!confirmModalOpen) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && !isSubmitting) {
+        e.preventDefault();
+        setConfirmModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [confirmModalOpen, isSubmitting]);
+
   // Detección automática del valor base contratado según paquete de fotos y reserva real
   const getSessionBasePrice = (data) => {
     if (!data) return 75000;
@@ -840,10 +859,20 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                       : 'border-stone-800'
                   }`}
                 >
-                  {/* CONTENEDOR DE IMAGEN CON PROTECCIÓN */}
+                  {/* CONTENEDOR DE IMAGEN CON PROTECCIÓN Y SOPORTE DE TECLADO */}
                   <div 
-                    className="relative aspect-[4/5] w-full overflow-hidden bg-black select-none cursor-pointer"
+                    role="button"
+                    tabIndex={isLocked ? -1 : 0}
+                    aria-pressed={isSelected}
+                    aria-label={`${isSelected ? 'Quitar selección de' : 'Seleccionar'} ${photo.title || `Foto #${index + 1}`}`}
+                    className="relative aspect-[4/5] w-full overflow-hidden bg-black select-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                     onClick={() => togglePhotoSelection(photo.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        togglePhotoSelection(photo.id);
+                      }
+                    }}
                   >
                     {/* FOTO RENDERIZADA EN CANVAS (CON MARCA DE AGUA FUSIONADA EN PÍXELES SI NO ESTÁ ENTREGADA) */}
                     <ProtectedCanvasImage
@@ -999,7 +1028,12 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
 
         {/* MODAL DE CONFIRMACIÓN Y PASARELA DE PAGO DIRECTO */}
         {confirmModalOpen && (
-          <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="client-gallery-confirm-title"
+            className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+          >
             <div className="bg-stone-900 border border-stone-700 rounded-3xl max-w-lg w-full p-5 sm:p-7 text-center shadow-2xl my-auto max-h-[95vh] flex flex-col">
               
               <div className="overflow-y-auto space-y-4 pr-1 text-left">
@@ -1009,7 +1043,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     <Sparkles className="w-6 h-6" />
                   </div>
                   <div>
-                    <h4 className="text-lg sm:text-xl font-serif font-bold text-white leading-tight">
+                    <h4 id="client-gallery-confirm-title" className="text-lg sm:text-xl font-serif font-bold text-white leading-tight">
                       Confirmar Fotos & Pasarela de Pago
                     </h4>
                     <span className="text-[11px] text-amber-400 font-semibold block">

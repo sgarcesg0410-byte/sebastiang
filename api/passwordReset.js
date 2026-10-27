@@ -3,7 +3,7 @@
 // ==============================================================================
 // Cumple estrictamente las 5 reglas y 3 invariantes de seguridad:
 // 1. Email de destino 100% en el servidor (ignora req.body.email).
-// 2. Código de 6 dígitos efímero (hash SHA-256 en Supabase, 10 min, secureCompare).
+// 2. Código de 6 dígitos efímero (hash SHA-256 en MongoDB Atlas, 10 min, secureCompare).
 // 3. Anti-fuerza bruta: máx 3 req/15 min IP y quema tras 5 intentos fallidos.
 // 4. Fuga cero: código nunca en respuestas HTTP ni en logs.
 // 5. Invalidación global de sesiones (passwordVersion).
@@ -11,7 +11,7 @@
 // ==============================================================================
 
 import crypto from 'crypto';
-import { hashSHA256, secureCompare, setCachedPasswordVersion, getCachedPasswordVersion } from './security.js';
+import { hashSHA256, secureCompare, setCachedPasswordVersion, getCachedPasswordVersion, getTrustedClientIp } from './security.js';
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
 import { isMongoConfigured, upsertMongoDoc, findMongoDocs } from './db/mongo.js';
 
@@ -26,9 +26,7 @@ const RESET_CONFIRM_MAX = 5;
 const RESET_CONFIRM_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
 
 export function getClientIp(req) {
-  return req?.headers?.['x-forwarded-for']?.split(',')[0]?.trim()
-    || req?.socket?.remoteAddress
-    || 'unknown';
+  return getTrustedClientIp(req);
 }
 
 export function getAdminEmail() {
@@ -90,15 +88,14 @@ export function clearRateLimiters() {
 }
 
 /**
- * Guarda el challenge de reseteo en Supabase y memoria
+ * Guarda el challenge de reseteo en MongoDB Atlas y memoria (fuente única de verdad)
  */
-export async function saveResetChallenge({ supaUrl, supaKey, runtimeDB, challenge }) {
+export async function saveResetChallenge({ runtimeDB, challenge }) {
   if (runtimeDB) {
     runtimeDB.settings = runtimeDB.settings || {};
     runtimeDB.settings.adminResetChallenge = challenge;
   }
 
-  // 1. Guardar en MongoDB Atlas si está configurado
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('security', { key: 'admin_reset_challenge' }, {
@@ -110,37 +107,12 @@ export async function saveResetChallenge({ supaUrl, supaKey, runtimeDB, challeng
       console.warn('[MongoDB] Advertencia guardando challenge:', e?.message || e);
     }
   }
-
-  // 2. Supabase como fallback secundario
-  if (supaUrl && supaKey) {
-    try {
-      await fetch(`${supaUrl}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': supaKey,
-          'Authorization': `Bearer ${supaKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: 'system_admin_reset_challenge',
-          title: 'Admin Password Reset Challenge',
-          category: 'security_data',
-          location: 'system',
-          url: JSON.stringify(challenge)
-        })
-      });
-    } catch (e) {
-      console.warn('[Seguridad] Advertencia guardando challenge en Supabase:', e?.message || e);
-    }
-  }
 }
 
 /**
- * Lee el challenge de reseteo activo desde MongoDB Atlas, Supabase o memoria
+ * Lee el challenge de reseteo activo desde MongoDB Atlas o memoria
  */
-export async function getResetChallenge({ supaUrl, supaKey, runtimeDB }) {
-  // 1. Intentar primero desde MongoDB Atlas
+export async function getResetChallenge({ runtimeDB }) {
   if (isMongoConfigured()) {
     try {
       const docs = await findMongoDocs('security', { key: 'admin_reset_challenge' });
@@ -152,36 +124,13 @@ export async function getResetChallenge({ supaUrl, supaKey, runtimeDB }) {
     }
   }
 
-  // 2. Intentar Supabase
-  if (supaUrl && supaKey) {
-    try {
-      const res = await fetch(`${supaUrl}/rest/v1/catalog?id=eq.system_admin_reset_challenge&select=*`, {
-        headers: {
-          'apikey': supaKey,
-          'Authorization': `Bearer ${supaKey}`
-        }
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        if (rows && rows[0]?.url) {
-          const parsed = JSON.parse(rows[0].url);
-          if (parsed && parsed.codeHash) {
-            return parsed;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Seguridad] Advertencia leyendo challenge de Supabase:', e?.message || e);
-    }
-  }
-
   return runtimeDB?.settings?.adminResetChallenge || null;
 }
 
 /**
- * Guarda la nueva clave y passwordVersion en MongoDB Atlas, Supabase y memoria
+ * Guarda la nueva clave y passwordVersion en MongoDB Atlas y memoria
  */
-export async function updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, newScryptHash, newVersion }) {
+export async function updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion }) {
   if (runtimeDB) {
     runtimeDB.settings = runtimeDB.settings || {};
     runtimeDB.settings.adminPinScrypt = newScryptHash;
@@ -189,7 +138,6 @@ export async function updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, 
   }
   setCachedPasswordVersion(newVersion);
 
-  // 1. Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
       await upsertMongoDoc('security', { key: 'admin_pin_hash' }, {
@@ -202,41 +150,12 @@ export async function updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, 
       console.warn('[MongoDB] Advertencia actualizando contraseña:', e?.message || e);
     }
   }
-
-  // 2. Supabase
-  if (supaUrl && supaKey) {
-    try {
-      await fetch(`${supaUrl}/rest/v1/catalog`, {
-        method: 'POST',
-        headers: {
-          'apikey': supaKey,
-          'Authorization': `Bearer ${supaKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          id: 'system_admin_pin_hash',
-          title: 'Admin Security Hash',
-          category: 'security_data',
-          location: 'system',
-          url: JSON.stringify({
-            scryptHash: newScryptHash,
-            passwordVersion: newVersion,
-            updatedAt: new Date().toISOString()
-          })
-        })
-      });
-    } catch (e) {
-      console.warn('[Seguridad] Advertencia actualizando contraseña en Supabase:', e?.message || e);
-    }
-  }
 }
 
 /**
  * Obtiene la versión actual de la contraseña (por defecto 1)
  */
-export async function getActivePasswordVersionFromStore({ supaUrl, supaKey, runtimeDB }) {
-  // 1. MongoDB Atlas
+export async function getActivePasswordVersionFromStore({ runtimeDB }) {
   if (isMongoConfigured()) {
     try {
       const docs = await findMongoDocs('security', { key: 'admin_pin_hash' });
@@ -250,33 +169,6 @@ export async function getActivePasswordVersionFromStore({ supaUrl, supaKey, runt
     } catch (e) {}
   }
 
-  // 2. Supabase
-  if (supaUrl && supaKey) {
-    try {
-      const res = await fetch(`${supaUrl}/rest/v1/catalog?id=eq.system_admin_pin_hash&select=*`, {
-        headers: {
-          'apikey': supaKey,
-          'Authorization': `Bearer ${supaKey}`
-        }
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        if (rows && rows[0]?.url) {
-          const parsed = JSON.parse(rows[0].url);
-          if (parsed?.passwordVersion) {
-            const v = Number(parsed.passwordVersion);
-            if (Number.isFinite(v) && v >= 1) {
-              setCachedPasswordVersion(v);
-              return v;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      // Ignorar y caer a fallback
-    }
-  }
-
   const inMem = runtimeDB?.settings?.adminPasswordVersion;
   if (inMem && Number.isFinite(Number(inMem))) {
     return Number(inMem);
@@ -288,7 +180,7 @@ export async function getActivePasswordVersionFromStore({ supaUrl, supaKey, runt
 /**
  * Endpoint 1: POST /api/admin/password/reset-request
  */
-export async function handlePasswordResetRequest(req, res, { supaUrl, supaKey, runtimeDB, emailSender = sendPasswordResetCodeEmail } = {}) {
+export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSender = sendPasswordResetCodeEmail } = {}) {
   const ip = getClientIp(req);
   const rate = checkResetRequestRateLimit(ip);
 
@@ -316,7 +208,7 @@ export async function handlePasswordResetRequest(req, res, { supaUrl, supaKey, r
     requestedAt: new Date().toISOString()
   };
 
-  await saveResetChallenge({ supaUrl, supaKey, runtimeDB, challenge });
+  await saveResetChallenge({ runtimeDB, challenge });
 
   // REGLA 4: Fuga cero: enviar por correo sin loguear el código
   try {
@@ -336,8 +228,6 @@ export async function handlePasswordResetRequest(req, res, { supaUrl, supaKey, r
  * Endpoint 2: POST /api/admin/password/reset-confirm
  */
 export async function handlePasswordResetConfirm(req, res, {
-  supaUrl,
-  supaKey,
   runtimeDB,
   alertSender = sendPasswordChangedAlertEmail
 } = {}) {
@@ -366,7 +256,7 @@ export async function handlePasswordResetConfirm(req, res, {
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
-  const challenge = await getResetChallenge({ supaUrl, supaKey, runtimeDB });
+  const challenge = await getResetChallenge({ runtimeDB });
   if (!challenge || challenge.used === true) {
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
@@ -375,14 +265,14 @@ export async function handlePasswordResetConfirm(req, res, {
   const expiresTimestamp = new Date(challenge.expiresAt).getTime();
   if (Number.isNaN(expiresTimestamp) || Date.now() > expiresTimestamp) {
     challenge.used = true;
-    await saveResetChallenge({ supaUrl, supaKey, runtimeDB, challenge });
+    await saveResetChallenge({ runtimeDB, challenge });
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
   // 2. Intentos agotados previamente
   if ((challenge.attempts || 0) >= 5) {
     challenge.used = true;
-    await saveResetChallenge({ supaUrl, supaKey, runtimeDB, challenge });
+    await saveResetChallenge({ runtimeDB, challenge });
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
@@ -395,14 +285,14 @@ export async function handlePasswordResetConfirm(req, res, {
       // Bloqueo estricto del código: se quema de por vida
       challenge.used = true;
     }
-    await saveResetChallenge({ supaUrl, supaKey, runtimeDB, challenge });
+    await saveResetChallenge({ runtimeDB, challenge });
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
   // ÉXITO: Código válido. Proceder todo-o-nada:
   // 1. Quemar el código de inmediato (un solo uso)
   challenge.used = true;
-  await saveResetChallenge({ supaUrl, supaKey, runtimeDB, challenge });
+  await saveResetChallenge({ runtimeDB, challenge });
 
   // 2. Derivar hash scrypt bancario de la nueva contraseña
   const cleanNew = newPassword.trim();
@@ -411,10 +301,10 @@ export async function handlePasswordResetConfirm(req, res, {
   const newScryptHash = 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
 
   // 3. Incrementar passwordVersion para revocar TODAS las sesiones activas
-  const currentVersion = await getActivePasswordVersionFromStore({ supaUrl, supaKey, runtimeDB });
+  const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });
   const newVersion = (currentVersion || 1) + 1;
 
-  await updateAdminPasswordInStore({ supaUrl, supaKey, runtimeDB, newScryptHash, newVersion });
+  await updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion });
 
   // 4. Enviar alerta de seguridad por correo vía Zoho a ADMIN_EMAIL
   const targetEmail = getAdminEmail();

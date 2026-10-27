@@ -9,25 +9,26 @@
 // cero correos en las respuestas que consume un visitante anónimo.
 // ==============================================================================
 
-import { createReceiptToken, verifyReceiptToken, toPublicBooking } from './security.js';
+import { createReceiptToken, verifyReceiptToken, toPublicBooking, getTrustedClientIp } from './security.js';
 import { computeBookingPaymentStatus } from './financials.js';
 import { validateReferralCode } from './referrals.js';
 import { isMongoConfigured, findMongoDocs } from './db/mongo.js';
 
-/** Limitador simple en memoria para rutas públicas (por instancia del serverless). */
-function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000 } = {}) {
+/** Limitador en memoria para rutas públicas usando IP confiable + clave de recurso opcional. */
+function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000, keySelector = null } = {}) {
   const hits = new Map();
   return (req, res, next) => {
-    const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
-      || req.socket?.remoteAddress || 'desconocida';
+    const ip = getTrustedClientIp(req);
+    const extraKey = typeof keySelector === 'function' ? String(keySelector(req) || '').trim() : '';
+    const compositeKey = extraKey ? `${ip}:${extraKey}` : ip;
     const now = Date.now();
-    const rec = hits.get(ip) || { count: 0, reset: now + windowMs };
+    const rec = hits.get(compositeKey) || { count: 0, reset: now + windowMs };
     if (now > rec.reset) {
       rec.count = 0;
       rec.reset = now + windowMs;
     }
     rec.count += 1;
-    hits.set(ip, rec);
+    hits.set(compositeKey, rec);
     if (rec.count > max) {
       res.setHeader('Retry-After', Math.ceil((rec.reset - now) / 1000));
       return res.status(429).json({ error: 'Demasiadas solicitudes. Intenta más tarde.' });
@@ -38,20 +39,19 @@ function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000 } = {}) {
 
 /**
  * Registra las rutas públicas en la app de Express.
+ * MongoDB Atlas es la única fuente de verdad persistente en la nube.
  *
  * @param {object} app
  * @param {object} deps
  * @param {Function} deps.getRuntimeDB  Devuelve la base en memoria.
- * @param {object}   deps.supabase      { url, key } para consultar la nube.
  */
-export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) {
+export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   const publicLimiter = createPublicRateLimiter();
 
   /**
-   * Trae las reservas desde MongoDB Atlas o Supabase, sin datos de administración.
+   * Trae las reservas desde MongoDB Atlas (fuente única de verdad).
    */
   async function fetchCloudBookings() {
-    // 1. Intentar desde MongoDB Atlas (primario)
     if (isMongoConfigured()) {
       try {
         const mongoBookings = await findMongoDocs('bookings', {});
@@ -62,117 +62,31 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
         console.warn('[Público] No se pudo leer bookings de MongoDB:', e?.message || e);
       }
     }
-
-    // 2. Supabase (fallback secundario)
-    const { url, key } = supabase;
-    if (!url || !key) return [];
-    const headers = { apikey: key, Authorization: `Bearer ${key}` };
-    const results = new Map();
-
-    try {
-      const res = await fetch(`${url}/rest/v1/bookings?select=*`, { headers });
-      if (res.ok) {
-        const rows = await res.json();
-        for (const b of Array.isArray(rows) ? rows : []) {
-          if (!b?.id) continue;
-          results.set(b.id, {
-            id: b.id,
-            clientName: b.client_name,
-            clientWhatsApp: b.client_whatsapp,
-            clientEmail: b.client_email,
-            packageId: b.package_id,
-            packageName: b.package_name,
-            totalPrice: Number(b.total_price) || 0,
-            locationType: b.location_type,
-            specificLocation: b.specific_location,
-            dateTime: b.date_time,
-            description: b.description,
-            status: b.status,
-            createdAt: b.created_at
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('[Público] No se pudo leer bookings de la nube:', e?.message || e);
-    }
-
-    try {
-      const res = await fetch(`${url}/rest/v1/catalog?category=eq.booking_data&select=*`, { headers });
-      if (res.ok) {
-        const rows = await res.json();
-        for (const row of Array.isArray(rows) ? rows : []) {
-          try {
-            const b = JSON.parse(row.url);
-            if (b?.id && !results.has(b.id)) results.set(b.id, b);
-          } catch { /* fila no parseable: se ignora */ }
-        }
-      }
-    } catch (e) {
-      console.warn('[Público] No se pudo leer booking_data de la nube:', e?.message || e);
-    }
-
-    return [...results.values()];
+    return [];
   }
 
-  /** Pagos registrados (MongoDB Atlas o Supabase). */
+  /** Pagos registrados en MongoDB Atlas o memoria. */
   async function getPayments() {
-    // 1. Intentar desde MongoDB Atlas
+    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
+    const inMem = Array.isArray(db.payments) ? [...db.payments] : [];
     if (isMongoConfigured()) {
       try {
         const mongoPayments = await findMongoDocs('payments', {});
         if (mongoPayments && mongoPayments.length > 0) {
-          return mongoPayments;
+          const map = new Map();
+          [...inMem, ...mongoPayments].forEach((p) => {
+            if (p?.id) map.set(p.id, p);
+          });
+          return [...map.values()];
         }
       } catch (e) {
         console.warn('[Público] No se pudo leer payments de MongoDB:', e?.message || e);
       }
     }
-
-    const { url, key } = supabase;
-    if (!url || !key) return [];
-    const headers = { apikey: key, Authorization: `Bearer ${key}` };
-    const out = [];
-
-    try {
-      const res = await fetch(`${url}/rest/v1/payments?select=*`, { headers });
-      if (res.ok) {
-        const rows = await res.json();
-        for (const p of Array.isArray(rows) ? rows : []) {
-          if (!p?.id) continue;
-          out.push({
-            id: p.id,
-            clientName: p.client_name,
-            clientWhatsApp: p.client_whatsapp,
-            sessionToken: p.session_token,
-            amount: Number(p.amount) || 0,
-            method: p.method,
-            status: p.status
-          });
-        }
-      }
-    } catch (e) {
-      console.warn('[Público] No se pudo leer payments de la nube:', e?.message || e);
-    }
-
-    try {
-      const res = await fetch(`${url}/rest/v1/catalog?category=eq.payment_data&select=*`, { headers });
-      if (res.ok) {
-        const rows = await res.json();
-        for (const row of Array.isArray(rows) ? rows : []) {
-          try {
-            const p = JSON.parse(row.url);
-            if (p?.id) out.push(p);
-          } catch { /* fila no parseable */ }
-        }
-      }
-    } catch (e) {
-      console.warn('[Público] No se pudo leer payment_data de la nube:', e?.message || e);
-    }
-
-    return out;
+    return inMem;
   }
 
-  /** Reservas combinando la caché en memoria y la nube. */
+  /** Reservas combinando la caché en memoria y MongoDB Atlas. */
   async function getAllBookings() {
     const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
     const merged = new Map();
@@ -185,12 +99,11 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
     return [...merged.values()];
   }
 
-  /** Sesiones (galerías) combinando memoria y nube (MongoDB Atlas primario, Supabase secundario). */
+  /** Sesiones (galerías) combinando memoria y MongoDB Atlas. */
   async function getAllSessions() {
     const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
     const sessions = [...(Array.isArray(db.sessions) ? db.sessions : [])];
 
-    // 1. Intentar desde MongoDB Atlas
     if (isMongoConfigured()) {
       try {
         const mongoSessions = await findMongoDocs('sessions', {});
@@ -206,26 +119,6 @@ export function registerPublicRoutes(app, { getRuntimeDB, supabase = {} } = {}) 
       }
     }
 
-    // 2. Supabase fallback
-    const { url, key } = supabase;
-    if (url && key) {
-      try {
-        const res = await fetch(`${url}/rest/v1/catalog?category=eq.session_data&select=*`, {
-          headers: { apikey: key, Authorization: `Bearer ${key}` }
-        });
-        if (res.ok) {
-          const rows = await res.json();
-          for (const row of Array.isArray(rows) ? rows : []) {
-            try {
-              const s = JSON.parse(row.url);
-              if (s?.token) sessions.push(s);
-            } catch { /* fila no parseable */ }
-          }
-        }
-      } catch (e) {
-        console.warn('[Público] No se pudo leer session_data de la nube:', e?.message || e);
-      }
-    }
     return sessions;
   }
 

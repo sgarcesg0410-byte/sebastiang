@@ -149,7 +149,6 @@ import {
   calculateRetablosFinancials,
   DEFAULT_RETABLO_COSTS
 } from '../services/api';
-import { supabase } from '../services/supabase';
 import { computeBookingPaymentStatus } from '../services/financials';
 
 // Escapa cualquier valor antes de interpolarlo en HTML (impresión de comprobantes).
@@ -163,7 +162,6 @@ const escapeHtml = (value) => String(value ?? '')
   .replace(/'/g, '&#39;');
 import { getLocalAnalytics } from '../services/analytics';
 import { NequiLogo, DaviPlataLogo, DaleLogo, WalletAccountCard } from './PaymentLogos';
-import jsPDF from 'jspdf';
 import { LOGO_WATERMARK_APP, LOGO_WATERMARK_BLACK, LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 import { generateLuxuryReceiptPdf } from '../services/receiptPdfGenerator';
 
@@ -1784,19 +1782,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }, delay);
     };
 
-    // 3. Canal Supabase Realtime (WebSocket bidireccional permanente para reservas, pagos, catálogo, sesiones y saldos)
-    const channel = supabase
-      .channel('admin_all_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'catalog' }, () => {
-        triggerSilentRefresh(80);
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          loadAllAdminData(true);
-        }
-      });
-
-    // 4. Canales locales BroadcastChannel para sincronización 0ms entre pestañas y ventanas
+    // 3. Canales locales BroadcastChannel para sincronización 0ms entre pestañas y ventanas
     let bcCatalog, bcBookings, bcPayments, bcReviews, bcWallets, bcSessions;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
@@ -1891,7 +1877,6 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       window.removeEventListener('online', handleInstantWakeup);
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('admin-switch-tab', handleSwitchTab);
-      supabase.removeChannel(channel);
       if (bcCatalog) bcCatalog.close();
       if (bcBookings) bcBookings.close();
       if (bcPayments) bcPayments.close();

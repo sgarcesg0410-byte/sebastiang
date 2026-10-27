@@ -2,10 +2,44 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, Gift, ArrowRight, ChevronLeft, ChevronDown, ChevronUp, Maximize2, CreditCard, Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { createBooking, checkClientLoyalty, checkReferralCode, createWompiCheckout, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
-import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel } from '../services/bookingAvailability';
+import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel, getColombiaTodayIso } from '../services/bookingAvailability';
+
+const WOMPI_WIDGET_SRC = 'https://checkout.wompi.co/widget.js';
+let wompiScriptPromise = null;
+
+function ensureWompiWidgetLoaded() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve(false);
+  }
+  if (typeof window.WidgetCheckout === 'function') {
+    return Promise.resolve(true);
+  }
+  if (wompiScriptPromise) return wompiScriptPromise;
+
+  wompiScriptPromise = new Promise((resolve) => {
+    const existing = document.querySelector(`script[src="${WOMPI_WIDGET_SRC}"]`);
+    if (existing) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = WOMPI_WIDGET_SRC;
+    script.defer = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      wompiScriptPromise = null;
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+
+  return wompiScriptPromise;
+}
 
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', preselectedCombo = null, settings = {} }) {
   const scrollRef = useRef(null);
+  const modalDialogRef = useRef(null);
+  const previousFocusRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
   const paperSizes = getPaperPrintSizes(settings);
   const retabloSizes = getRetabloSizes(settings);
@@ -51,6 +85,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     setCheckoutError('');
 
     try {
+      await ensureWompiWidgetLoaded();
       const res = await createWompiCheckout({
         bookingId: submittedBooking.id,
         concept: 'booking_deposit',
@@ -157,16 +192,60 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     return () => clearTimeout(timer);
   }, [formData.referralCode, formData.clientWhatsApp]);
 
-  // Asegurar que al abrir siempre comience scrolleado arriba de todo
+  // Asegurar que al abrir siempre comience scrolleado arriba de todo y gestione accesibilidad (foco, Escape y bloqueo de scroll)
   useEffect(() => {
-    if (isOpen) {
-      setBookingStep(1);
-      setErrorMessage('');
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = 0;
-      }
+    if (!isOpen) return;
+
+    setBookingStep(1);
+    setErrorMessage('');
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
     }
-  }, [isOpen]);
+
+    previousFocusRef.current = document.activeElement;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const focusTimer = setTimeout(() => {
+      const firstInput = modalDialogRef.current?.querySelector('input, button, select, textarea');
+      firstInput?.focus();
+    }, 30);
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (onClose) onClose();
+        return;
+      }
+      if (e.key === 'Tab' && modalDialogRef.current) {
+        const focusable = modalDialogRef.current.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(focusTimer);
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+        try {
+          previousFocusRef.current.focus();
+        } catch (err) {}
+      }
+    };
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (preselectedPackage) {
@@ -405,10 +484,21 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md p-2 sm:p-6 flex flex-col items-center justify-start sm:justify-center">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md p-2 sm:p-6 flex flex-col items-center justify-start sm:justify-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && onClose) onClose();
+      }}
+    >
       
       {/* CONTENEDOR DEL MODAL CON SCROLL INTERNO Y CABECERA VISIBLE */}
-      <div className="relative w-full max-w-xl bg-stone-900 border border-stone-700/80 rounded-3xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+      <div
+        ref={modalDialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="booking-modal-title"
+        className="relative w-full max-w-xl bg-stone-900 border border-stone-700/80 rounded-3xl shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col"
+      >
         
         {/* CABECERA FIJA CON LOGO BLANCO */}
         <div className="sticky top-0 z-30 px-5 py-3.5 bg-stone-950/98 backdrop-blur-md border-b border-stone-800 flex items-center justify-between shrink-0">
@@ -417,7 +507,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
               <Calendar className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm sm:text-base font-serif font-bold text-white leading-tight">
+              <h3 id="booking-modal-title" className="text-sm sm:text-base font-serif font-bold text-white leading-tight">
                 Reservar Sesión Fotográfica
               </h3>
               <span className="text-[10px] text-amber-400 font-semibold block">
@@ -427,6 +517,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
           </div>
 
           <button
+            type="button"
+            aria-label="Cerrar ventana de reserva"
             onClick={onClose}
             className="p-2 text-stone-400 hover:text-white rounded-xl bg-stone-900 hover:bg-stone-800 border border-stone-800 transition-colors"
           >
@@ -836,15 +928,17 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-2">
                       Selecciona tu Paquete de Fotos *
                     </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="radiogroup" aria-label="Paquetes fotográficos">
                       {packages.map(p => {
                         const isSelected = formData.packageId === p.id;
                         const displayPrice = formData.locationType === 'outside' ? p.price + surchargeAmount : p.price;
                         return (
-                          <div
+                          <button
                             key={p.id}
+                            type="button"
+                            aria-pressed={isSelected}
                             onClick={() => setFormData(prev => ({ ...prev, packageId: p.id }))}
-                            className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between ${
+                            className={`text-left cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
                               isSelected
                                 ? 'bg-amber-500/15 border-amber-400 shadow-md shadow-amber-500/15'
                                 : 'bg-stone-950 border-stone-800 hover:border-stone-700'
@@ -861,13 +955,13 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                                 + 2 Fotos Gratis
                               </span>
                             </div>
-                            <div className="mt-2 pt-2 border-t border-stone-800/80 flex items-baseline justify-between">
+                            <div className="mt-2 pt-2 border-t border-stone-800/80 flex items-baseline justify-between w-full">
                               <span className="text-base font-extrabold text-white font-mono">
                                 ${formatPrice(displayPrice)}
                               </span>
                               <span className="text-[10px] text-stone-400">COP</span>
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -957,7 +1051,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                         name="date"
                         value={formData.date}
                         onChange={handleInputChange}
-                        min={new Date().toISOString().split('T')[0]}
+                        min={getColombiaTodayIso()}
                         required
                         className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
                       />
@@ -1243,6 +1337,11 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                       </span>
                       <span className="text-[10px] text-stone-400 block font-semibold">COP • Sin cobro previo</span>
                     </div>
+                  </div>
+
+                  {/* AVISO LEGAL Y HABEAS DATA (LEY 1581 DE 2012 COLOMBIA) */}
+                  <div className="p-2.5 rounded-xl bg-stone-950/80 border border-stone-800/80 text-[10px] text-stone-400 leading-relaxed">
+                    Al confirmar tu reserva, autorizas el tratamiento de tus datos personales conforme a la <strong className="text-stone-300">Ley 1581 de 2012 (Habeas Data Colombia)</strong> para gestionar tu cita, enviarte notificaciones por WhatsApp/correo y entregarte tu galería privada. Incluye garantía de reprogramación sin costo por clima adverso.
                   </div>
 
                   <div className="pt-2 grid grid-cols-3 gap-2.5">
