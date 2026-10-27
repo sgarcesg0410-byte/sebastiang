@@ -1569,7 +1569,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const revData = revRes?.status === 'fulfilled' && Array.isArray(revRes.value) ? revRes.value : [];
         setReviewsList(prev => areArraysEqual(prev, revData) ? prev : revData);
 
-        // Sincronización proactiva de fotos locales pendientes hacia Supabase Cloud
+        // Sincronización proactiva de fotos locales pendientes hacia MongoDB Atlas Cloud
         syncLocalCatalogToCloud().then(res => {
           if (res && res.synced > 0) {
             setCatalogSyncMessage(`¡${res.synced} foto(s) sincronizada(s) con la nube! Ahora todos tus clientes las pueden ver.`);
@@ -2413,7 +2413,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
 
     try {
-      // 1. Eliminar pagos asociados en todas las capas (Supabase, local, memoria, backend)
+      // 1. Eliminar pagos asociados en todas las capas (MongoDB Atlas, local, memoria, backend)
       for (const p of relatedPayments) {
         await deleteAdminPayment(p.id);
       }
@@ -3746,7 +3746,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         setCatalogSyncError('Error al sincronizar con la nube: ' + res.error);
       } else {
         const totalPhotos = catalog.length;
-        setCatalogSyncMessage(`¡Éxito total! ${res.count || totalPhotos} fotos sincronizadas con Supabase Cloud. Ahora todos tus clientes en cualquier teléfono o computador verán exactamente las ${totalPhotos} fotos.`);
+        setCatalogSyncMessage(`¡Éxito total! ${res.count || totalPhotos} fotos sincronizadas con MongoDB Atlas Cloud. Ahora todos tus clientes en cualquier teléfono o computador verán exactamente las ${totalPhotos} fotos.`);
         setCloudPendingCount(0);
         loadAllAdminData(true);
         if (onCatalogUpdated) onCatalogUpdated();
@@ -8473,7 +8473,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h5 className="text-xs font-bold text-white">
-                      Sincronización en la Nube (Supabase Cloud)
+                      Sincronización en la Nube (MongoDB Atlas)
                     </h5>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/30 font-bold">
                       {catalog.length} fotos en tu dispositivo
@@ -10288,7 +10288,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             >
               <Server className="w-3.5 h-3.5" />
               <span>Conectividad & Caídas</span>
-              {auditServices?.supabase?.status === 'down' && (
+              {(auditServices?.mongodb?.status === 'down' || auditServices?.database?.status === 'down') && (
                 <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
               )}
             </button>
@@ -10360,13 +10360,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <Database className="w-4 h-4 text-cyan-400" />
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className={`w-2.5 h-2.5 rounded-full ${auditServices?.supabase?.status === 'ok' ? 'bg-emerald-400 animate-pulse' : auditServices?.supabase?.status === 'degraded' ? 'bg-amber-400' : 'bg-rose-500 animate-ping'}`} />
+                    <span className={`w-2.5 h-2.5 rounded-full ${(auditServices?.mongodb?.status || auditServices?.database?.status) === 'ok' ? 'bg-emerald-400 animate-pulse' : (auditServices?.mongodb?.status || auditServices?.database?.status) === 'degraded' ? 'bg-amber-400' : 'bg-rose-500 animate-ping'}`} />
                     <span className="text-lg font-bold text-white">
-                      {auditServices?.supabase?.status === 'ok' ? 'Conectado' : auditServices?.supabase?.status === 'degraded' ? 'Degradado' : 'Sin conexión'}
+                      {(auditServices?.mongodb?.status || auditServices?.database?.status) === 'ok' ? 'Conectado' : (auditServices?.mongodb?.status || auditServices?.database?.status) === 'degraded' ? 'Degradado' : 'Sin conexión'}
                     </span>
                   </div>
                   <span className="text-[11px] text-stone-400 mt-1 block">
-                    Ping: {auditServices?.supabase?.latencyMs ? `${auditServices.supabase.latencyMs} ms` : 'Verificando...'}
+                    Ping: {(auditServices?.mongodb?.latencyMs ?? auditServices?.database?.latencyMs) ? `${auditServices?.mongodb?.latencyMs ?? auditServices?.database?.latencyMs} ms` : 'Verificando...'}
                   </span>
                 </div>
 
@@ -10472,7 +10472,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* 1. Supabase Cloud */}
+                {/* 1. MongoDB Atlas Cloud */}
                 <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl space-y-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2.5">
@@ -10485,24 +10485,24 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       </div>
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                      auditServices?.supabase?.status === 'ok' 
+                      (auditServices?.mongodb?.status || auditServices?.database?.status) === 'ok' 
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
-                        : auditServices?.supabase?.status === 'degraded'
+                        : (auditServices?.mongodb?.status || auditServices?.database?.status) === 'degraded'
                           ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                           : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
                     }`}>
-                      {auditServices?.supabase?.status === 'ok' ? 'Operativo' : auditServices?.supabase?.status === 'degraded' ? 'Lento' : 'Caído'}
+                      {(auditServices?.mongodb?.status || auditServices?.database?.status) === 'ok' ? 'Operativo' : (auditServices?.mongodb?.status || auditServices?.database?.status) === 'degraded' ? 'Lento' : 'Caído'}
                     </span>
                   </div>
 
                   <p className="text-xs text-stone-300 leading-relaxed">
-                    {auditServices?.supabase?.message || 'Verificando comunicación con la base de datos...'}
+                    {(auditServices?.mongodb?.message || auditServices?.database?.message) || 'Verificando comunicación con la base de datos...'}
                   </p>
 
                   <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-xs">
                     <span className="text-stone-400">Latencia de Respuesta:</span>
                     <span className="font-mono font-bold text-cyan-300">
-                      {auditServices?.supabase?.latencyMs ? `${auditServices.supabase.latencyMs} ms` : '--'}
+                      {(auditServices?.mongodb?.latencyMs ?? auditServices?.database?.latencyMs) ? `${auditServices?.mongodb?.latencyMs ?? auditServices?.database?.latencyMs} ms` : '--'}
                     </span>
                   </div>
                 </div>

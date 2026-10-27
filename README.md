@@ -21,10 +21,11 @@
    - [Generador de Recibos PDF de Lujo](#5-generador-de-recibos-pdf-de-lujo-con-qr)
    - [Dashboard Administrativo (POS)](#6-dashboard-administrativo-pos--inteligencia-de-negocio)
    - [Sistema de Notificaciones Push 24/7](#7-sistema-de-notificaciones-push-247)
-6. [Base de Datos y Supabase](#-base-de-datos-y-sincronización-en-la-nube)
+6. [Base de Datos y Persistencia Oficial en MongoDB Atlas](#-base-de-datos-y-persistencia-oficial-en-mongodb-atlas)
 7. [Endpoints de la API (Backend Express)](#-endpoints-de-la-api-backend-express)
-8. [Instalación y Puesta en Marcha](#-instalación-y-puesta-en-marcha)
-9. [Exportación del Código en Markdown](#-exportación-completa-del-código-en-markdown)
+8. [Operación Segura, Backups Cifrados y Monitoreo](#-operación-segura-backups-cifrados-y-monitoreo)
+9. [Instalación y Puesta en Marcha](#-instalación-y-puesta-en-marcha)
+10. [Exportación del Código en Markdown](#-exportación-completa-del-código-en-markdown)
 
 ---
 
@@ -45,7 +46,7 @@
 |---|---|
 | **Frontend** | React 18, Vite 6, Tailwind CSS v4, Lucide React, Canvas Confetti |
 | **Backend & API** | Node.js, Express, Multer, Nodemailer, Sharp |
-| **Persistencia Cloud** | Supabase (PostgreSQL, Realtime, Storage) |
+| **Persistencia Cloud** | MongoDB Atlas (Fuente Única de Verdad, 11 índices BSON, TTL nativo 90d) |
 | **Persistencia Local / Offline** | IndexedDB, LocalStorage, Runtime JSON DB |
 | **Documentos & Comprobantes** | jsPDF (vectorial), html2canvas, QRCode |
 | **Notificaciones** | OneSignal Web Push SDK, Web Push API, Service Workers, Audio Chimes |
@@ -58,8 +59,17 @@
 ```text
 foto-reservas/
 ├── api/
-│   ├── emailService.js             # Envío de notificaciones por correo vía Nodemailer
+│   ├── db/
+│   │   └── mongo.js                # Conexión persistente y gestión de 11 índices BSON (TTL nativo 90d)
+│   ├── payments/
+│   │   └── gateway.js              # Pasarela Wompi con firma SHA-256 e idempotencia
+│   ├── emailService.js             # Envío de notificaciones por correo vía Nodemailer (Zoho SMTP)
+│   ├── passwordReset.js            # Recuperación segura con código OTP efímero y quema por reintento
+│   ├── security.js                 # Autenticación scrypt, tokens APK revocables, cifrado AES-256-GCM con keyId
 │   └── index.js                    # Servidor Express serverless con rutas API para Vercel
+├── docs/
+│   ├── OPERATIONS_AND_INCIDENT_RUNBOOK.md # Manual de respuesta a incidentes, RPO/RTO y arquitectura móvil
+│   └── legacy/                     # Archivos históricos deprecados (esquemas y scripts de migración)
 ├── electron/
 │   ├── main.cjs                    # Proceso principal de Electron para la versión de escritorio
 │   └── preload.cjs                 # Script de precarga seguro para IPC de Electron
@@ -68,12 +78,9 @@ foto-reservas/
 │   ├── catalog/                    # Imágenes estáticas y de muestra del catálogo
 │   └── logos-perfil/               # Variaciones de logo en alta definición
 ├── scripts/
-│   ├── export-project-markdown.js  # Consolidador de todo el código fuente en archivo .md
-│   ├── generate-favicons.js        # Generador de favicons e iconos PWA
-│   └── installer.ps1               # Script de instalación para entorno Windows
-├── server/
-│   ├── data/db.json                # Base de datos local JSON de respaldo
-│   └── index.js                    # Servidor local Express alternativo para modo standalone
+│   ├── run-incident-drill.mjs      # Simulacro operacional automatizado en infraestructura real (Atlas)
+│   ├── check-syntax.js             # Validador sintáctico estricto de todos los módulos backend
+│   └── export-project-markdown.js  # Consolidador de todo el código fuente en archivo .md
 ├── src/
 │   ├── assets/
 │   │   └── logoWatermark.js        # Constantes vectoriales de logomarcas para agua y PDFs
@@ -106,15 +113,13 @@ foto-reservas/
 │   │   ├── notifications.js        # Despachador de notificaciones locales y sonoras
 │   │   ├── onesignal.js            # Cliente OneSignal Push en tiempo real
 │   │   ├── receiptPdfGenerator.js  # Generador de recibos vectoriales de lujo en formato PDF
-│   │   ├── supabase.js             # Inicialización y cliente Supabase Cloud
 │   │   └── systemAuditor.js        # Auditor de integridad del sistema y diagnóstico
 │   ├── App.jsx                     # Componente raíz con rutas, estados globales y navegación
 │   ├── main.jsx                    # Punto de entrada de React en el DOM
 │   └── style.css                   # Estilos globales y reglas de Tailwind
 ├── index.html                      # Plantilla HTML5 con metadatos PWA y tipografías
-├── package.json                    # Dependencias y scripts de compilación
-├── supabase_schema.sql             # Esquema DDL para base de datos PostgreSQL en Supabase
-├── vercel.json                     # Configuración de despliegue y reescritura de rutas en Vercel
+├── package.json                    # Dependencias y scripts de compilación (npm test, npm run ops:drill)
+├── vercel.json                     # Configuración de despliegue, CSP estricto y reescritura en Vercel
 └── vite.config.js                  # Configuración de empaquetado con Vite y plugins
 ```
 
@@ -192,33 +197,51 @@ Cuadros en retablo de madera con cantos biselados y película protectora UV list
 
 ---
 
-## 🗄️ Base de Datos y Sincronización en la Nube
+## 🗄️ Base de Datos y Persistencia Oficial en MongoDB Atlas
 
-El archivo `supabase_schema.sql` define las tablas en PostgreSQL:
-- `bookings`: Registro de reservas, paquetes, fechas, estados y desgloses de impresiones/retablos.
-- `payments`: Historial de transacciones, métodos, estados (`pending`/`verified`), comprobantes y referencias.
-- `catalog`: Registro de fotos en portafolio y configuraciones del sistema (`system_settings`).
-- `vip_clients`: Base de datos de clientes recurrentes.
+**MongoDB Atlas es la única fuente de verdad persistente (Single Source of Truth) del sistema.**
+(Los esquemas y scripts históricos de Supabase fueron retirados de producción y archivados como referencia bajo `docs/legacy/`).
+
+El backend administra automáticamente **11 índices BSON de alto rendimiento** (gestionados en [`api/db/mongo.js`](api/db/mongo.js)):
+- **`bookings`**: `id` (único), `dateTime + status` (prevención de solapamiento de horarios), `createdAt`.
+- **`payments`**: `id` (único), `bookingId`, `reference` (detección de pagos duplicados e idempotencia Wompi).
+- **`sessions`**: `id` (único), `token` (único, galerías privadas), `expiresAt`.
+- **`audit_logs`**: `id` (único) e **índice TTL nativo de 90 días** `idx_audit_logs_ttl_90d` (`{ expiresAtDate: 1 }`, `expireAfterSeconds: 0`), garantizando la purga automática de auditorías financieras sin consumo de almacenamiento innecesario.
 
 ---
 
 ## 🔌 Endpoints de la API (Backend Express)
 
-| Método | Endpoint | Descripción |
-|---|---|---|
-| `GET` | `/api/settings` | Obtener configuraciones, tarifas y costos vigentes |
-| `POST` | `/api/settings` | Actualizar tarifas, costos de retablos y recargos |
-| `GET` | `/api/bookings` | Listar todas las reservas registradas |
-| `POST` | `/api/bookings` | Crear una nueva reserva desde la web o el panel |
-| `PUT` | `/api/bookings/:id` | Modificar estado o datos de una reserva |
-| `DELETE`| `/api/bookings/:id` | Eliminar una reserva |
-| `GET` | `/api/payments` | Obtener historial de pagos y transferencias |
-| `POST` | `/api/payments` | Registrar un nuevo pago con comprobante |
-| `PUT` | `/api/payments/:id` | Cambiar estado de verificación de un pago |
-| `GET` | `/api/gallery/:token` | Cargar información de la galería privada del cliente |
-| `POST` | `/api/gallery/:token/live-selection` | Sincronizar selección de fotos en tiempo real |
-| `POST` | `/api/gallery/:token/submit` | Confirmar y cerrar selección de fotos del cliente |
-| `POST` | `/api/push/send` | Disparar notificación push al dispositivo del administrador |
+| Método | Endpoint | Alcance / Permiso | Descripción |
+|---|---|---|---|
+| `GET` | `/api/health` | Público | Verificación de estado del servidor y conectividad con MongoDB Atlas |
+| `GET` | `/api/public/schedule` | Público | Consulta de agenda de turnos ocupados (sin exposición de PII) |
+| `POST`| `/api/bookings` | Público / Rate Limit | Creación de reserva con validación de horario no solapado |
+| `POST`| `/api/payments/checkout` | Público / Rate Limit | Inicio de sesión de pago Wompi ($20.000 COP abono oficial) |
+| `POST`| `/api/payments/webhook` | Externo firmado (Wompi) | Procesamiento idempotente de eventos con validación de checksum SHA-256 |
+| `GET` | `/api/public/receipt/:token` | Público firmado | Consulta y descarga de recibo electrónico oficial con QR |
+| `GET` | `/api/gallery/:token` | Clientes por token | Galería privada (marca de agua dinámica; 0 fotos expuestas si expiró) |
+| `POST`| `/api/gallery/:token/submit` | Clientes por token | Confirmación de selección fotográfica |
+| `GET` | `/api/apk/feed` | Token APK (`apk_feed:read`)| Feed liviano para la app Android del fotógrafo (revocable en cada petición) |
+| `POST`| `/api/admin/pin/login` | Público / Rate Limit | Autenticación administrativa mediante scrypt (N=16384) |
+| `POST`| `/api/admin/password/reset-request` | Público / Rate Limit | Envío de OTP efímero exclusivamente a `ADMIN_EMAIL` vía Zoho SMTP |
+| `POST`| `/api/admin/password/reset-confirm` | Público / Rate Limit | Validación de OTP, quema por reintentos e incremento de `passwordVersion` |
+| `GET` | `/api/admin/backup?encrypt=1` | Admin | Exportación de backup cifrado en `AES-256-GCM` con versionado `keyId` |
+| `POST`| `/api/admin/backup/restore` | Admin | Restauración con recreación de índices y medición de RTO por fases |
+| `GET` | `/api/admin/monitoring/status` | Admin | Reporte de estado operativo, contadores y métricas en caliente |
+| `POST`| `/api/admin/monitoring/test-alert` | Admin | Simulacro mensual de alertas vía OneSignal Push y Webhook externo |
+
+---
+
+## 🛡️ Operación Segura, Backups Cifrados y Monitoreo
+
+Para más detalles sobre la respuesta ante incidentes (pérdida de celular APK, discrepancias financieras o caídas de clúster), consulta el documento oficial:
+👉 **[`docs/OPERATIONS_AND_INCIDENT_RUNBOOK.md`](docs/OPERATIONS_AND_INCIDENT_RUNBOOK.md)**
+
+Para ejecutar el simulacro automatizado de extremo a extremo en infraestructura real (rotación de claves, revocación APK, checkout Wompi, backup/restore con índices TTL en base temporal de MongoDB Atlas y disparo de alertas):
+```bash
+npm run ops:drill
+```
 
 ---
 

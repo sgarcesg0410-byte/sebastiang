@@ -40,8 +40,8 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // No interceptar peticiones backend ni base de datos Supabase
-  if (url.pathname.startsWith('/api') || url.hostname.includes('supabase.co')) {
+  // No interceptar peticiones backend
+  if (url.pathname.startsWith('/api')) {
     return;
   }
 

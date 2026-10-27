@@ -1,3 +1,11 @@
+/**
+ * ==============================================================================
+ * ⚠️ ARCHIVO HISTÓRICO DEPRECADO — NO EJECUTAR EN PRODUCCIÓN
+ * ==============================================================================
+ * MongoDB Atlas es ahora la ÚNICA fuente de verdad activa para Sebastian G.
+ * Este script se preserva exclusivamente como registro histórico.
+ * ==============================================================================
+ */
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.SUPABASE_REST_URL || '';

@@ -1,3 +1,12 @@
+/**
+ * ==============================================================================
+ * ⚠️ ARCHIVO HISTÓRICO DEPRECADO — NO EJECUTAR EN PRODUCCIÓN
+ * ==============================================================================
+ * MongoDB Atlas es ahora la ÚNICA fuente de verdad activa para Sebastian G.
+ * Este script se preserva exclusivamente como registro histórico de migración.
+ * No contiene secretos hardcodeados y no debe ejecutarse en entornos operativos.
+ * ==============================================================================
+ */
 import 'dotenv/config';
 import { getMongoDB, isMongoConfigured } from '../api/db/mongo.js';
 

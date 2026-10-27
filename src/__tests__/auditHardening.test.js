@@ -593,6 +593,50 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const ciYml = fs.readFileSync(path.join(rootDir, '.github/workflows/ci.yml'), 'utf8');
       expect(ciYml).toContain('npm audit --omit=dev');
       expect(ciYml).not.toContain('|| true');
+
+      // Limpieza de CSP en Vercel y exclusiones en Service Worker
+      const vercelJson = fs.readFileSync(path.join(rootDir, 'vercel.json'), 'utf8');
+      const swJs = fs.readFileSync(path.join(rootDir, 'public/sw.js'), 'utf8');
+      expect(vercelJson).not.toContain('supabase.co');
+      expect(swJs).not.toContain('supabase.co');
+      expect(adminJsx).not.toContain('(Supabase Cloud)');
+      expect(adminJsx).not.toContain('fotos sincronizadas con Supabase Cloud');
+    });
+
+    it('verifica que el proyecto Android nativo (android/) cumpla con los estándares de seguridad móvil (Keystore, WebView endurecido y Manifest)', () => {
+      const rootDir = process.cwd();
+      const manifestPath = path.join(rootDir, 'android/app/src/main/AndroidManifest.xml');
+      const mainActivityPath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/MainActivity.kt');
+      const tokenStoragePath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/security/SecureTokenStorage.kt');
+      const bridgePath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/bridge/AndroidNotificationBridge.kt');
+      const buildGradlePath = path.join(rootDir, 'android/app/build.gradle.kts');
+
+      expect(fs.existsSync(manifestPath)).toBe(true);
+      expect(fs.existsSync(mainActivityPath)).toBe(true);
+      expect(fs.existsSync(tokenStoragePath)).toBe(true);
+      expect(fs.existsSync(bridgePath)).toBe(true);
+      expect(fs.existsSync(buildGradlePath)).toBe(true);
+
+      const manifest = fs.readFileSync(manifestPath, 'utf8');
+      expect(manifest).toContain('android:usesCleartextTraffic="false"');
+      expect(manifest).toContain('android:allowBackup="false"');
+
+      const mainActivity = fs.readFileSync(mainActivityPath, 'utf8');
+      expect(mainActivity).toContain('WebView.setWebContentsDebuggingEnabled(false)');
+      expect(mainActivity).toContain('allowFileAccess = false');
+      expect(mainActivity).toContain('allowContentAccess = false');
+
+      const tokenStorage = fs.readFileSync(tokenStoragePath, 'utf8');
+      expect(tokenStorage).toContain('MasterKey.KeyScheme.AES256_GCM');
+      expect(tokenStorage).toContain('EncryptedSharedPreferences');
+
+      const bridge = fs.readFileSync(bridgePath, 'utf8');
+      expect(bridge).toContain('https://sebastiang.app');
+      expect(bridge).toContain('@JavascriptInterface');
+
+      const buildGradle = fs.readFileSync(buildGradlePath, 'utf8');
+      expect(buildGradle).toContain('isMinifyEnabled = true');
+      expect(buildGradle).toContain('androidx.security:security-crypto');
     });
 
     it('emite tokens de dispositivo APK con alcance exclusivo apk_feed:read (no admin) y permite revocarlos', async () => {

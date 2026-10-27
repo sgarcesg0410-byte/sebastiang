@@ -3206,7 +3206,7 @@ export async function confirmAdminPasswordReset(code, newPassword) {
 
 /**
  * Inicia una sesión de pago en línea con Wompi (Abono o Saldo).
- * El backend valida montos, persiste la referencia en Supabase y firma la petición.
+ * El backend valida montos, persiste la referencia en MongoDB Atlas y firma la petición.
  */
 export async function createWompiCheckout({ bookingId, sessionToken, concept, amount, clientName, clientWhatsApp, clientEmail }) {
   const res = await fetch(`${API_BASE}/payments/checkout`, {

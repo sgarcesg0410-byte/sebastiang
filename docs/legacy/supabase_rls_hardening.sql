@@ -1,4 +1,6 @@
 -- ==============================================================================
+-- ⚠️ ARCHIVO HISTÓRICO DEPRECADO — NO EJECUTAR EN PRODUCCIÓN
+-- ==============================================================================
 -- CIERRE DEFINITIVO DE SUPABASE / RLS (ETAPA A + ETAPA B COMPLETAS)
 -- Sebastian G Fotografía · MongoDB Atlas es ahora la única fuente de verdad (Single Source of Truth)
 -- Pegar COMPLETO en Supabase → SQL Editor → Run (si el proyecto Supabase sigue existiendo)

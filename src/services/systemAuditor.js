@@ -104,31 +104,35 @@ export function clearSoftwareErrors() {
 // 2. AUDITOR DE CAÍDAS Y CONECTIVIDAD DE SERVICIOS EN TIEMPO REAL
 export async function auditServicesHealth() {
   const results = {
-    supabase: { name: 'MongoDB Atlas Cloud (Base de Datos)', status: 'checking', latencyMs: 0, message: '' },
+    mongodb: { name: 'MongoDB Atlas Cloud (Base de Datos)', status: 'checking', latencyMs: 0, message: '' },
     apiServer: { name: 'Servidor API / Nube Vercel', status: 'checking', latencyMs: 0, message: '' },
     storage: { name: 'Almacenamiento Local & IndexedDB', status: 'checking', latencyMs: 0, message: '', usedKb: 0, percent: 0 },
     push: { name: 'Notificaciones Push (OneSignal / Android)', status: 'checking', latencyMs: 0, message: '' }
   };
 
   // Test 1: Base de Datos Cloud (MongoDB Atlas — Fuente Única de Verdad)
-  const supaStart = performance.now();
+  const dbStart = performance.now();
   try {
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout > 5s')), 5000));
-    const supaPromise = fetch('/api/health');
-    const res = await Promise.race([supaPromise, timeoutPromise]);
-    const supaEnd = performance.now();
-    results.supabase.latencyMs = Math.round(supaEnd - supaStart);
+    const dbPromise = fetch('/api/health');
+    const res = await Promise.race([dbPromise, timeoutPromise]);
+    const dbEnd = performance.now();
+    results.mongodb.latencyMs = Math.round(dbEnd - dbStart);
     if (!res.ok) {
-      results.supabase.status = 'degraded';
-      results.supabase.message = `Respondió con código HTTP ${res.status}`;
+      results.mongodb.status = 'degraded';
+      results.mongodb.message = `Respondió con código HTTP ${res.status}`;
     } else {
-      results.supabase.status = 'ok';
-      results.supabase.message = `MongoDB Atlas conectado (${results.supabase.latencyMs} ms)`;
+      results.mongodb.status = 'ok';
+      results.mongodb.message = `MongoDB Atlas conectado (${results.mongodb.latencyMs} ms)`;
     }
   } catch (err) {
-    results.supabase.status = 'down';
-    results.supabase.message = `Sin conexión o base de datos inaccesible: ${err.message}`;
+    results.mongodb.status = 'down';
+    results.mongodb.message = `Sin conexión o base de datos inaccesible: ${err.message}`;
   }
+
+  // Alias para retrocompatibilidad defensiva
+  results.database = results.mongodb;
+  results.supabase = results.mongodb;
 
   // Test 2: Servidor API
   const apiStart = performance.now();
@@ -340,18 +344,19 @@ export function generateImprovementInsights(bookings = [], payments = [], catalo
   }
 
   // 4. Base de datos MongoDB Atlas Cloud Uptime
-  if (servicesHealth?.supabase?.status === 'ok') {
+  const dbHealth = servicesHealth?.mongodb || servicesHealth?.database || servicesHealth?.supabase;
+  if (dbHealth?.status === 'ok') {
     insights.push({
-      id: 'ins-supabase-ok',
+      id: 'ins-mongodb-ok',
       category: 'infrastructure',
       level: 'good',
-      title: `Base de datos MongoDB Atlas respondiendo a ${servicesHealth.supabase.latencyMs} ms`,
+      title: `Base de datos MongoDB Atlas respondiendo a ${dbHealth.latencyMs} ms`,
       description: 'Sincronización en la nube activa: los cambios en tu PC se reflejan al instante en la APK de tu celular sin costos de cuota ($0 COP).',
       actionType: 'none'
     });
-  } else if (servicesHealth?.supabase?.status === 'down') {
+  } else if (dbHealth?.status === 'down') {
     insights.push({
-      id: 'ins-supabase-down',
+      id: 'ins-mongodb-down',
       category: 'infrastructure',
       level: 'critical',
       title: 'Base de datos MongoDB Atlas no responde (Modo Offline activo)',
@@ -362,8 +367,8 @@ export function generateImprovementInsights(bookings = [], payments = [], catalo
 
   // Cálculo de Score General (0 a 100)
   let score = 100;
-  if (servicesHealth?.supabase?.status === 'down') score -= 35;
-  if (servicesHealth?.supabase?.status === 'degraded') score -= 15;
+  if (dbHealth?.status === 'down') score -= 35;
+  if (dbHealth?.status === 'degraded') score -= 15;
   if (paymentConflicts?.conflictsCount > 0) score -= Math.min(30, paymentConflicts.conflictsCount * 10);
   if (heavyPhotos.length > 0) score -= 10;
   if (getSoftwareErrors().length > 0) score -= Math.min(20, getSoftwareErrors().length * 4);

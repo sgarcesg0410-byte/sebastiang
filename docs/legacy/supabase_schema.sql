@@ -1,4 +1,6 @@
 -- ==============================================================================
+-- ⚠️ ARCHIVO HISTÓRICO DEPRECADO — NO EJECUTAR EN PRODUCCIÓN
+-- ==============================================================================
 -- [LEGADO - DEPRECADO] ESQUEMA HISTÓRICO SUPABASE PARA SEBASTIAN G (sebastiang.app)
 -- NOTA ARQUITECTÓNICA: MongoDB Atlas es la única base de datos oficial en producción.
 -- Este archivo se conserva únicamente como referencia histórica con RLS cerrado (service_role).
