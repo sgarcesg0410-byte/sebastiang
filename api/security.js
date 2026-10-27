@@ -467,32 +467,100 @@ export function verifyApkDeviceToken(token, { expectedPasswordVersion, revokedDe
 
 // ------------------------------------------------------------------------------
 // Bitácora estructurada de auditoría financiera y de seguridad
+// Retención: 90 días. Sanitización estricta: cero contraseñas, JWT, códigos 2FA,
+// hashes scrypt, tarjetas ni comprobantes crudos; correos y teléfonos enmascarados.
 // ------------------------------------------------------------------------------
 
+export const AUDIT_LOG_RETENTION_DAYS = 90;
+const AUDIT_LOG_RETENTION_MS = AUDIT_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const MAX_IN_MEMORY_AUDIT_LOGS = 500;
 
+const SENSITIVE_AUDIT_KEYS = new Set([
+  'password', 'newpassword', 'currentpassword', 'pin', 'currentpin', 'newpin',
+  'adminpin', 'adminpinhash', 'adminpinscrypt', 'scrypthash', 'code', 'codehash',
+  'twofactorcode', 'jwt', 'token', 'admintoken', 'biorefreshtoken', 'devicetoken',
+  'secret', 'adminauthsecret', 'voucherurl', 'cardnumber', 'cvv', 'cvc', 'pan'
+]);
+
+export function sanitizeAuditMetadata(input, depth = 0) {
+  if (depth > 4 || input === null || input === undefined) return {};
+  if (typeof input !== 'object' || Array.isArray(input)) return {};
+
+  const clean = {};
+  for (const [rawKey, val] of Object.entries(input)) {
+    const keyLower = String(rawKey).toLowerCase().replace(/[_-]/g, '');
+    if (SENSITIVE_AUDIT_KEYS.has(keyLower)) {
+      clean[rawKey] = '[REDACTED]';
+      continue;
+    }
+    if (val === null || val === undefined) continue;
+    if (typeof val === 'string') {
+      if (keyLower.includes('email') || keyLower.includes('correo')) {
+        clean[rawKey] = maskEmail(val);
+      } else if (keyLower.includes('phone') || keyLower.includes('whatsapp') || keyLower.includes('telefono')) {
+        clean[rawKey] = maskPhone(val);
+      } else if (val.startsWith('data:image/') || val.length > 240) {
+        clean[rawKey] = '[TRUNCATED_PAYLOAD]';
+      } else {
+        clean[rawKey] = val;
+      }
+    } else if (typeof val === 'number' || typeof val === 'boolean') {
+      clean[rawKey] = val;
+    } else if (typeof val === 'object' && !Array.isArray(val)) {
+      clean[rawKey] = sanitizeAuditMetadata(val, depth + 1);
+    }
+  }
+  return clean;
+}
+
+export function pruneExpiredAuditLogs(logs = [], nowMs = Date.now()) {
+  if (!Array.isArray(logs)) return [];
+  return logs.filter((item) => {
+    if (!item) return false;
+    const ts = Date.parse(item.timestamp || item.createdAt || '');
+    if (Number.isNaN(ts)) return true;
+    return (nowMs - ts) <= AUDIT_LOG_RETENTION_MS;
+  });
+}
+
 export async function recordFinancialAuditLog(
-  { action, actor = 'system', entityType = 'system', entityId = '', amount = null, ip = '', details = {} } = {},
+  {
+    action,
+    actor = 'system',
+    entityType = 'system',
+    entityId = '',
+    amount = null,
+    status = '',
+    ip = '',
+    details = {},
+    metadata = {}
+  } = {},
   { runtimeDB, isMongoConfigured, upsertMongoDoc } = {}
 ) {
+  const mergedMeta = {
+    ...(details && typeof details === 'object' ? details : {}),
+    ...(metadata && typeof metadata === 'object' ? metadata : {})
+  };
+  const nowIso = new Date().toISOString();
   const entry = {
     id: `audit-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso,
+    createdAt: nowIso,
+    expiresAt: new Date(Date.now() + AUDIT_LOG_RETENTION_MS).toISOString(),
     action: String(action || 'UNKNOWN_ACTION'),
     actor: String(actor || 'system'),
     entityType: String(entityType || 'system'),
     entityId: String(entityId || ''),
     amount: amount !== null && amount !== undefined ? Number(amount) : null,
+    status: String(status || ''),
     ip: String(ip || ''),
-    details: details && typeof details === 'object' ? details : {}
+    details: sanitizeAuditMetadata(mergedMeta)
   };
 
   if (runtimeDB && typeof runtimeDB === 'object') {
     if (!Array.isArray(runtimeDB.auditLogs)) runtimeDB.auditLogs = [];
     runtimeDB.auditLogs.unshift(entry);
-    if (runtimeDB.auditLogs.length > MAX_IN_MEMORY_AUDIT_LOGS) {
-      runtimeDB.auditLogs.length = MAX_IN_MEMORY_AUDIT_LOGS;
-    }
+    runtimeDB.auditLogs = pruneExpiredAuditLogs(runtimeDB.auditLogs).slice(0, MAX_IN_MEMORY_AUDIT_LOGS);
   }
 
   if (typeof isMongoConfigured === 'function' && isMongoConfigured() && typeof upsertMongoDoc === 'function') {
@@ -505,6 +573,164 @@ export async function recordFinancialAuditLog(
 
   return entry;
 }
+
+// ------------------------------------------------------------------------------
+// Sanitización y Cifrado Autenticado (AES-256-GCM) para Backups de MongoDB
+// ------------------------------------------------------------------------------
+
+const FORBIDDEN_BACKUP_SETTINGS_KEYS = new Set([
+  'adminPin',
+  'adminPinHash',
+  'adminPinScrypt',
+  'adminResetChallenge',
+  'adminPasswordVersion',
+  'revokedApkDeviceIds'
+]);
+
+export function sanitizeBackupSnapshot(rawSnapshot = {}) {
+  const rawSettings = rawSnapshot?.settings && typeof rawSnapshot.settings === 'object'
+    ? rawSnapshot.settings
+    : {};
+  const safeSettings = {};
+  for (const [k, v] of Object.entries(rawSettings)) {
+    if (!FORBIDDEN_BACKUP_SETTINGS_KEYS.has(k)) {
+      safeSettings[k] = v;
+    }
+  }
+
+  return {
+    settings: safeSettings,
+    packages: Array.isArray(rawSnapshot?.packages) ? rawSnapshot.packages.map(({ _id, ...p }) => p) : [],
+    catalog: Array.isArray(rawSnapshot?.catalog) ? rawSnapshot.catalog.map(({ _id, ...c }) => c) : [],
+    bookings: Array.isArray(rawSnapshot?.bookings) ? rawSnapshot.bookings.map(({ _id, ...b }) => b) : [],
+    payments: Array.isArray(rawSnapshot?.payments) ? rawSnapshot.payments.map(({ _id, ...p }) => p) : [],
+    sessions: Array.isArray(rawSnapshot?.sessions) ? rawSnapshot.sessions.map(({ _id, ...s }) => s) : [],
+    reviews: Array.isArray(rawSnapshot?.reviews) ? rawSnapshot.reviews.map(({ _id, ...r }) => r) : []
+  };
+}
+
+function deriveBackupCipherKey(secretOverride) {
+  const baseSecret = String(secretOverride || process.env.BACKUP_ENCRYPTION_KEY || getAdminAuthSecret() || '').trim();
+  if (!baseSecret) {
+    throw new Error('No hay clave configurada para cifrar/descifrar el backup (BACKUP_ENCRYPTION_KEY o ADMIN_AUTH_SECRET).');
+  }
+  return crypto.createHash('sha256').update(`sebastiang-backup-aes256gcm:${baseSecret}`).digest();
+}
+
+export function encryptBackupPayload(snapshot, secretOverride) {
+  const key = deriveBackupCipherKey(secretOverride);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const plaintext = Buffer.from(JSON.stringify(snapshot), 'utf8');
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return {
+    algorithm: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    authTag: authTag.toString('base64'),
+    ciphertext: encrypted.toString('base64')
+  };
+}
+
+export function decryptBackupPayload(envelope, secretOverride) {
+  if (!envelope || envelope.algorithm !== 'aes-256-gcm' || !envelope.iv || !envelope.authTag || !envelope.ciphertext) {
+    throw new Error('Sobre de backup cifrado inválido o corrupto.');
+  }
+  const key = deriveBackupCipherKey(secretOverride);
+  const iv = Buffer.from(envelope.iv, 'base64');
+  const authTag = Buffer.from(envelope.authTag, 'base64');
+  const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return JSON.parse(decrypted.toString('utf8'));
+}
+
+// ------------------------------------------------------------------------------
+// Monitoreo Operacional y Alertas de Producción en Tiempo Real
+// ------------------------------------------------------------------------------
+
+const operationalMetrics = {
+  startedAt: new Date().toISOString(),
+  counters: {
+    mongoErrors: 0,
+    wompiErrors: 0,
+    smtpErrors: 0,
+    apiExceptions: 0,
+    backupExports: 0,
+    backupRestores: 0,
+    failedAdminLogins: 0,
+    failedApkAuths: 0
+  },
+  recentEvents: []
+};
+
+export function recordOperationalEvent(category, message = '', severity = 'warning') {
+  if (Object.prototype.hasOwnProperty.call(operationalMetrics.counters, category)) {
+    operationalMetrics.counters[category] += 1;
+  }
+  const ev = {
+    id: `mon-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+    timestamp: new Date().toISOString(),
+    category: String(category),
+    severity: String(severity),
+    message: String(message || '').slice(0, 220)
+  };
+  operationalMetrics.recentEvents.unshift(ev);
+  if (operationalMetrics.recentEvents.length > 100) {
+    operationalMetrics.recentEvents.length = 100;
+  }
+  return ev;
+}
+
+export function resetOperationalMetrics() {
+  for (const k of Object.keys(operationalMetrics.counters)) {
+    operationalMetrics.counters[k] = 0;
+  }
+  operationalMetrics.recentEvents = [];
+}
+
+export function getOperationalMonitoringReport({ mongoConnected = false, runtimeDB = {} } = {}) {
+  const c = operationalMetrics.counters;
+  const alerts = [];
+
+  if (!mongoConnected && process.env.MONGODB_URI) {
+    alerts.push({ code: 'MONGO_DISCONNECTED', severity: 'critical', message: 'MongoDB Atlas configurado pero no conectado actualmente.' });
+  }
+  if (c.mongoErrors > 0) {
+    alerts.push({ code: 'MONGO_ERRORS', severity: 'high', message: `Se registraron ${c.mongoErrors} error(es) de lectura/escritura en MongoDB Atlas.` });
+  }
+  if (c.wompiErrors > 0) {
+    alerts.push({ code: 'WOMPI_ERRORS', severity: 'high', message: `Se detectaron ${c.wompiErrors} rechazo(s) de firma o discrepancia en Wompi.` });
+  }
+  if (c.smtpErrors > 0) {
+    alerts.push({ code: 'SMTP_ERRORS', severity: 'medium', message: `Se detectaron ${c.smtpErrors} fallo(s) de envío SMTP.` });
+  }
+  if (c.failedAdminLogins >= 3 || c.failedApkAuths >= 3) {
+    alerts.push({
+      code: 'AUTH_ANOMALY',
+      severity: 'high',
+      message: `Intentos fallidos acumulados — Admin: ${c.failedAdminLogins}, Token APK: ${c.failedApkAuths}.`
+    });
+  }
+
+  return {
+    status: alerts.some(a => a.severity === 'critical' || a.severity === 'high') ? 'degraded' : 'healthy',
+    startedAt: operationalMetrics.startedAt,
+    mongoConnected: Boolean(mongoConnected),
+    retentionPolicyDays: AUDIT_LOG_RETENTION_DAYS,
+    counters: { ...c },
+    countsInMemory: {
+      bookings: Array.isArray(runtimeDB?.bookings) ? runtimeDB.bookings.length : 0,
+      payments: Array.isArray(runtimeDB?.payments) ? runtimeDB.payments.length : 0,
+      sessions: Array.isArray(runtimeDB?.sessions) ? runtimeDB.sessions.length : 0,
+      auditLogs: Array.isArray(runtimeDB?.auditLogs) ? runtimeDB.auditLogs.length : 0
+    },
+    alerts,
+    recentEvents: operationalMetrics.recentEvents.slice(0, 25)
+  };
+}
+
 
 
 

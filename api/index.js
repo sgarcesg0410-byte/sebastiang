@@ -23,6 +23,13 @@ import {
   createApkDeviceToken,
   verifyApkDeviceToken,
   recordFinancialAuditLog,
+  AUDIT_LOG_RETENTION_DAYS,
+  pruneExpiredAuditLogs,
+  sanitizeBackupSnapshot,
+  encryptBackupPayload,
+  decryptBackupPayload,
+  recordOperationalEvent,
+  getOperationalMonitoringReport,
   secureCompare
 } from './security.js';
 import {
@@ -770,29 +777,67 @@ function parseServerBookingDateTime(str) {
   return { dateKey, startMin, endMin: startMin + SERVER_SESSION_DURATION_MIN };
 }
 
+// Obtiene la lista vigente de dispositivos APK revocados desde MongoDB Atlas + memoria
+async function getRevokedApkDeviceIdsFromStore() {
+  const inMem = Array.isArray(runtimeDB.settings?.revokedApkDeviceIds)
+    ? runtimeDB.settings.revokedApkDeviceIds
+    : [];
+  if (isMongoConfigured()) {
+    try {
+      const settingsDoc = await findMongoDoc('settings', { id: 'app_settings' });
+      if (Array.isArray(settingsDoc?.revokedApkDeviceIds)) {
+        const merged = [...new Set([...inMem, ...settingsDoc.revokedApkDeviceIds])];
+        runtimeDB.settings = runtimeDB.settings || {};
+        runtimeDB.settings.revokedApkDeviceIds = merged;
+        return merged;
+      }
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando revokedApkDeviceIds: ${eMongo?.message || eMongo}`, 'warning');
+    }
+  }
+  return inMem;
+}
+
 // Endpoint exclusivo de alta eficiencia para la APK nativa Android:
 // Acepta token por dispositivo con alcance exclusivo apk_feed:read (rotativo y revocable),
-// secreto de compatibilidad x-apk-key, o sesión de administrador.
+// verificando en CADA petición tanto passwordVersion como revokedApkDeviceIds.
 app.get('/api/apk/feed', async (req, res, next) => {
-  const deviceToken = String(
-    req.headers['x-apk-device-token'] ||
-    (String(req.headers.authorization || '').startsWith('Bearer ')
-      ? String(req.headers.authorization).slice(7).trim()
-      : '')
-  ).trim();
+  const rawDeviceHeader = String(req.headers['x-apk-device-token'] || '').trim();
+  const bearerToken = String(req.headers.authorization || '').startsWith('Bearer ')
+    ? String(req.headers.authorization).slice(7).trim()
+    : '';
+  const candidateToken = rawDeviceHeader || bearerToken;
 
-  if (deviceToken) {
-    const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
-    const revokedDeviceIds = Array.isArray(runtimeDB.settings?.revokedApkDeviceIds)
-      ? runtimeDB.settings.revokedApkDeviceIds
-      : [];
-    const devicePayload = verifyApkDeviceToken(deviceToken, {
+  if (candidateToken) {
+    // Si es un token de administrador válido, delegar a requireAdminAuth
+    if (!rawDeviceHeader && verifyAdminToken(candidateToken)) {
+      return requireAdminAuth(req, res, next);
+    }
+
+    const [activeVersion, revokedDeviceIds] = await Promise.all([
+      getActivePasswordVersionFromStore({ runtimeDB }),
+      getRevokedApkDeviceIdsFromStore()
+    ]);
+    const devicePayload = verifyApkDeviceToken(candidateToken, {
       expectedPasswordVersion: activeVersion,
       revokedDeviceIds
     });
     if (devicePayload) {
       req.apkDevice = devicePayload;
       return next();
+    }
+
+    recordOperationalEvent('failedApkAuths', `Intento fallido o token APK revocado desde IP ${getClientIp(req)}`, 'warning');
+    await recordFinancialAuditLog({
+      action: 'apk_auth_failed',
+      actor: 'apk_device',
+      entityType: 'apk_device',
+      status: 'rejected',
+      ip: getClientIp(req)
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+    if (rawDeviceHeader) {
+      return res.status(401).json({ error: 'Token de dispositivo APK inválido, expirado o revocado.' });
     }
   }
 
@@ -1348,6 +1393,7 @@ app.post('/api/admin/auth', async (req, res) => {
   });
 
   if (!pinOk) {
+    recordOperationalEvent('failedAdminLogins', `PIN incorrecto desde IP ${ip}`, 'warning');
     const newRecord = recordFailedLogin(ip);
     const remaining = MAX_LOGIN_ATTEMPTS - newRecord.count;
 
@@ -2509,7 +2555,7 @@ app.post('/api/admin/apk-devices/revoke', requireAdminAuth, async (req, res) => 
 });
 
 // ==============================================================================
-// AUDITORÍA FINANCIERA Y RESPALDO / RESTAURACIÓN MONGODB ATLAS
+// AUDITORÍA FINANCIERA, MONITOREO Y RESPALDO / RESTAURACIÓN MONGODB ATLAS
 // ==============================================================================
 app.get('/api/admin/audit-logs', requireAdminAuth, async (req, res) => {
   let logs = Array.isArray(runtimeDB.auditLogs) ? [...runtimeDB.auditLogs] : [];
@@ -2524,33 +2570,187 @@ app.get('/api/admin/audit-logs', requireAdminAuth, async (req, res) => {
           return true;
         });
       }
-    } catch (eMongo) {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error leyendo audit_logs: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
-  return res.json({ success: true, logs: logs.slice(0, 100) });
+  const activeLogs = pruneExpiredAuditLogs(logs);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  return res.json({
+    success: true,
+    retentionDays: AUDIT_LOG_RETENTION_DAYS,
+    logs: activeLogs.slice(0, 100)
+  });
 });
 
 app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
+  const clientIp = getClientIp(req);
+  if (!checkPublicWriteRateLimit(clientIp, 10, 'admin-backup-export')) {
+    return res.status(429).json({ error: 'Límite de exportación de backups alcanzado temporalmente. Intenta en unos minutos.' });
+  }
+
+  const exportedAt = new Date().toISOString();
+  const dateStamp = exportedAt.slice(0, 10);
+  const rawUrl = String(req.originalUrl || req.url || '');
+  const shouldEncrypt =
+    req.query?.encrypt === '1' ||
+    req.query?.encrypt === 'true' ||
+    rawUrl.includes('encrypt=1') ||
+    rawUrl.includes('encrypt=true');
+
+  // Sanitizar estrictamente: nunca exportar hashes de PIN, retos de reseteo ni secretos
+  const cleanSnapshot = sanitizeBackupSnapshot({
+    settings: runtimeDB.settings || {},
+    packages: runtimeDB.packages || [],
+    catalog: runtimeDB.catalog || [],
+    bookings: runtimeDB.bookings || [],
+    payments: runtimeDB.payments || [],
+    sessions: runtimeDB.sessions || [],
+    reviews: runtimeDB.reviews || []
+  });
+
+  recordOperationalEvent('backupExports', `Backup exportado por admin (${shouldEncrypt ? 'AES-256-GCM' : 'JSON'})`, 'info');
   await recordFinancialAuditLog({
     action: 'database_backup_exported',
     actor: 'admin',
     entityType: 'system',
     entityId: 'mongodb_snapshot',
-    ip: getClientIp(req)
+    status: shouldEncrypt ? 'encrypted_aes256gcm' : 'sanitized_json',
+    ip: clientIp,
+    details: {
+      bookingsCount: cleanSnapshot.bookings.length,
+      paymentsCount: cleanSnapshot.payments.length,
+      sessionsCount: cleanSnapshot.sessions.length,
+      encrypted: shouldEncrypt
+    }
   }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Content-Disposition', `attachment; filename="sebastiang-backup-${dateStamp}.json"`);
+
+  if (shouldEncrypt) {
+    const encryptedEnvelope = encryptBackupPayload(cleanSnapshot);
+    return res.json({
+      success: true,
+      exportedAt,
+      sourceOfTruth: 'mongodb-atlas',
+      encrypted: true,
+      encryptedEnvelope
+    });
+  }
 
   return res.json({
     success: true,
-    exportedAt: new Date().toISOString(),
+    exportedAt,
     sourceOfTruth: 'mongodb-atlas',
-    snapshot: {
-      settings: runtimeDB.settings || {},
-      packages: runtimeDB.packages || [],
-      catalog: runtimeDB.catalog || [],
-      bookings: runtimeDB.bookings || [],
-      payments: runtimeDB.payments || [],
-      sessions: runtimeDB.sessions || [],
-      reviews: runtimeDB.reviews || []
+    encrypted: false,
+    snapshot: cleanSnapshot
+  });
+});
+
+app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
+  const clientIp = getClientIp(req);
+  if (!checkPublicWriteRateLimit(clientIp, 5, 'admin-backup-restore')) {
+    return res.status(429).json({ error: 'Límite de restauración de backups alcanzado temporalmente.' });
+  }
+
+  const startMs = performance.now();
+  try {
+    let incomingSnapshot = req.body?.snapshot || null;
+    if (req.body?.encryptedEnvelope) {
+      incomingSnapshot = decryptBackupPayload(req.body.encryptedEnvelope);
     }
+
+    if (!incomingSnapshot || typeof incomingSnapshot !== 'object') {
+      return res.status(400).json({ error: 'Se requiere un snapshot válido o un encryptedEnvelope auténtico para restaurar.' });
+    }
+
+    const clean = sanitizeBackupSnapshot(incomingSnapshot);
+
+    // Conservar intactos los parámetros críticos de seguridad actuales en memoria
+    const preservedSecurity = {
+      adminPinScrypt: runtimeDB.settings?.adminPinScrypt,
+      adminPinHash: runtimeDB.settings?.adminPinHash,
+      adminPasswordVersion: runtimeDB.settings?.adminPasswordVersion,
+      adminResetChallenge: runtimeDB.settings?.adminResetChallenge,
+      revokedApkDeviceIds: runtimeDB.settings?.revokedApkDeviceIds
+    };
+
+    runtimeDB.settings = {
+      ...(runtimeDB.settings || {}),
+      ...(clean.settings || {}),
+      ...Object.fromEntries(Object.entries(preservedSecurity).filter(([, v]) => v !== undefined))
+    };
+    if (Array.isArray(clean.packages) && clean.packages.length > 0) {
+      runtimeDB.packages = clean.packages;
+    }
+    runtimeDB.catalog = Array.isArray(clean.catalog) ? clean.catalog : [];
+    runtimeDB.bookings = Array.isArray(clean.bookings)
+      ? clean.bookings.map(b => normalizeBookingDoc(b)).filter(Boolean)
+      : [];
+    runtimeDB.payments = Array.isArray(clean.payments) ? clean.payments : [];
+    runtimeDB.sessions = Array.isArray(clean.sessions) ? clean.sessions : [];
+    runtimeDB.reviews = Array.isArray(clean.reviews) ? clean.reviews : [];
+
+    if (isMongoConfigured()) {
+      const ops = [];
+      for (const b of runtimeDB.bookings) {
+        if (b?.id) ops.push(persistBookingToMongo(b));
+      }
+      for (const p of runtimeDB.payments) {
+        if (p?.id) ops.push(persistPaymentToMongo(p));
+      }
+      for (const s of runtimeDB.sessions) {
+        if (s?.token) ops.push(upsertMongoDoc('sessions', { token: s.token }, s));
+      }
+      for (const r of runtimeDB.reviews) {
+        if (r?.id) ops.push(upsertMongoDoc('reviews', { id: r.id }, r));
+      }
+      await Promise.allSettled(ops);
+    }
+
+    const recoveryTimeMs = Math.max(1, Math.round(performance.now() - startMs));
+    const restoredCounts = {
+      bookings: runtimeDB.bookings.length,
+      payments: runtimeDB.payments.length,
+      sessions: runtimeDB.sessions.length,
+      catalog: runtimeDB.catalog.length,
+      reviews: runtimeDB.reviews.length
+    };
+
+    recordOperationalEvent('backupRestores', `Backup restaurado en ${recoveryTimeMs} ms`, 'info');
+    await recordFinancialAuditLog({
+      action: 'database_backup_restored',
+      actor: 'admin',
+      entityType: 'system',
+      entityId: 'mongodb_snapshot',
+      status: 'restored',
+      ip: clientIp,
+      details: { recoveryTimeMs, ...restoredCounts }
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+    return res.json({
+      success: true,
+      restoredAt: new Date().toISOString(),
+      recoveryTimeMs,
+      restoredCounts
+    });
+  } catch (err) {
+    recordOperationalEvent('apiExceptions', `Fallo restaurando backup: ${err?.message || err}`, 'critical');
+    return res.status(400).json({ error: err?.message || 'Error al restaurar el backup.' });
+  }
+});
+
+app.get('/api/admin/monitoring/status', requireAdminAuth, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const report = getOperationalMonitoringReport({
+    mongoConnected: isMongoConfigured(),
+    runtimeDB
+  });
+  return res.json({
+    success: true,
+    ...report
   });
 });
 
