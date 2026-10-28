@@ -175,22 +175,52 @@ export async function findMongoDoc(collectionName, filter = {}) {
 }
 
 /**
- * Elimina un documento de una colección de MongoDB
+ * Elimina un documento de una colección de MongoDB.
+ * Retorna { acknowledged: boolean, deletedCount: number }
  */
 export async function deleteMongoDoc(collectionName, filter, { throwOnError = false } = {}) {
   try {
     const db = await getMongoDB();
     if (!db) {
       if (throwOnError) throw new Error(`MongoDB no está conectado para eliminar en ${collectionName}`);
-      return false;
+      return { acknowledged: false, deletedCount: 0 };
     }
     const col = db.collection(collectionName);
     const res = await col.deleteOne(filter);
-    return res.deletedCount > 0;
+    if (res && res.acknowledged === false) {
+      if (throwOnError) throw new Error(`Eliminación en ${collectionName} no reconocida por MongoDB Atlas`);
+      return { acknowledged: false, deletedCount: 0 };
+    }
+    return { acknowledged: true, deletedCount: res ? (res.deletedCount || 0) : 0 };
   } catch (err) {
     console.warn(`⚠️ [MongoDB] Error eliminando en ${collectionName}:`, err?.message || err);
     if (throwOnError) throw err;
-    return false;
+    return { acknowledged: false, deletedCount: 0 };
+  }
+}
+
+/**
+ * Elimina múltiples documentos de una colección de MongoDB.
+ * Retorna { acknowledged: boolean, deletedCount: number }
+ */
+export async function deleteMongoDocs(collectionName, filter, { throwOnError = false } = {}) {
+  try {
+    const db = await getMongoDB();
+    if (!db) {
+      if (throwOnError) throw new Error(`MongoDB no está conectado para eliminar en ${collectionName}`);
+      return { acknowledged: false, deletedCount: 0 };
+    }
+    const col = db.collection(collectionName);
+    const res = await col.deleteMany(filter);
+    if (res && res.acknowledged === false) {
+      if (throwOnError) throw new Error(`Eliminación múltiple en ${collectionName} no reconocida por MongoDB Atlas`);
+      return { acknowledged: false, deletedCount: 0 };
+    }
+    return { acknowledged: true, deletedCount: res ? (res.deletedCount || 0) : 0 };
+  } catch (err) {
+    console.warn(`⚠️ [MongoDB] Error eliminando múltiples en ${collectionName}:`, err?.message || err);
+    if (throwOnError) throw err;
+    return { acknowledged: false, deletedCount: 0 };
   }
 }
 

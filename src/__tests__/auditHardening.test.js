@@ -1221,5 +1221,303 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         else delete process.env.MONGODB_URI;
       }
     }, 10000);
+
+    it('webhook con referencia alterada hacia pago ya verificado es rechazado con 400 antes de tocar la reserva y mantiene idempotencia en eventos legítimos', async () => {
+      const prevKey = process.env.WOMPI_PRIVATE_KEY;
+      const origFetch = globalThis.fetch;
+      try {
+        process.env.WOMPI_PRIVATE_KEY = 'prv_test_secret_key_verified_check';
+
+        const payment = {
+          id: 'pay-target-verified-1',
+          reference: 'ref-verified-target',
+          amount: 80000,
+          status: 'verified',
+          currency: 'COP',
+          bookingId: 'book-pending-link'
+        };
+        const booking = {
+          id: 'book-pending-link',
+          clientName: 'Cliente Protegido',
+          totalPrice: 150000,
+          status: 'pending',
+          depositPaid: false
+        };
+
+        runtimeDB.payments = [payment];
+        runtimeDB.bookings = [booking];
+
+        // 1. Simular transacción oficial en Wompi API cuya referencia oficial es 'ref-official-other'
+        // El atacante envía payload diciendo tx.id = 'tx-tamper-ver-99' y reference = 'ref-verified-target'
+        globalThis.fetch = async (url) => {
+          if (String(url).includes('/transactions/tx-tamper-ver-99')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                data: {
+                  id: 'tx-tamper-ver-99',
+                  reference: 'ref-official-other-compromised',
+                  status: 'APPROVED',
+                  amount_in_cents: 8000000,
+                  currency: 'COP'
+                }
+              })
+            };
+          }
+          if (String(url).includes('/transactions/tx-legitimate-ver-100')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                data: {
+                  id: 'tx-legitimate-ver-100',
+                  reference: 'ref-verified-target',
+                  status: 'APPROVED',
+                  amount_in_cents: 8000000,
+                  currency: 'COP'
+                }
+              })
+            };
+          }
+          return { ok: false, status: 404 };
+        };
+
+        const tamperedPayload = {
+          data: {
+            transaction: {
+              id: 'tx-tamper-ver-99',
+              reference: 'ref-verified-target',
+              status: 'APPROVED',
+              amount_in_cents: 8000000,
+              currency: 'COP'
+            }
+          },
+          signature: {
+            properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+            checksum: crypto
+              .createHash('sha256')
+              .update(`tx-tamper-ver-99APPROVED80000001792000000test_events_secret_2026`)
+              .digest('hex')
+          },
+          timestamp: 1792000000,
+          event: 'transaction.updated'
+        };
+
+        // Debe ser RECHAZADO con 400 sin entrar a la salida idempotente ni confirmar la reserva
+        const tamperedRes = await invokeApp('POST', '/api/payments/webhook', { body: tamperedPayload });
+        expect(tamperedRes.status).toBe(400);
+        expect(tamperedRes.body.error).toContain('Discrepancia crítica');
+
+        // Demostrar que la reserva NO fue modificada ni confirmada
+        const inMemBooking = runtimeDB.bookings.find(b => b.id === 'book-pending-link');
+        expect(inMemBooking.status).toBe('pending');
+        expect(inMemBooking.depositPaid).toBe(false);
+
+        // 2. Ahora enviar el evento LEGÍTIMO con referencia que coincide con Wompi oficial
+        const legitimatePayload = {
+          data: {
+            transaction: {
+              id: 'tx-legitimate-ver-100',
+              reference: 'ref-verified-target',
+              status: 'APPROVED',
+              amount_in_cents: 8000000,
+              currency: 'COP'
+            }
+          },
+          signature: {
+            properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+            checksum: crypto
+              .createHash('sha256')
+              .update(`tx-legitimate-ver-100APPROVED80000001792000000test_events_secret_2026`)
+              .digest('hex')
+          },
+          timestamp: 1792000000,
+          event: 'transaction.updated'
+        };
+
+        const legitRes = await invokeApp('POST', '/api/payments/webhook', { body: legitimatePayload });
+        expect(legitRes.status).toBe(200);
+        expect(legitRes.body.idempotent).toBe(true);
+
+        // Ahora sí se reconcilia la reserva
+        expect(inMemBooking.status).toBe('confirmed');
+        expect(inMemBooking.depositPaid).toBe(true);
+      } finally {
+        globalThis.fetch = origFetch;
+        if (prevKey) process.env.WOMPI_PRIVATE_KEY = prevKey;
+        else delete process.env.WOMPI_PRIVATE_KEY;
+      }
+    });
+
+    it('POST /api/admin/catalog/delete-samples propaga error de conexión (500) y no limpia memoria ante fallo de MongoDB', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+        const adminToken = createAdminToken({ pwd: 1 });
+
+        const samplePhotos = [
+          { id: 'cat-1', title: 'Muestra 1', url: 'https://images.unsplash.com/photo-1' },
+          { id: 'cat-real-1', title: 'Real 1', url: 'https://cdn.sebastiang.app/photo-1.jpg' }
+        ];
+        runtimeDB.catalog = [...samplePhotos];
+
+        const res = await invokeApp('POST', '/api/admin/catalog/delete-samples', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toContain('Error eliminando fotos de muestra');
+
+        // La memoria NO debe haber sido mutada
+        expect(runtimeDB.catalog.some(c => c.id === 'cat-1')).toBe(true);
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
+
+    it('DELETE /api/admin/catalog/:id propaga error si Mongo falla y responde con éxito idempotente si no existe', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      const adminToken = createAdminToken({ pwd: 1 });
+      try {
+        // Fallo con Mongo inaccesible
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+        runtimeDB.catalog = [{ id: 'cat-test-delete', title: 'Foto Borrar', url: 'https://example.com/p.jpg' }];
+
+        const failRes = await invokeApp('DELETE', '/api/admin/catalog/cat-test-delete', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(failRes.status).toBe(500);
+        expect(failRes.body.error).toContain('Error eliminando foto');
+        expect(runtimeDB.catalog.some(c => c.id === 'cat-test-delete')).toBe(true);
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+
+      // Idempotencia cuando no existe (sin Mongo o con Mongo apagado en pruebas)
+      runtimeDB.catalog = [];
+      const idempRes = await invokeApp('DELETE', '/api/admin/catalog/cat-inexistente-999', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(idempRes.status).toBe(200);
+      expect(idempRes.body.success).toBe(true);
+      expect(idempRes.body.deleted).toBe(false);
+    }, 10000);
+
+    it('DELETE /api/admin/reviews/:id propaga error si Mongo falla y responde con éxito idempotente si no existe', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      const adminToken = createAdminToken({ pwd: 1 });
+      try {
+        // Fallo con Mongo inaccesible
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+        runtimeDB.reviews = [{ id: 'rev-test-del', clientName: 'Ana', comment: 'Bien' }];
+
+        const failRes = await invokeApp('DELETE', '/api/admin/reviews/rev-test-del', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(failRes.status).toBe(500);
+        expect(failRes.body.error).toContain('Error eliminando reseña');
+        expect(runtimeDB.reviews.some(r => r.id === 'rev-test-del')).toBe(true);
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+
+      // Idempotencia cuando no existe
+      runtimeDB.reviews = [];
+      const idempRes = await invokeApp('DELETE', '/api/admin/reviews/rev-inexistente-999', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(idempRes.status).toBe(200);
+      expect(idempRes.body.success).toBe(true);
+      expect(idempRes.body.deleted).toBe(false);
+    }, 10000);
+
+    it('DELETE /api/admin/vip/:id propaga error si Mongo falla y responde con éxito idempotente si no existe', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      const adminToken = createAdminToken({ pwd: 1 });
+      try {
+        // Fallo con Mongo inaccesible
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+        runtimeDB.vipClients = [{ id: 'vip-3001112233', clientName: 'VIP Carlos' }];
+
+        const failRes = await invokeApp('DELETE', '/api/admin/vip/vip-3001112233', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(failRes.status).toBe(500);
+        expect(failRes.body.error).toContain('Error eliminando cliente VIP');
+        expect(runtimeDB.vipClients.some(v => v.id === 'vip-3001112233')).toBe(true);
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+
+      // Idempotencia cuando no existe
+      runtimeDB.vipClients = [];
+      const idempRes = await invokeApp('DELETE', '/api/admin/vip/vip-inexistente-999', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(idempRes.status).toBe(200);
+      expect(idempRes.body.success).toBe(true);
+      expect(idempRes.body.deleted).toBe(false);
+    }, 10000);
+
+    it('rutas de escritura públicas (reviews y submit de galería) no mutan memoria ante fallo de MongoDB', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+
+        // 1. Reseña pública
+        runtimeDB.reviews = [];
+        const revRes = await invokeApp('POST', '/api/reviews', {
+          body: { clientName: 'Cliente Fallo', comment: 'Prueba fallo' }
+        });
+        expect(revRes.status).toBe(500);
+        expect(runtimeDB.reviews.length).toBe(0);
+
+        // 2. Submit de galería
+        const session = {
+          id: 'sess-submit-fail-1',
+          token: 'tok-submit-fail-1',
+          clientName: 'Cliente Galería',
+          packageTitle: 'Mini',
+          status: 'ready',
+          photos: [{ id: 'p1', title: 'Foto 1', selected: false }]
+        };
+        runtimeDB.sessions = [session];
+
+        const subRes = await invokeApp('POST', '/api/gallery/tok-submit-fail-1/submit', {
+          body: { selections: [{ id: 'p1', selected: true }] }
+        });
+        expect(subRes.status).toBe(500);
+        // La memoria NO debe estar en 'submitted'
+        const inMemS = runtimeDB.sessions.find(s => s.token === 'tok-submit-fail-1');
+        expect(inMemS.status).toBe('ready');
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
   });
 });
