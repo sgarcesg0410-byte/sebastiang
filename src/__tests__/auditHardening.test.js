@@ -893,5 +893,104 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(backupRes.body.sourceOfTruth).toBe('mongodb-atlas');
       expect(backupRes.body.snapshot).toBeDefined();
     });
+
+    it('webhook de Wompi con referencia inexistente devuelve 404 y no simula estar procesado', async () => {
+      const ghostTxId = 'tx-ghost-999';
+      const ghostRef = 'wompi-inexistente-total';
+      const ts = Math.floor(Date.now() / 1000);
+      const rawChecksum = `${ghostTxId}APPROVED5000000${ts}${process.env.WOMPI_EVENTS_SECRET}`;
+      const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
+
+      const webhookPayload = {
+        event: 'transaction.updated',
+        data: {
+          transaction: {
+            id: ghostTxId,
+            reference: ghostRef,
+            status: 'APPROVED',
+            amount_in_cents: 5000000
+          }
+        },
+        timestamp: ts,
+        signature: {
+          properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+          checksum
+        }
+      };
+
+      const res = await invokeApp('POST', '/api/payments/webhook', { body: webhookPayload });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain('no encontrado');
+    });
+
+    it('actualización administrativa de reservas informa fallo (500) ante error de persistencia en MongoDB', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+        const adminToken = createAdminToken({ pwd: 1 });
+        
+        const updateRes = await invokeApp('PATCH', '/api/admin/bookings/book-fake-999', {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          body: { status: 'confirmed' }
+        });
+        expect(updateRes.status).toBe(500);
+        expect(updateRes.body.error).toContain('Fallo al guardar la actualización de la reserva');
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
+
+    it('estado de salud (/api/health) distingue entre URI configurada y conexión real', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/test_unreachable?serverSelectionTimeoutMS=200';
+
+        const healthRes = await invokeApp('GET', '/api/health');
+        expect(healthRes.status).toBe(503);
+        expect(healthRes.body.status).toBe('degraded');
+        expect(healthRes.body.healthy).toBe(false);
+        expect(healthRes.body.persistenceReady).toBe(false);
+        expect(healthRes.body.mongoConfigured).toBe(true);
+        expect(healthRes.body.mongoConnected).toBe(false);
+        expect(healthRes.body.database).toBe('mongodb_unreachable');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    });
+
+    it('registro manual de pagos (/api/payments) rechaza modo volátil en producción con 503', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevUri = process.env.MONGODB_URI;
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.MONGODB_URI;
+
+        const res = await invokeApp('POST', '/api/payments', {
+          body: {
+            clientName: 'Cliente Prod',
+            amount: 50000,
+            method: 'nequi'
+          }
+        });
+        expect(res.status).toBe(503);
+        expect(res.body.error).toContain('persistencia de datos activa');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+      }
+    });
   });
 });

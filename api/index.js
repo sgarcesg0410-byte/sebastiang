@@ -64,6 +64,7 @@ import {
 } from './payments/gateway.js';
 import {
   isMongoConfigured,
+  pingMongoDB,
   upsertMongoDoc,
   updateMongoDoc,
   findMongoDocs,
@@ -239,8 +240,19 @@ function mergeBookingObjectsServer(existing, incoming) {
 }
 
 async function persistBookingToMongo(b, { throwOnError = false } = {}) {
-  if (!b || !b.id) return false;
+  if (!b || !b.id) {
+    if (throwOnError) {
+      throw new Error('Reserva inválida o sin identificador para persistir en MongoDB Atlas.');
+    }
+    return false;
+  }
   const normalized = normalizeBookingDoc(b);
+  if (!normalized) {
+    if (throwOnError) {
+      throw new Error('No se pudo normalizar el documento de reserva para persistencia en MongoDB Atlas.');
+    }
+    return false;
+  }
 
   if (!isMongoConfigured()) {
     if (throwOnError) {
@@ -249,25 +261,27 @@ async function persistBookingToMongo(b, { throwOnError = false } = {}) {
     return false;
   }
 
-  if (normalized) {
-    try {
-      const ok = await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id }, { throwOnError });
-      if (!ok) {
-        throw new Error('Fallo al persistir documento de reserva en MongoDB Atlas (resultado no exitoso)');
-      }
-      return true;
-    } catch (eMongo) {
-      console.error('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
-      recordOperationalEvent('apiExceptions', `Fallo de persistencia de reserva en MongoDB Atlas: ${eMongo?.message || eMongo}`, 'critical');
-      if (throwOnError) throw eMongo;
-      return false;
+  try {
+    const ok = await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id }, { throwOnError });
+    if (!ok) {
+      throw new Error('Fallo al persistir documento de reserva en MongoDB Atlas (resultado no exitoso)');
     }
+    return true;
+  } catch (eMongo) {
+    console.error('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
+    recordOperationalEvent('apiExceptions', `Fallo de persistencia de reserva en MongoDB Atlas: ${eMongo?.message || eMongo}`, 'critical');
+    if (throwOnError) throw eMongo;
+    return false;
   }
-  return true;
 }
 
 async function persistPaymentToMongo(p, { throwOnError = false } = {}) {
-  if (!p || !p.id) return false;
+  if (!p || !p.id) {
+    if (throwOnError) {
+      throw new Error('Pago inválido o sin identificador para persistir en MongoDB Atlas.');
+    }
+    return false;
+  }
 
   if (!isMongoConfigured()) {
     if (throwOnError) {
@@ -594,18 +608,40 @@ registerPublicRoutes(app, {
 // ==============================================================================
 
 app.get('/api/health', async (req, res) => {
-  const mongoOk = isMongoConfigured();
+  const configured = isMongoConfigured();
   const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-  const status = mongoOk ? 'ok' : (isProduction ? 'degraded' : 'ok_development_memory');
 
-  res.status(mongoOk ? 200 : (isProduction ? 503 : 200)).json({
+  let connected = false;
+  let mongoLatencyMs = null;
+  let mongoError = null;
+
+  if (configured) {
+    const ping = await pingMongoDB({ timeoutMs: 1500 });
+    connected = ping.ok;
+    mongoLatencyMs = ping.latencyMs || null;
+    mongoError = ping.error || null;
+  }
+
+  // En producción, tanto la falta de configuración como la desconexión real de MongoDB Atlas
+  // sitúan el servicio en estado 'degraded' y devuelven HTTP 503.
+  const persistenceReady = configured && connected;
+  const status = persistenceReady
+    ? 'ok'
+    : (isProduction ? 'degraded' : 'ok_development_memory');
+
+  const httpStatus = persistenceReady ? 200 : (isProduction ? 503 : 200);
+
+  res.status(httpStatus).json({
     status,
-    healthy: mongoOk,
+    healthy: persistenceReady,
     service: 'sebastiang-api',
-    database: mongoOk ? 'mongodb-atlas' : 'volatile_memory',
-    persistenceReady: mongoOk,
+    database: persistenceReady ? 'mongodb-atlas' : (configured ? 'mongodb_unreachable' : 'volatile_memory'),
+    persistenceReady,
     isProduction,
-    mongoConfigured: mongoOk,
+    mongoConfigured: configured,
+    mongoConnected: connected,
+    mongoLatencyMs,
+    mongoError,
     smtpConfigured: Boolean(process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS),
     pushConfigured: Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY),
     timestamp: new Date().toISOString()
@@ -1604,7 +1640,14 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
     if (idx !== -1) runtimeDB.bookings[idx] = booking;
   }
 
-  await persistBookingToMongo(booking).catch(e => console.warn('MongoDB sync error:', e));
+  if (isMongoConfigured()) {
+    try {
+      await persistBookingToMongo(booking, { throwOnError: true });
+    } catch (eMongo) {
+      console.error('❌ [Admin Update] Fallo al actualizar reserva en MongoDB Atlas:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al guardar la actualización de la reserva en la base de datos central.' });
+    }
+  }
   await recordFinancialAuditLog({
     action: 'booking_updated',
     actor: 'admin',
@@ -1620,15 +1663,20 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
 app.delete('/api/admin/bookings/:id', async (req, res) => {
   const { id } = req.params;
   const supaId = id.startsWith('book-') ? id : `book-${id}`;
-  runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id && b.id !== supaId);
 
   if (isMongoConfigured()) {
     try {
-      await deleteMongoDoc('bookings', { $or: [{ id }, { id: supaId }, { supaId }] });
+      const ok = await deleteMongoDoc('bookings', { $or: [{ id }, { id: supaId }, { supaId }] });
+      if (!ok) {
+        throw new Error('Fallo al eliminar la reserva de MongoDB Atlas (resultado no reconocido)');
+      }
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error eliminando reserva:', eMongo?.message || eMongo);
+      console.error('❌ [Admin Delete] Fallo al eliminar reserva en MongoDB Atlas:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al eliminar la reserva en la base de datos central.' });
     }
   }
+
+  runtimeDB.bookings = (runtimeDB.bookings || []).filter(b => b.id !== id && b.id !== supaId);
   await recordFinancialAuditLog({
     action: 'booking_deleted',
     actor: 'admin',
@@ -1670,6 +1718,14 @@ app.get('/api/admin/payments', async (req, res) => {
 app.post('/api/payments', async (req, res) => {
   if (!checkPublicWriteRateLimit(getClientIp(req), 15, 'payments')) {
     return res.status(429).json({ error: 'Demasiados registros de pago desde tu conexión. Intenta nuevamente en unos minutos.' });
+  }
+
+  // En producción, prohibir terminantemente registrar pagos en modo de memoria volátil
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'El registro de pagos requiere persistencia de datos activa (MongoDB Atlas no disponible en producción).'
+    });
   }
   const {
     clientName, clientWhatsApp, sessionToken, packageTitle, amount, method,
@@ -1752,12 +1808,17 @@ app.post('/api/payments', async (req, res) => {
     `_Comprobante registrado en la plataforma. ¡Por favor verifica mi pago!_`
   );
 
-  // Guardar en MongoDB Atlas (fuente única de verdad)
+  // Guardar en MongoDB Atlas (fuente única de verdad) con persistencia duradera obligatoria
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('payments', { id: newPayment.id }, newPayment);
+      await persistPaymentToMongo(newPayment, { throwOnError: true });
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
+      console.error('❌ [Registro de Pago] Fallo persistiendo pago en MongoDB Atlas:', eMongo?.message || eMongo);
+      const idx = runtimeDB.payments.findIndex(p => p.id === newPayment.id);
+      if (idx !== -1) runtimeDB.payments.splice(idx, 1);
+      return res.status(503).json({
+        error: 'No se pudo registrar el pago en la base de datos central. Por favor intenta de nuevo.'
+      });
     }
   }
 
@@ -2030,16 +2091,45 @@ app.post('/api/payments/webhook', async (req, res) => {
           }
         }, { throwOnError: true });
 
-        // Si modifiedCount === 0 (o matchedCount === 0), otra petición concurrente ya ganó la carrera
-        if (atomicResult && atomicResult.modifiedCount === 0) {
-          console.warn(`[Wompi Webhook] Detección de carrera concurrente evitada para ref: ${tx.reference}`);
-          return res.status(200).json({
-            success: true,
-            idempotent: true,
-            concurrentReplay: true,
-            message: 'Transacción ya procesada concurrentemente por otra instancia.',
-            reference: tx.reference
-          });
+        // Evaluación estricta de la atomicidad usando matchedCount y verificación en MongoDB Atlas:
+        if (atomicResult && atomicResult.matchedCount === 0) {
+          // Ningún documento coincidió con { reference: tx.reference, status: { $ne: 'verified' } }
+          // Esto puede deberse a:
+          // A) El pago ya fue marcado como 'verified' por otra instancia concurrente.
+          // B) El pago no existe en MongoDB Atlas en absoluto.
+          const persistedDoc = await findMongoDoc('payments', { reference: tx.reference });
+          if (persistedDoc && (persistedDoc.status === 'verified' || persistedDoc.status === 'approved')) {
+            console.warn(`[Wompi Webhook] Pago con ref ${tx.reference} ya verificado en MongoDB Atlas por otra instancia.`);
+            // Reconciliación duradera de la reserva asociada si quedó pendiente:
+            if (persistedDoc.bookingId) {
+              const associatedBooking = await findBookingById(persistedDoc.bookingId);
+              if (associatedBooking && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
+                associatedBooking.status = 'confirmed';
+                associatedBooking.depositPaid = true;
+                const inMemB = (runtimeDB.bookings || []).find(b => b.id === associatedBooking.id);
+                if (inMemB) Object.assign(inMemB, associatedBooking);
+                await persistBookingToMongo(associatedBooking, { throwOnError: true });
+              }
+            }
+            return res.status(200).json({
+              success: true,
+              idempotent: true,
+              concurrentReplay: true,
+              message: 'Transacción ya procesada concurrentemente por otra instancia (reconciliada en Atlas).',
+              reference: tx.reference
+            });
+          }
+
+          // Si el documento NO existe en MongoDB Atlas, persistirlo de forma duradera antes de continuar
+          if (!persistedDoc) {
+            console.warn(`[Wompi Webhook] Pago con ref ${tx.reference} no existía en MongoDB Atlas. Creando y persistiendo...`);
+            payment.status = 'verified';
+            payment.gatewayStatus = tx.status;
+            payment.transactionId = tx.id;
+            payment.paymentMethodType = tx.payment_method_type || 'WOMPI';
+            payment.approvedAt = new Date().toISOString();
+            await persistPaymentToMongo(payment, { throwOnError: true });
+          }
         }
       } catch (eMongo) {
         console.error('❌ [Wompi Webhook] Fallo en transición atómica de pago en MongoDB Atlas:', eMongo?.message || eMongo);
@@ -2217,9 +2307,10 @@ app.patch('/api/admin/payments/:id', async (req, res) => {
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('payments', { id: payment.id }, payment);
+      await persistPaymentToMongo(payment, { throwOnError: true });
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error actualizando estado de pago:', eMongo?.message || eMongo);
+      console.error('❌ [Admin Payment Patch] Fallo al actualizar pago en MongoDB Atlas:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al guardar la actualización del pago en la base de datos central.' });
     }
   }
 
@@ -2240,15 +2331,20 @@ app.delete('/api/admin/payments/:id', async (req, res) => {
   const { id } = req.params;
   const cleanId = String(id);
   const supaId = cleanId.startsWith('pay-') ? cleanId : `pay-${cleanId}`;
-  runtimeDB.payments = (runtimeDB.payments || []).filter(p => p.id !== cleanId && p.id !== supaId);
 
   if (isMongoConfigured()) {
     try {
-      await deleteMongoDoc('payments', { $or: [{ id: cleanId }, { id: supaId }, { supaId }] });
+      const ok = await deleteMongoDoc('payments', { $or: [{ id: cleanId }, { id: supaId }, { supaId }] });
+      if (!ok) {
+        throw new Error('Fallo al eliminar el pago en MongoDB Atlas (resultado no reconocido)');
+      }
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error eliminando pago:', eMongo?.message || eMongo);
+      console.error('❌ [Admin Payment Delete] Fallo al eliminar pago en MongoDB Atlas:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al eliminar el pago en la base de datos central.' });
     }
   }
+
+  runtimeDB.payments = (runtimeDB.payments || []).filter(p => p.id !== cleanId && p.id !== supaId);
 
   await recordFinancialAuditLog({
     action: 'payment_deleted',

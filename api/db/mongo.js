@@ -39,12 +39,14 @@ export async function getMongoClient() {
 
   const currentUri = getMongoUri();
 
+  const serverSelectionTimeoutMS = process.env.NODE_ENV === 'test' ? 1000 : 5000;
+
   if (process.env.NODE_ENV === 'development' || !process.env.VERCEL) {
     // Modo local / desarrollo: reusar en global para hot reloading
     if (!global._mongoClientPromise) {
       client = new MongoClient(currentUri, {
         maxPoolSize: 10,
-        serverSelectionTimeoutMS: 5000
+        serverSelectionTimeoutMS
       });
       global._mongoClientPromise = client.connect();
     }
@@ -54,7 +56,7 @@ export async function getMongoClient() {
     if (!clientPromise) {
       client = new MongoClient(currentUri, {
         maxPoolSize: 10,
-        serverSelectionTimeoutMS: 5000
+        serverSelectionTimeoutMS
       });
       clientPromise = client.connect();
     }
@@ -77,6 +79,37 @@ export async function getMongoDB() {
   const connectedClient = await getMongoClient();
   if (!connectedClient) return null;
   return connectedClient.db(getMongoDbName());
+}
+
+/**
+ * Comprueba la conectividad real con MongoDB Atlas mediante un comando ping activo.
+ * Retorna { ok: true, latencyMs } o { ok: false, reason, error }
+ */
+export async function pingMongoDB({ timeoutMs = 2000 } = {}) {
+  if (!isMongoConfigured()) {
+    return { ok: false, reason: 'not_configured' };
+  }
+  const start = performance.now();
+  let timer = null;
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Timeout de conexión a MongoDB Atlas')), timeoutMs);
+      if (timer && timer.unref) timer.unref();
+    });
+
+    const db = await Promise.race([getMongoDB(), timeoutPromise]);
+    if (!db) {
+      if (timer) clearTimeout(timer);
+      return { ok: false, reason: 'connection_failed' };
+    }
+    await Promise.race([db.command({ ping: 1 }), timeoutPromise]);
+    if (timer) clearTimeout(timer);
+    const latencyMs = Math.round(performance.now() - start);
+    return { ok: true, latencyMs };
+  } catch (err) {
+    if (timer) clearTimeout(timer);
+    return { ok: false, reason: 'ping_failed', error: err?.message || String(err) };
+  }
 }
 
 /**
