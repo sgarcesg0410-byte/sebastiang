@@ -4,14 +4,24 @@ import path from 'path';
 const projectRoot = process.cwd();
 const outputFile = path.join(projectRoot, 'PROJECT_SOURCE_CODE.md');
 
-const includedExtensions = new Set(['.js', '.jsx', '.cjs', '.mjs', '.sql', '.html', '.css', '.json']);
-const excludedDirectories = new Set(['node_modules', 'dist', 'release', '.git', 'scratch_photos']);
-const excludedFiles = new Set(['package-lock.json', 'PROJECT_SOURCE_CODE.md']);
+const includedExtensions = new Set([
+  '.js', '.jsx', '.cjs', '.mjs', '.sql', '.html', '.css', '.json',
+  '.kt', '.kts', '.xml', '.md', '.yml', '.yaml'
+]);
+const excludedDirectories = new Set([
+  'node_modules', 'dist', 'release', '.git', 'scratch_photos', '.gemini', 'coverage', '.system_generated'
+]);
+const excludedFiles = new Set([
+  'package-lock.json', 'PROJECT_SOURCE_CODE.md', '.env', '.env.local', '.env.production'
+]);
 
 function getFiles(dir) {
   let results = [];
   const list = fs.readdirSync(dir, { withFileTypes: true });
   for (const item of list) {
+    if (item.name.startsWith('.env') && item.name !== '.env.example') {
+      continue;
+    }
     if (item.isDirectory()) {
       if (!excludedDirectories.has(item.name)) {
         results = results.concat(getFiles(path.join(dir, item.name)));
@@ -44,8 +54,11 @@ mdContent += `\n---\n\n`;
 
 files.forEach((file) => {
   const rel = path.relative(projectRoot, file).replace(/\\/g, '/');
-  const ext = path.extname(file).replace('.', '');
-  const lang = ext === 'jsx' || ext === 'cjs' ? 'javascript' : ext;
+  const ext = path.extname(file).replace('.', '').toLowerCase();
+  let lang = ext;
+  if (ext === 'jsx' || ext === 'cjs' || ext === 'mjs') lang = 'javascript';
+  if (ext === 'kt' || ext === 'kts') lang = 'kotlin';
+  if (ext === 'yml') lang = 'yaml';
   
   try {
     const content = fs.readFileSync(file, 'utf-8');
