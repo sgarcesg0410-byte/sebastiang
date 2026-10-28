@@ -237,31 +237,39 @@ function mergeBookingObjectsServer(existing, incoming) {
   return normalizeBookingDoc(merged);
 }
 
-async function persistBookingToMongo(b) {
-  if (!b || !b.id) return;
-  const supaId = b.id.startsWith('book-') ? b.id : `book-${b.id}`;
+async function persistBookingToMongo(b, { throwOnError = false } = {}) {
+  if (!b || !b.id) return false;
   const normalized = normalizeBookingDoc(b);
 
   if (isMongoConfigured() && normalized) {
     try {
-      await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id, supaId });
+      await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id });
+      return true;
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
+      console.error('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
+      recordOperationalEvent('apiExceptions', `Fallo de persistencia de reserva en MongoDB Atlas: ${eMongo?.message || eMongo}`, 'critical');
+      if (throwOnError) throw eMongo;
+      return false;
     }
   }
+  return true;
 }
 
-async function persistPaymentToMongo(p) {
-  if (!p || !p.id) return;
-  const supaId = p.id.startsWith('pay-') ? p.id : `pay-${p.id}`;
+async function persistPaymentToMongo(p, { throwOnError = false } = {}) {
+  if (!p || !p.id) return false;
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id, supaId });
+      await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id });
+      return true;
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
+      console.error('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
+      recordOperationalEvent('apiExceptions', `Fallo de persistencia de pago en MongoDB Atlas: ${eMongo?.message || eMongo}`, 'critical');
+      if (throwOnError) throw eMongo;
+      return false;
     }
   }
+  return true;
 }
 
 async function findPaymentByReference(ref, txId) {
@@ -993,14 +1001,25 @@ app.post('/api/bookings', async (req, res) => {
 
   runtimeDB.bookings.unshift(newBooking);
 
+  // Garantía de consistencia y durabilidad: Si MongoDB Atlas está activo,
+  // la reserva DEBE persistirse en la base de datos persistente antes de confirmar.
+  // Si la escritura en MongoDB falla, se revierte de la memoria para evitar reservas fantasma.
+  if (isMongoConfigured()) {
+    try {
+      await persistBookingToMongo(newBooking, { throwOnError: true });
+    } catch (eMongo) {
+      const idx = runtimeDB.bookings.findIndex(b => b.id === newBooking.id);
+      if (idx !== -1) runtimeDB.bookings.splice(idx, 1);
+      return res.status(503).json({
+        error: 'No se pudo registrar la reserva en la base de datos central. Por favor intenta de nuevo.'
+      });
+    }
+  }
+
   // En Vercel Serverless, res.json() congela el proceso inmediatamente y descarta
-  // cualquier promesa no resuelta. Es mandatorio esperar la sincronización a MongoDB Atlas,
+  // cualquier promesa no resuelta. Es mandatorio esperar la auditoría,
   // el envío de correos y la notificación push con Promise.allSettled antes de responder:
   await Promise.allSettled([
-    persistBookingToMongo(newBooking).catch(e => {
-      console.warn('MongoDB booking sync error:', e?.message || e);
-      return null;
-    }),
     recordFinancialAuditLog({
       action: 'booking_created',
       actor: 'public_client',
@@ -1813,8 +1832,19 @@ app.post('/api/payments/checkout', async (req, res) => {
   if (!runtimeDB.payments) runtimeDB.payments = [];
   runtimeDB.payments.unshift(paymentRecord);
 
-  // Persistencia inmediata en MongoDB Atlas
-  await persistPaymentToMongo(paymentRecord);
+  // Persistencia inmediata y duradera en MongoDB Atlas
+  if (isMongoConfigured()) {
+    try {
+      await persistPaymentToMongo(paymentRecord, { throwOnError: true });
+    } catch (eMongo) {
+      const idx = runtimeDB.payments.findIndex(p => p.id === paymentRecord.id);
+      if (idx !== -1) runtimeDB.payments.splice(idx, 1);
+      return res.status(503).json({
+        error: 'No se pudo registrar la referencia de pago en la base de datos central. Por favor intenta de nuevo.'
+      });
+    }
+  }
+
   await recordFinancialAuditLog({
     action: 'wompi_checkout_created',
     actor: 'public_client',
@@ -1934,9 +1964,25 @@ app.post('/api/payments/webhook', async (req, res) => {
       }
     }
 
+    // Garantía de durabilidad financiera: Si MongoDB Atlas está configurado,
+    // el pago aprobado y el estado de la reserva DEBEN persistirse de forma duradera.
+    // Si la escritura en MongoDB falla, devolvemos HTTP 500 para que Wompi reintente
+    // la entrega del webhook según su política de reintentos automáticos (hasta 24h).
+    if (isMongoConfigured()) {
+      try {
+        await persistPaymentToMongo(payment, { throwOnError: true });
+        if (bookingToUpdate) {
+          await persistBookingToMongo(bookingToUpdate, { throwOnError: true });
+        }
+      } catch (eMongo) {
+        console.error('❌ [Wompi Webhook] Fallo persistiendo pago o reserva en MongoDB Atlas:', eMongo?.message || eMongo);
+        return res.status(500).json({
+          error: 'Fallo al persistir la transacción en la base de datos central. Se requiere reintento de webhook.'
+        });
+      }
+    }
+
     await Promise.allSettled([
-      persistPaymentToMongo(payment),
-      bookingToUpdate ? persistBookingToMongo(bookingToUpdate) : Promise.resolve(),
       recordFinancialAuditLog({
         action: 'wompi_payment_approved',
         actor: 'wompi_webhook',
@@ -1976,9 +2022,21 @@ app.post('/api/payments/webhook', async (req, res) => {
       }
     }
 
+    if (isMongoConfigured()) {
+      try {
+        await persistPaymentToMongo(payment, { throwOnError: true });
+        if (bookingToRevert) {
+          await persistBookingToMongo(bookingToRevert, { throwOnError: true });
+        }
+      } catch (eMongo) {
+        console.error('❌ [Wompi Webhook] Fallo persistiendo rechazo de pago en MongoDB Atlas:', eMongo?.message || eMongo);
+        return res.status(500).json({
+          error: 'Fallo al persistir el rechazo en la base de datos central. Se requiere reintento de webhook.'
+        });
+      }
+    }
+
     await Promise.allSettled([
-      persistPaymentToMongo(payment),
-      bookingToRevert ? persistBookingToMongo(bookingToRevert) : Promise.resolve(),
       recordFinancialAuditLog({
         action: 'wompi_payment_rejected',
         actor: 'wompi_webhook',

@@ -10,6 +10,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import app.sebastiang.studio.bridge.AndroidNotificationBridge
+import app.sebastiang.studio.security.DomainValidator
 import app.sebastiang.studio.security.SecureTokenStorage
 
 /**
@@ -48,17 +49,18 @@ class MainActivity : AppCompatActivity() {
             "AndroidNotificationBridge"
         )
 
-        // 4. WebViewClient que inyecta cabecera con el token de dispositivo en peticiones API
+        // 4. WebViewClient que valida dominios estrictamente y previene navegación no autorizada
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return true
-                // Restringir navegación únicamente al dominio oficial
-                return !(url.startsWith("https://sebastiang.app") || url.startsWith("https://www.sebastiang.app"))
+                // Restringir navegación únicamente a URLs válidas dentro del dominio oficial
+                val isOfficial = DomainValidator.isAllowedUrl(url)
+                return !isOfficial // true bloquea la carga no autorizada
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 val url = request?.url?.toString() ?: return null
-                if (url.contains("/api/apk/feed")) {
+                if (url.contains("/api/apk/feed") && DomainValidator.isAllowedUrl(url)) {
                     val token = secureStorage.getDeviceToken()
                     if (!token.isNullOrBlank()) {
                         // El token protegido se inyecta desde Kotlin

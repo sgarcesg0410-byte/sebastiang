@@ -3,25 +3,20 @@ package app.sebastiang.studio.bridge
 import android.content.Context
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import app.sebastiang.studio.security.DomainValidator
 import app.sebastiang.studio.security.SecureTokenStorage
 
 /**
  * Bridge seguro entre el frontend web y el hardware del dispositivo Android.
- * Restringe la invocación exclusivamente a orígenes verificados (sebastiang.app).
+ * Restringe la invocación exclusivamente a orígenes verificados mediante DomainValidator.
  */
 class AndroidNotificationBridge(
     private val context: Context,
     private val secureStorage: SecureTokenStorage
 ) {
 
-    private val allowedOrigins = setOf(
-        "https://sebastiang.app",
-        "https://www.sebastiang.app"
-    )
-
     fun isOriginAllowed(currentUrl: String?): Boolean {
-        if (currentUrl == null) return false
-        return allowedOrigins.any { currentUrl.startsWith(it) }
+        return DomainValidator.isAllowedUrl(currentUrl)
     }
 
     @JavascriptInterface

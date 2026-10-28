@@ -609,29 +609,38 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const mainActivityPath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/MainActivity.kt');
       const tokenStoragePath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/security/SecureTokenStorage.kt');
       const bridgePath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/bridge/AndroidNotificationBridge.kt');
+      const domainValidatorPath = path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/security/DomainValidator.kt');
       const buildGradlePath = path.join(rootDir, 'android/app/build.gradle.kts');
 
       expect(fs.existsSync(manifestPath)).toBe(true);
       expect(fs.existsSync(mainActivityPath)).toBe(true);
       expect(fs.existsSync(tokenStoragePath)).toBe(true);
       expect(fs.existsSync(bridgePath)).toBe(true);
+      expect(fs.existsSync(domainValidatorPath)).toBe(true);
       expect(fs.existsSync(buildGradlePath)).toBe(true);
 
       const manifest = fs.readFileSync(manifestPath, 'utf8');
       expect(manifest).toContain('android:usesCleartextTraffic="false"');
       expect(manifest).toContain('android:allowBackup="false"');
 
+      const domainValidator = fs.readFileSync(domainValidatorPath, 'utf8');
+      expect(domainValidator).toContain('ALLOWED_HOSTS = setOf(');
+      expect(domainValidator).toContain('"sebastiang.app"');
+      expect(domainValidator).toContain('uri.host?.lowercase()');
+      expect(domainValidator).not.toContain('.startsWith('); // Prohibido usar startsWith para validación de host
+
       const mainActivity = fs.readFileSync(mainActivityPath, 'utf8');
       expect(mainActivity).toContain('WebView.setWebContentsDebuggingEnabled(false)');
       expect(mainActivity).toContain('allowFileAccess = false');
       expect(mainActivity).toContain('allowContentAccess = false');
+      expect(mainActivity).toContain('DomainValidator.isAllowedUrl(url)');
 
       const tokenStorage = fs.readFileSync(tokenStoragePath, 'utf8');
       expect(tokenStorage).toContain('MasterKey.KeyScheme.AES256_GCM');
       expect(tokenStorage).toContain('EncryptedSharedPreferences');
 
       const bridge = fs.readFileSync(bridgePath, 'utf8');
-      expect(bridge).toContain('https://sebastiang.app');
+      expect(bridge).toContain('DomainValidator.isAllowedUrl');
       expect(bridge).toContain('@JavascriptInterface');
 
       const buildGradle = fs.readFileSync(buildGradlePath, 'utf8');
