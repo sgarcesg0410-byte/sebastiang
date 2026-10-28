@@ -120,6 +120,7 @@ import {
   getWalletBaseBalances,
   fetchCloudWalletBaseBalances,
   saveWalletBaseBalances,
+  DEMO_DEFAULT_BOOKINGS,
   REAL_DEFAULT_BOOKINGS,
   safeMergeBookingObjects,
   DEFAULT_PACKAGES,
@@ -744,8 +745,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Datos del sistema inicializados con respaldo real para carga instantánea
-  const [bookings, setBookings] = useState(REAL_DEFAULT_BOOKINGS);
+  // Datos del sistema inicializados con respaldo seguro para carga instantánea
+  const [bookings, setBookings] = useState(DEMO_DEFAULT_BOOKINGS);
   const [editingBooking, setEditingBooking] = useState(null);
   const [isSavingBooking, setIsSavingBooking] = useState(false);
 
@@ -1417,38 +1418,21 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
       const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value) && bRes.value.length > 0 
         ? bRes.value 
-        : REAL_DEFAULT_BOOKINGS;
+        : DEMO_DEFAULT_BOOKINGS;
 
       setBookings(prev => {
         const rawDel = getDeletedBookingIds();
         const deletedSet = new Set(Array.isArray(rawDel) ? rawDel : []);
-        // Proteger permanentemente las 5 reservas reales del negocio
-        const PROTECTED_IDS = [
-          'book-real-jennifer-vasquez',
-          'book-1790280190756',
-          'book-laura-vanesa-maza-1790651249486',
-          'book-1792197996225-905e3bb3',
-          'book-1792268723998-a1793b77'
-        ];
-        PROTECTED_IDS.forEach(pid => {
-          deletedSet.delete(pid);
-          deletedSet.delete(`book-${pid}`);
-        });
-
         const map = new Map();
-        // 1. Incorporar siempre las 5 reservas reales oficiales garantizadas
-        REAL_DEFAULT_BOOKINGS.forEach(b => {
-          if (b && b.id) map.set(b.id, { ...b, isReal: true });
-        });
 
-        // 2. Preservar todas las reservas previas válidas sin pérdida de campos
+        // 1. Preservar todas las reservas previas válidas sin pérdida de campos
         (prev || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
             map.set(b.id, safeMergeBookingObjects(existing, b));
           }
         });
-        // 3. Fusionar con las reservas recibidas de la fuente (servidor/nube/local/idb)
+        // 2. Fusionar con las reservas recibidas de la fuente oficial (servidor/nube/local/idb)
         (bData || []).forEach(b => {
           if (b && b.id && b.id !== 'book-demo-1' && !deletedSet.has(b.id)) {
             const existing = map.get(b.id);
@@ -3046,7 +3030,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             </div>
             <div>
-              <div class="voucher-badge">${voucherNum}</div>
+              <div class="voucher-badge">${escapeHtml(voucherNum)}</div>
               <div class="emission-date">Fecha: ${new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
             </div>
           </div>
@@ -3060,7 +3044,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
             <div class="card">
               <div class="card-title">Detalles de la Cita</div>
-              <p>Fecha/Hora: <strong>${formatDateTime12Hour(receiptBooking.dateTime)}</strong></p>
+              <p>Fecha/Hora: <strong>${escapeHtml(formatDateTime12Hour(receiptBooking.dateTime))}</strong></p>
               <p>Locación: <strong>${escapeHtml(loc)}</strong></p>
               <p>Paquete: <strong>${escapeHtml(receiptBooking.packageName)}</strong></p>
             </div>
@@ -3083,7 +3067,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               if (paperText) {
                 rows += `
                   <div class="table-row" style="color: #64748b; font-size: 11px;">
-                    <span>Fotos Impresas (Papel): ${paperText}</span>
+                    <span>Fotos Impresas (Papel): ${escapeHtml(paperText)}</span>
                     <span>Incluido</span>
                   </div>
                 `;
@@ -3092,7 +3076,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               if (retabloText) {
                 rows += `
                   <div class="table-row" style="color: #b45309; font-size: 11px; font-weight: 600;">
-                    <span>Cuadros en Retablo (Madera): ${retabloText}</span>
+                    <span>Cuadros en Retablo (Madera): ${escapeHtml(retabloText)}</span>
                     <span>Incluido</span>
                   </div>
                 `;
@@ -3106,7 +3090,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 if (txt) {
                   rows += `
                     <div class="table-row" style="color: #64748b; font-size: 11px;">
-                      <span>${txt}</span>
+                      <span>${escapeHtml(txt)}</span>
                       <span>Incluido</span>
                     </div>
                   `;
@@ -3126,7 +3110,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               </div>
             ` : ''}
             <div class="table-row paid">
-              <span>${effectivePrev > 0 ? 'SALDO RECIBIDO HOY' : 'VALOR RECIBIDO / ABONADO'} (${receiptPaymentMethod}):</span>
+              <span>${effectivePrev > 0 ? 'SALDO RECIBIDO HOY' : 'VALOR RECIBIDO / ABONADO'} (${escapeHtml(receiptPaymentMethod)}):</span>
               <span>$${paid.toLocaleString('es-CO')} COP</span>
             </div>
             <div class="table-row balance">

@@ -44,53 +44,42 @@ const REAL_CATALOG = [
   { id: 'cat-1790909237730', title: '🇨🇴 Un momento para recordar toda la vida', category: 'Retratos', location: 'Coveñas', url: '/catalog/cat-1790909237730.jpg' }
 ];
 
-const REAL_BOOKINGS = [
+const DEMO_BOOKINGS = [
   {
-    id: "book-real-jennifer-vasquez",
-    clientName: "Jennifer Vásquez",
-    clientWhatsApp: "+57 320 892 1635",
+    id: "book-demo-001",
+    clientName: "Cliente Muestra 1 (Ejemplo)",
+    clientWhatsApp: "+57 300 000 0001",
     packageId: "pkg-8fotos",
     packageName: "8 Fotos Digitales (+ 2 Fotos Gratis)",
     totalPrice: 85000,
     locationType: "outside_san_antero",
     specificLocation: "Coveñas",
     dateTime: "30/09/2026 a las 3:00 p. m.",
-    description: "Sesión de fotos de juramento de bandera de su hijo",
+    description: "Sesión de fotos de muestra",
     createdAt: "2026-09-19T10:00:00.000Z",
     status: "confirmed",
-    isReal: true
+    isDemo: true,
+    isReal: false
   },
   {
-    id: "book-1790280190756",
-    clientName: "Marlin torres",
-    clientWhatsApp: "+57 313 666 7262",
+    id: "book-demo-002",
+    clientName: "Cliente Muestra 2 (Ejemplo)",
+    clientWhatsApp: "+57 300 000 0002",
     packageId: "pkg-6fotos",
     packageName: "6 Fotos Digitales",
     totalPrice: 75000,
     locationType: "outside_san_antero",
     specificLocation: "Locación Especial / Fuera",
     dateTime: "03/10/2026 a las 3:10 p. m.",
-    description: "Primer mes bebé",
+    description: "Sesión de muestra familiar",
     createdAt: "2026-09-24T20:03:10.756Z",
     status: "confirmed",
-    isReal: true
-  },
-  {
-    id: "book-laura-vanesa-maza-1790651249486",
-    clientName: "Laura Vanesa Maza de Hoyos",
-    clientWhatsApp: "+57 313 597 5323",
-    packageId: "pkg-4fotos",
-    packageName: "4 Fotos Digitales",
-    totalPrice: 45000,
-    locationType: "san_antero",
-    specificLocation: "Jose Antonio Galán",
-    dateTime: "29/11/2026 a las 4:00 p. m.",
-    description: "Grado",
-    createdAt: "2026-09-29T03:07:32.000Z",
-    status: "pending",
-    isReal: true
+    isDemo: true,
+    isReal: false
   }
 ];
+
+const REAL_BOOKINGS = DEMO_BOOKINGS;
 
 async function seed() {
   if (!isMongoConfigured()) {

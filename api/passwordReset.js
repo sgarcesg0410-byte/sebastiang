@@ -13,7 +13,7 @@
 import crypto from 'crypto';
 import { hashSHA256, secureCompare, setCachedPasswordVersion, getCachedPasswordVersion, getTrustedClientIp } from './security.js';
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
-import { isMongoConfigured, upsertMongoDoc, findMongoDocs } from './db/mongo.js';
+import { isMongoConfigured, upsertMongoDoc, updateMongoDoc, findMongoDocs } from './db/mongo.js';
 
 // Rate limiters en memoria por IP
 const resetRequestAttempts = new Map(); // ip -> { count, windowStart }
@@ -91,24 +91,28 @@ export function clearRateLimiters() {
  * Guarda el challenge de reseteo en MongoDB Atlas y memoria (fuente única de verdad)
  */
 export async function saveResetChallenge({ runtimeDB, challenge }) {
-  if (runtimeDB) {
-    runtimeDB.settings = runtimeDB.settings || {};
-    runtimeDB.settings.adminResetChallenge = challenge;
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    throw new Error('Persistencia duradera requerida en producción para emitir códigos de seguridad.');
   }
 
   if (isMongoConfigured()) {
-    try {
-      await upsertMongoDoc('security', {
-        $or: [{ id: 'admin_reset_challenge' }, { key: 'admin_reset_challenge' }]
-      }, {
-        id: 'admin_reset_challenge',
-        key: 'admin_reset_challenge',
-        ...challenge,
-        savedAt: new Date().toISOString()
-      }, { throwOnError: true });
-    } catch (e) {
-      console.warn('[MongoDB] Advertencia guardando challenge:', e?.message || e);
+    const ok = await upsertMongoDoc('security', {
+      $or: [{ id: 'admin_reset_challenge' }, { key: 'admin_reset_challenge' }]
+    }, {
+      id: 'admin_reset_challenge',
+      key: 'admin_reset_challenge',
+      ...challenge,
+      savedAt: new Date().toISOString()
+    }, { throwOnError: true });
+    if (!ok) {
+      throw new Error('Fallo al persistir challenge en MongoDB Atlas');
     }
+  }
+
+  if (runtimeDB) {
+    runtimeDB.settings = runtimeDB.settings || {};
+    runtimeDB.settings.adminResetChallenge = challenge;
   }
 }
 
@@ -136,6 +140,11 @@ export async function getResetChallenge({ runtimeDB }) {
  * Guarda la nueva clave y passwordVersion en MongoDB Atlas y memoria de forma duradera
  */
 export async function updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion }) {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    throw new Error('Persistencia duradera requerida en producción para cambiar la contraseña administrativa.');
+  }
+
   if (isMongoConfigured()) {
     const ok = await upsertMongoDoc('security', {
       $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }]
@@ -188,6 +197,13 @@ export async function getActivePasswordVersionFromStore({ runtimeDB }) {
  * Endpoint 1: POST /api/admin/password/reset-request
  */
 export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSender = sendPasswordResetCodeEmail } = {}) {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'Recuperación de contraseña temporalmente no disponible (persistencia requerida).'
+    });
+  }
+
   const ip = getClientIp(req);
   const rate = checkResetRequestRateLimit(ip);
 
@@ -215,7 +231,14 @@ export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSen
     requestedAt: new Date().toISOString()
   };
 
-  await saveResetChallenge({ runtimeDB, challenge });
+  try {
+    await saveResetChallenge({ runtimeDB, challenge });
+  } catch (err) {
+    console.error('❌ [PasswordReset] Fallo al guardar challenge duradero:', err?.message || err);
+    return res.status(503).json({
+      error: 'Error interno asegurando el código de recuperación. Intenta más tarde.'
+    });
+  }
 
   // REGLA 4: Fuga cero: enviar por correo sin loguear el código
   try {
@@ -238,6 +261,13 @@ export async function handlePasswordResetConfirm(req, res, {
   runtimeDB,
   alertSender = sendPasswordChangedAlertEmail
 } = {}) {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'Recuperación de contraseña temporalmente no disponible (persistencia requerida).'
+    });
+  }
+
   const ip = getClientIp(req);
   const rate = checkResetConfirmRateLimit(ip);
 
@@ -272,14 +302,14 @@ export async function handlePasswordResetConfirm(req, res, {
   const expiresTimestamp = new Date(challenge.expiresAt).getTime();
   if (Number.isNaN(expiresTimestamp) || Date.now() > expiresTimestamp) {
     challenge.used = true;
-    await saveResetChallenge({ runtimeDB, challenge });
+    try { await saveResetChallenge({ runtimeDB, challenge }); } catch (e) {}
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
   // 2. Intentos agotados previamente
   if ((challenge.attempts || 0) >= 5) {
     challenge.used = true;
-    await saveResetChallenge({ runtimeDB, challenge });
+    try { await saveResetChallenge({ runtimeDB, challenge }); } catch (e) {}
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
@@ -292,14 +322,42 @@ export async function handlePasswordResetConfirm(req, res, {
       // Bloqueo estricto del código: se quema de por vida
       challenge.used = true;
     }
-    await saveResetChallenge({ runtimeDB, challenge });
+    try { await saveResetChallenge({ runtimeDB, challenge }); } catch (e) {}
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
   // ÉXITO: Código válido. Proceder todo-o-nada:
-  // 1. Quemar el código de inmediato (un solo uso)
+  // 1. Quemar el código de forma atómica para evitar carreras entre múltiples instancias concurrentes
+  if (isMongoConfigured()) {
+    try {
+      const burnRes = await updateMongoDoc('security', {
+        $or: [{ id: 'admin_reset_challenge' }, { key: 'admin_reset_challenge' }],
+        used: false,
+        codeHash: challenge.codeHash
+      }, {
+        $set: {
+          used: true,
+          consumedAt: new Date().toISOString(),
+          consumedIp: ip
+        }
+      }, { throwOnError: true });
+
+      if (!burnRes || (burnRes.matchedCount === 0 && burnRes.modifiedCount === 0)) {
+        return res.status(400).json({ error: 'Código inválido o ya utilizado.' });
+      }
+    } catch (eMongo) {
+      console.error('❌ [PasswordReset] Fallo consumiendo código en MongoDB Atlas:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al procesar el código de recuperación en la base de datos central.' });
+    }
+  }
+
+  if (challenge.used) {
+    return res.status(400).json({ error: 'Código inválido o ya utilizado.' });
+  }
   challenge.used = true;
-  await saveResetChallenge({ runtimeDB, challenge });
+  if (runtimeDB?.settings) {
+    runtimeDB.settings.adminResetChallenge = challenge;
+  }
 
   // 2. Derivar hash scrypt bancario de la nueva contraseña
   const cleanNew = newPassword.trim();
@@ -311,7 +369,12 @@ export async function handlePasswordResetConfirm(req, res, {
   const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });
   const newVersion = (currentVersion || 1) + 1;
 
-  await updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion });
+  try {
+    await updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion });
+  } catch (eStore) {
+    console.error('❌ [PasswordReset] Fallo actualizando contraseña en store:', eStore?.message || eStore);
+    return res.status(500).json({ error: 'Error persistiendo nueva contraseña en la base de datos central.' });
+  }
 
   // 4. Enviar alerta de seguridad por correo vía Zoho a ADMIN_EMAIL
   const targetEmail = getAdminEmail();

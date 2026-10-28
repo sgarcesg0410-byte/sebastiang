@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_gold">#D97706</color>
+    <color name="brand_dark_gold">#B45309</color>
+    <color name="brand_amber">#F59E0B</color>
+    <color name="brand_dark_amber">#92400E</color>
+    <color name="black">#0F172A</color>
+    <color name="white">#FFFFFF</color>
+    <color name="background_dark">#0F172A</color>
+</resources>

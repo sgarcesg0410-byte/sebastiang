@@ -34,6 +34,7 @@ import {
 } from '../services/bookingAvailability.js';
 import { resolveRouteFromLocation } from '../App.jsx';
 import { getCachedImage, setCachedImage } from '../components/ProtectedCanvasImage.jsx';
+import { DEMO_DEFAULT_BOOKINGS, REAL_DEFAULT_BOOKINGS } from '../services/api.js';
 
 // Helper para invocar rutas de Express en memoria sin abrir puertos TCP
 async function invokeApp(method, url, { body = {}, headers = {} } = {}) {
@@ -1725,5 +1726,207 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         else delete process.env.MONGODB_URI;
       }
     }, 10000);
+  });
+
+  describe('10. Blindaje Contra Inyecciones, Aislamiento de PII, Control Estricto de Sesión-Reserva y Atomicidad', () => {
+    it('DEMO_DEFAULT_BOOKINGS contiene únicamente datos de prueba anonimizados sin nombres ni teléfonos reales', () => {
+      expect(Array.isArray(DEMO_DEFAULT_BOOKINGS)).toBe(true);
+      DEMO_DEFAULT_BOOKINGS.forEach(b => {
+        expect(b.isDemo).toBe(true);
+        expect(b.isReal).toBe(false);
+        expect(b.clientName).toContain('Muestra');
+        expect(b.clientWhatsApp).toMatch(/^\+57 300 000 000\d$/);
+      });
+    });
+
+    it('Validador semántico de fecha y hora rechaza fechas inexistentes (31 de febrero, mes 13)', async () => {
+      const resFeb31 = await invokeApp('POST', '/api/bookings', {
+        body: {
+          clientName: 'Test Date',
+          dateTime: '31/02/2026 a las 10:00 a. m.',
+          packageId: 'pkg-4fotos',
+          totalPrice: 45000
+        }
+      });
+      expect(resFeb31.status).toBe(400);
+      expect(resFeb31.body.code).toBe('INVALID_DATETIME');
+
+      const resMonth13 = await invokeApp('POST', '/api/bookings', {
+        body: {
+          clientName: 'Test Date',
+          dateTime: '15/13/2026 a las 10:00 a. m.',
+          packageId: 'pkg-4fotos',
+          totalPrice: 45000
+        }
+      });
+      expect(resMonth13.status).toBe(400);
+      expect(resMonth13.body.code).toBe('INVALID_DATETIME');
+    });
+
+    it('Reserva sanitiza etiquetas HTML en resúmenes para neutralizar stored XSS', async () => {
+      const maliciousPayload = {
+        clientName: 'Cliente <script>alert("xss")</script>',
+        clientWhatsApp: '+573001234567',
+        dateTime: '15/11/2026 a las 10:00 a. m.',
+        packageId: 'pkg-4fotos',
+        totalPrice: 45000,
+        paperPhotosSummary: '<img src=x onerror=alert(1)>2 fotos 10x15',
+        retablosSummary: '<b>1 retablo</b> <iframe src="evil.com"></iframe>',
+        printedPhotosSummary: '<script>steal()</script>3 fotos impresas'
+      };
+
+      const res = await invokeApp('POST', '/api/bookings', { body: maliciousPayload });
+
+      expect([201, 409]).toContain(res.status);
+      if (res.status === 201) {
+        expect(res.body.booking.clientName).not.toContain('<script>');
+        expect(res.body.booking.paperPhotosSummary).not.toContain('<img');
+        expect(res.body.booking.retablosSummary).not.toContain('<iframe');
+        expect(res.body.booking.printedPhotosSummary).not.toContain('<script>');
+      }
+    });
+
+    it('POST /api/gallery/:token/review rechaza el token demo demo-cliente-2026 con 403', async () => {
+      const res = await invokeApp('POST', '/api/gallery/demo-cliente-2026/review', {
+        body: {
+          clientName: 'Falso Verificado',
+          rating: 5,
+          comment: 'Excelente servicio falso'
+        }
+      });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('token de demostración no puede crear reseñas verificadas');
+    });
+
+    it('POST /api/gallery/:token/review valida estrictamente la calificación numérica (1 a 5) y longitud del comentario', async () => {
+      const testToken = 'sess-rev-test-' + Date.now();
+      runtimeDB.sessions = runtimeDB.sessions || [];
+      runtimeDB.sessions.push({
+        id: testToken,
+        token: testToken,
+        clientName: 'Cliente Real Para Reseña',
+        status: 'delivered'
+      });
+
+      // Calificación fuera de rango
+      const resInvalidRating = await invokeApp('POST', `/api/gallery/${testToken}/review`, {
+        body: {
+          rating: 10,
+          comment: 'Comentario válido'
+        }
+      });
+      expect(resInvalidRating.status).toBe(400);
+
+      // Comentario demasiado corto
+      const resShortComment = await invokeApp('POST', `/api/gallery/${testToken}/review`, {
+        body: {
+          rating: 5,
+          comment: 'ok'
+        }
+      });
+      expect(resShortComment.status).toBe(400);
+    });
+
+    it('POST /api/payments/checkout rechaza discrepancias entre bookingId y sessionToken', async () => {
+      runtimeDB.bookings = runtimeDB.bookings || [];
+      runtimeDB.sessions = runtimeDB.sessions || [];
+
+      const bId = 'book-couple-' + Date.now();
+      const sToken = 'sess-couple-' + Date.now();
+      runtimeDB.bookings.push({ id: bId, clientName: 'Cliente A', totalPrice: 85000 });
+      runtimeDB.sessions.push({ token: sToken, bookingId: 'book-DIFFERENT-999', clientName: 'Cliente B', totalPrice: 85000 });
+
+      const res = await invokeApp('POST', '/api/payments/checkout', {
+        body: {
+          bookingId: bId,
+          sessionToken: sToken,
+          concept: 'session_balance',
+          amount: 85000
+        }
+      });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('La sesión no corresponde a la reserva indicada');
+    });
+
+    it('Webhook no confirma reserva si el concepto de pago es session_balance', async () => {
+      const bId = 'book-nobalance-' + Date.now();
+      const testBooking = {
+        id: bId,
+        clientName: 'Cliente Saldo',
+        status: 'pending',
+        depositPaid: false,
+        totalPrice: 100000
+      };
+      runtimeDB.bookings = runtimeDB.bookings || [];
+      runtimeDB.bookings.push(testBooking);
+
+      const ref = 'wompi-test-bal-' + Date.now();
+      const paymentRecord = {
+        id: 'pay-' + Date.now(),
+        reference: ref,
+        bookingId: bId,
+        amount: 50000,
+        currency: 'COP',
+        concept: 'session_balance',
+        status: 'pending'
+      };
+      runtimeDB.payments = runtimeDB.payments || [];
+      runtimeDB.payments.push(paymentRecord);
+
+      const txId = 'tx-bal-' + Date.now();
+      const amountInCents = 5000000;
+      const ts = 1799000000;
+      const secret = process.env.WOMPI_EVENTS_SECRET || 'test_events_secret';
+      const rawChecksum = `${txId}APPROVED${amountInCents}${ts}${secret}`;
+      const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
+
+      const payload = {
+        event: 'transaction.updated',
+        data: {
+          transaction: {
+            id: txId,
+            reference: ref,
+            amount_in_cents: amountInCents,
+            currency: 'COP',
+            status: 'APPROVED',
+            payment_method_type: 'NEQUI'
+          }
+        },
+        signature: {
+          checksum,
+          properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents']
+        },
+        timestamp: ts
+      };
+
+      const res = await invokeApp('POST', '/api/payments/webhook', { body: payload });
+
+      expect(res.status).toBe(200);
+      const updatedBooking = runtimeDB.bookings.find(b => b.id === bId);
+      expect(updatedBooking.status).toBe('pending');
+      expect(updatedBooking.depositPaid).toBe(false);
+    });
+
+    it('Desafío biométrico de un solo uso genera nonce y se invalida tras uso', async () => {
+      const chalRes = await invokeApp('POST', '/api/admin/auth/bio-challenge');
+      expect(chalRes.status).toBe(200);
+      expect(chalRes.body.challenge).toBeDefined();
+
+      const challenge = chalRes.body.challenge;
+      // Primer uso con token inválido pero consume el reto
+      const refRes = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
+        body: { bioRefreshToken: 'invalid-token', challenge }
+      });
+      expect(refRes.status).toBe(401);
+
+      // Segundo uso con el mismo reto debe ser rechazado inmediatamente por reutilización
+      const replayRes = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
+        body: { bioRefreshToken: 'any-token', challenge }
+      });
+      expect(replayRes.status).toBe(401);
+      expect(replayRes.body.error).toContain('Desafío biométrico inválido o expirado');
+    });
   });
 });
