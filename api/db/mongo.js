@@ -158,6 +158,27 @@ export async function deleteMongoDoc(collectionName, filter) {
 }
 
 /**
+ * Actualiza atómicamente un documento de MongoDB sin forzar upsert
+ * Retorna el resultado del driver de MongoDB ({ matchedCount, modifiedCount, acknowledged })
+ */
+export async function updateMongoDoc(collectionName, filter, update, { throwOnError = false } = {}) {
+  try {
+    const db = await getMongoDB();
+    if (!db) {
+      if (throwOnError) throw new Error(`MongoDB no está conectado para actualizar en ${collectionName}`);
+      return null;
+    }
+    const col = db.collection(collectionName);
+    const res = await col.updateOne(filter, update);
+    return res;
+  } catch (err) {
+    console.warn(`⚠️ [MongoDB] Error actualizando en ${collectionName}:`, err?.message || err);
+    if (throwOnError) throw err;
+    return null;
+  }
+}
+
+/**
  * Crea y verifica los índices operativos y el índice TTL de 90 días en MongoDB Atlas.
  * Puede ejecutarse contra la base principal o contra una base temporal de simulacro/staging.
  */
@@ -175,7 +196,8 @@ export async function ensureMongoIndexes(dbOverride = null) {
       { col: 'bookings', key: { createdAt: -1 }, opts: { name: 'idx_bookings_created_desc' } },
       { col: 'bookings', key: { dateTime: 1 }, opts: { name: 'idx_bookings_datetime' } },
       { col: 'payments', key: { id: 1 }, opts: { name: 'idx_payments_id' } },
-      { col: 'payments', key: { reference: 1 }, opts: { name: 'idx_payments_reference' } },
+      { col: 'payments', key: { reference: 1 }, opts: { name: 'idx_payments_reference_unique', unique: true, sparse: true } },
+      { col: 'payments', key: { transactionId: 1 }, opts: { name: 'idx_payments_transaction_id_unique', unique: true, sparse: true } },
       { col: 'payments', key: { bookingId: 1 }, opts: { name: 'idx_payments_booking_id' } },
       { col: 'sessions', key: { token: 1 }, opts: { name: 'idx_sessions_token' } },
       { col: 'sessions', key: { id: 1 }, opts: { name: 'idx_sessions_id' } },

@@ -65,6 +65,7 @@ import {
 import {
   isMongoConfigured,
   upsertMongoDoc,
+  updateMongoDoc,
   findMongoDocs,
   findMongoDoc,
   deleteMongoDoc,
@@ -241,7 +242,14 @@ async function persistBookingToMongo(b, { throwOnError = false } = {}) {
   if (!b || !b.id) return false;
   const normalized = normalizeBookingDoc(b);
 
-  if (isMongoConfigured() && normalized) {
+  if (!isMongoConfigured()) {
+    if (throwOnError) {
+      throw new Error('MongoDB Atlas no está configurado; persistencia duradera de reservas no disponible.');
+    }
+    return false;
+  }
+
+  if (normalized) {
     try {
       const ok = await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id }, { throwOnError });
       if (!ok) {
@@ -261,21 +269,25 @@ async function persistBookingToMongo(b, { throwOnError = false } = {}) {
 async function persistPaymentToMongo(p, { throwOnError = false } = {}) {
   if (!p || !p.id) return false;
 
-  if (isMongoConfigured()) {
-    try {
-      const ok = await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id }, { throwOnError });
-      if (!ok) {
-        throw new Error('Fallo al persistir documento de pago en MongoDB Atlas (resultado no exitoso)');
-      }
-      return true;
-    } catch (eMongo) {
-      console.error('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
-      recordOperationalEvent('apiExceptions', `Fallo de persistencia de pago en MongoDB Atlas: ${eMongo?.message || eMongo}`, 'critical');
-      if (throwOnError) throw eMongo;
-      return false;
+  if (!isMongoConfigured()) {
+    if (throwOnError) {
+      throw new Error('MongoDB Atlas no está configurado; persistencia duradera de pagos no disponible.');
     }
+    return false;
   }
-  return true;
+
+  try {
+    const ok = await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id }, { throwOnError });
+    if (!ok) {
+      throw new Error('Fallo al persistir documento de pago en MongoDB Atlas (resultado no exitoso)');
+    }
+    return true;
+  } catch (eMongo) {
+    console.error('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
+    recordOperationalEvent('apiExceptions', `Fallo de persistencia de pago en MongoDB Atlas: ${eMongo?.message || eMongo}`, 'critical');
+    if (throwOnError) throw eMongo;
+    return false;
+  }
 }
 
 async function findPaymentByReference(ref, txId) {
@@ -582,11 +594,18 @@ registerPublicRoutes(app, {
 // ==============================================================================
 
 app.get('/api/health', async (req, res) => {
-  res.json({
-    status: 'ok',
+  const mongoOk = isMongoConfigured();
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const status = mongoOk ? 'ok' : (isProduction ? 'degraded' : 'ok_development_memory');
+
+  res.status(mongoOk ? 200 : (isProduction ? 503 : 200)).json({
+    status,
+    healthy: mongoOk,
     service: 'sebastiang-api',
-    database: isMongoConfigured() ? 'mongodb-atlas' : 'memory',
-    mongoConfigured: isMongoConfigured(),
+    database: mongoOk ? 'mongodb-atlas' : 'volatile_memory',
+    persistenceReady: mongoOk,
+    isProduction,
+    mongoConfigured: mongoOk,
     smtpConfigured: Boolean(process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS),
     pushConfigured: Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY),
     timestamp: new Date().toISOString()
@@ -922,6 +941,14 @@ app.post('/api/bookings', async (req, res) => {
     (cleanPhoneKey && !checkPublicWriteRateLimit(cleanPhoneKey, 6, 'bookings-phone'))
   ) {
     return res.status(429).json({ error: 'Demasiadas solicitudes de reserva desde tu conexión. Intenta nuevamente en unos minutos.' });
+  }
+
+  // En producción, prohibir terminantemente crear reservas en modo de memoria volátil
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'El servicio de reservas requiere persistencia de datos activa (MongoDB Atlas no disponible en producción).'
+    });
   }
   const {
     clientName, clientWhatsApp, clientEmail, packageId,
@@ -1770,6 +1797,14 @@ app.post('/api/payments/checkout', async (req, res) => {
     return res.status(429).json({ error: 'Demasiadas solicitudes de checkout. Intenta de nuevo en unos minutos.' });
   }
 
+  // En producción, prohibir terminantemente iniciar checkout en modo de memoria volátil
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'El servicio de pagos requiere persistencia de datos activa (MongoDB Atlas no disponible en producción).'
+    });
+  }
+
   // Fail-closed: sin secreto de integridad, la firma del checkout sería falsificable.
   const integritySecret = process.env.WOMPI_INTEGRITY_SECRET || (process.env.NODE_ENV === 'test' ? 'test_integrity_secret' : '');
   if (!integritySecret) {
@@ -1897,6 +1932,14 @@ app.post('/api/payments/webhook', async (req, res) => {
     return res.status(429).json({ error: 'Demasiadas solicitudes al webhook de pagos.' });
   }
 
+  // En producción, si MongoDB Atlas no está disponible, fallar con 503 para que Wompi reintente
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'El procesamiento de webhooks requiere persistencia activa en base de datos. Se requiere reintento de Wompi.'
+    });
+  }
+
   const eventsSecret = process.env.WOMPI_EVENTS_SECRET;
   if (!eventsSecret) {
     console.error('⚠️ [Wompi Webhook] WOMPI_EVENTS_SECRET no configurada.');
@@ -1969,12 +2012,61 @@ app.post('/api/payments/webhook', async (req, res) => {
   }
 
   if (tx.status === 'APPROVED') {
+    // 1. Transición atómica distribuida (MongoDB Atlas) para evitar condiciones de carrera entre
+    // múltiples lambdas serverless o peticiones concurrentes del webhook de Wompi:
+    if (isMongoConfigured()) {
+      try {
+        const atomicResult = await updateMongoDoc('payments', {
+          reference: tx.reference,
+          status: { $ne: 'verified' }
+        }, {
+          $set: {
+            status: 'verified',
+            gatewayStatus: tx.status,
+            transactionId: tx.id,
+            paymentMethodType: tx.payment_method_type || 'WOMPI',
+            approvedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        }, { throwOnError: true });
+
+        // Si modifiedCount === 0 (o matchedCount === 0), otra petición concurrente ya ganó la carrera
+        if (atomicResult && atomicResult.modifiedCount === 0) {
+          console.warn(`[Wompi Webhook] Detección de carrera concurrente evitada para ref: ${tx.reference}`);
+          return res.status(200).json({
+            success: true,
+            idempotent: true,
+            concurrentReplay: true,
+            message: 'Transacción ya procesada concurrentemente por otra instancia.',
+            reference: tx.reference
+          });
+        }
+      } catch (eMongo) {
+        console.error('❌ [Wompi Webhook] Fallo en transición atómica de pago en MongoDB Atlas:', eMongo?.message || eMongo);
+        return res.status(500).json({
+          error: 'Fallo al asegurar la transición del pago en la base de datos central. Se requiere reintento de Wompi.'
+        });
+      }
+    }
+
+    // 2. Control de concurrencia en memoria para peticiones concurrentes en el mismo proceso/hilo
+    if (payment._isProcessing || payment.status === 'verified') {
+      return res.status(200).json({
+        success: true,
+        idempotent: true,
+        concurrentReplay: true,
+        message: 'Transacción ya procesada concurrentemente en este proceso.',
+        reference: tx.reference
+      });
+    }
+    payment._isProcessing = true;
+
     // Estado canónico unificado para toda la contabilidad del sistema
     payment.status = 'verified';
     payment.gatewayStatus = tx.status;
     payment.transactionId = tx.id;
     payment.paymentMethodType = tx.payment_method_type || 'WOMPI';
-    payment.approvedAt = new Date().toISOString();
+    payment.approvedAt = payment.approvedAt || new Date().toISOString();
 
     const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
     if (inMem) {
@@ -1996,20 +2088,16 @@ app.post('/api/payments/webhook', async (req, res) => {
       }
     }
 
-    // Garantía de durabilidad financiera: Si MongoDB Atlas está configurado,
-    // el pago aprobado y el estado de la reserva DEBEN persistirse de forma duradera.
-    // Si la escritura en MongoDB falla, devolvemos HTTP 500 para que Wompi reintente
-    // la entrega del webhook según su política de reintentos automáticos (hasta 24h).
+    // Persistencia duradera de la reserva asociada en MongoDB Atlas (el pago ya fue asegurado atómicamente)
     if (isMongoConfigured()) {
       try {
-        await persistPaymentToMongo(payment, { throwOnError: true });
         if (bookingToUpdate) {
           await persistBookingToMongo(bookingToUpdate, { throwOnError: true });
         }
       } catch (eMongo) {
-        console.error('❌ [Wompi Webhook] Fallo persistiendo pago o reserva en MongoDB Atlas:', eMongo?.message || eMongo);
+        console.error('❌ [Wompi Webhook] Fallo persistiendo reserva asociada en MongoDB Atlas:', eMongo?.message || eMongo);
         return res.status(500).json({
-          error: 'Fallo al persistir la transacción en la base de datos central. Se requiere reintento de webhook.'
+          error: 'Fallo al persistir la reserva asociada en la base de datos central. Se requiere reintento de webhook.'
         });
       }
     }
@@ -3161,14 +3249,17 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
     } else if (op === 'upsert' || op === 'insert') {
       const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
       const filter = (docToSave && docToSave.id) ? { id: docToSave.id } : (match || {});
-      await upsertMongoDoc(colName, filter, docToSave);
+      const ok = await upsertMongoDoc(colName, filter, docToSave, { throwOnError: true });
+      if (!ok) throw new Error(`Fallo de escritura en ${colName} (MongoDB no reconoció la operación)`);
       return res.json({ success: true, data: [docToSave] });
     } else if (op === 'update') {
       const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
-      await upsertMongoDoc(colName, match || {}, docToSave);
+      const ok = await upsertMongoDoc(colName, match || {}, docToSave, { throwOnError: true });
+      if (!ok) throw new Error(`Fallo de actualización en ${colName} (MongoDB no reconoció la operación)`);
       return res.json({ success: true, data: [docToSave] });
     } else if (op === 'delete') {
-      await deleteMongoDoc(colName, match || {});
+      const ok = await deleteMongoDoc(colName, match || {});
+      if (!ok) throw new Error(`Fallo al eliminar en ${colName} (MongoDB no reconoció la operación)`);
       return res.json({ success: true, data: [] });
     }
   } catch (eMongo) {

@@ -733,6 +733,108 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(updatedBooking.depositPaid).toBe(true);
     });
 
+    it('controla concurrencia en webhooks de pagos simultáneos evitando doble procesamiento', async () => {
+      const concurrentBookingId = `book-concurrent-${Date.now()}`;
+      const concurrentRef = `wompi-concurrent-${Date.now()}`;
+      const txId = `tx-wompi-${Date.now()}`;
+
+      runtimeDB.bookings.push({
+        id: concurrentBookingId,
+        clientName: 'Cliente Concurrente',
+        clientEmail: 'concurrent@test.com',
+        status: 'pending',
+        totalPrice: 100000,
+        depositPaid: false
+      });
+
+      runtimeDB.payments.push({
+        id: `pay-${Date.now()}`,
+        bookingId: concurrentBookingId,
+        reference: concurrentRef,
+        amount: 100000,
+        amountInCents: 10000000,
+        currency: 'COP',
+        method: 'wompi',
+        concept: 'booking_deposit',
+        status: 'pending_gateway'
+      });
+
+      const ts = Math.floor(Date.now() / 1000);
+      const rawChecksum = `${txId}APPROVED10000000${ts}${process.env.WOMPI_EVENTS_SECRET}`;
+      const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
+
+      const webhookPayload = {
+        event: 'transaction.updated',
+        data: {
+          transaction: {
+            id: txId,
+            reference: concurrentRef,
+            status: 'APPROVED',
+            amount_in_cents: 10000000,
+            payment_method_type: 'CARD'
+          }
+        },
+        timestamp: ts,
+        signature: {
+          properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+          checksum
+        }
+      };
+
+      // Disparar dos peticiones al webhook simultáneamente
+      const [res1, res2] = await Promise.all([
+        invokeApp('POST', '/api/payments/webhook', { body: webhookPayload }),
+        invokeApp('POST', '/api/payments/webhook', { body: webhookPayload })
+      ]);
+
+      expect(res1.status).toBe(200);
+      expect(res2.status).toBe(200);
+
+      const oneIsApproved = res1.body.status === 'APPROVED' || res2.body.status === 'APPROVED';
+      const oneIsIdempotent = res1.body.idempotent === true || res2.body.idempotent === true;
+
+      expect(oneIsApproved).toBe(true);
+      expect(oneIsIdempotent).toBe(true);
+
+      const paymentInDb = runtimeDB.payments.find(p => p.reference === concurrentRef);
+      expect(paymentInDb.status).toBe('verified');
+      const bookingInDb = runtimeDB.bookings.find(b => b.id === concurrentBookingId);
+      expect(bookingInDb.status).toBe('confirmed');
+      expect(bookingInDb.depositPaid).toBe(true);
+    });
+
+    it('prohíbe crear reservas o iniciar checkout en producción si MongoDB no está configurado (HTTP 503)', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevUri = process.env.MONGODB_URI;
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.MONGODB_URI;
+
+        const bookingRes = await invokeApp('POST', '/api/bookings', {
+          body: {
+            clientName: 'Test Producción Sin Mongo',
+            clientWhatsApp: '3001234567',
+            packageId: 'basic',
+            dateTime: '2026-12-01 10:00:00'
+          }
+        });
+        expect(bookingRes.status).toBe(503);
+        expect(bookingRes.body.error).toContain('persistencia de datos activa');
+
+        const checkoutRes = await invokeApp('POST', '/api/payments/checkout', {
+          body: {
+            bookingId: 'book-123',
+            amount: 50000
+          }
+        });
+        expect(checkoutRes.status).toBe(503);
+        expect(checkoutRes.body.error).toContain('persistencia de datos activa');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+      }
+    });
+
     it('emite tokens de dispositivo APK con alcance exclusivo apk_feed:read (no admin) y permite revocarlos', async () => {
       const adminToken = createAdminToken({ pwd: 1 });
 

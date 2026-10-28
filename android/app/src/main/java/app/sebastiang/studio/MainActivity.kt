@@ -59,15 +59,26 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                val url = request?.url?.toString() ?: return null
-                if (url.contains("/api/apk/feed") && DomainValidator.isAllowedUrl(url)) {
+                val uri = request?.url ?: return null
+                val url = uri.toString()
+                val method = request.method ?: "GET"
+
+                // Restricción estricta: solo interceptar GET a la ruta exacta /api/apk/feed bajo dominio oficial
+                if ("GET".equals(method, ignoreCase = true) &&
+                    uri.path == "/api/apk/feed" &&
+                    DomainValidator.isAllowedUrl(url)
+                ) {
                     val token = secureStorage.getDeviceToken()
                     if (!token.isNullOrBlank()) {
                         try {
                             val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                            conn.requestMethod = request.method ?: "GET"
+                            conn.requestMethod = "GET"
+                            // Prohibir seguimiento automático de redirecciones para no filtrar credenciales
+                            conn.instanceFollowRedirects = false
+                            conn.connectTimeout = 8000
+                            conn.readTimeout = 8000
                             request.requestHeaders?.forEach { (k, v) -> conn.setRequestProperty(k, v) }
-                            // Inyección real del encabezado de autenticación APK desde la capa nativa Kotlin
+                            // Inyección segura exclusivamente desde la capa nativa Kotlin (cero exposición a JavaScript)
                             conn.setRequestProperty("x-apk-device-token", token)
                             conn.connect()
                             val contentType = conn.contentType ?: "application/json"
@@ -88,22 +99,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 return super.shouldInterceptRequest(view, request)
-            }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (DomainValidator.isAllowedUrl(url)) {
-                    val token = secureStorage.getDeviceToken() ?: ""
-                    // Exponer el token en el contexto de la ventana para sincronización con el frontend
-                    view?.evaluateJavascript(
-                        """
-                        (function() {
-                            window.__APK_DEVICE_TOKEN__ = "${token.replace("\"", "\\\"")}";
-                        })();
-                        """.trimIndent(),
-                        null
-                    )
-                }
             }
         }
 
