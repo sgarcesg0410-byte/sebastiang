@@ -177,15 +177,19 @@ export async function findMongoDoc(collectionName, filter = {}) {
 /**
  * Elimina un documento de una colección de MongoDB
  */
-export async function deleteMongoDoc(collectionName, filter) {
+export async function deleteMongoDoc(collectionName, filter, { throwOnError = false } = {}) {
   try {
     const db = await getMongoDB();
-    if (!db) return false;
+    if (!db) {
+      if (throwOnError) throw new Error(`MongoDB no está conectado para eliminar en ${collectionName}`);
+      return false;
+    }
     const col = db.collection(collectionName);
     const res = await col.deleteOne(filter);
     return res.deletedCount > 0;
   } catch (err) {
     console.warn(`⚠️ [MongoDB] Error eliminando en ${collectionName}:`, err?.message || err);
+    if (throwOnError) throw err;
     return false;
   }
 }

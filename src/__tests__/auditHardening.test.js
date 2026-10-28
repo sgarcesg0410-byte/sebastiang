@@ -930,6 +930,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         process.env.ALLOW_MONGO_IN_TESTS = 'true';
         process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
         const adminToken = createAdminToken({ pwd: 1 });
+        runtimeDB.bookings = [{ id: 'book-fake-999', clientName: 'Cliente Test', totalPrice: 100000, status: 'pending' }];
         
         const updateRes = await invokeApp('PATCH', '/api/admin/bookings/book-fake-999', {
           headers: { Authorization: `Bearer ${adminToken}` },
@@ -944,6 +945,170 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         else delete process.env.MONGODB_URI;
       }
     }, 10000);
+
+    it('PATCH /api/admin/bookings/:id con ID inexistente devuelve 404 y nunca inventa reservas ficticias', async () => {
+      const adminToken = createAdminToken({ pwd: 1 });
+      runtimeDB.bookings = [];
+      const res = await invokeApp('PATCH', '/api/admin/bookings/book-inexistente-888', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: { status: 'confirmed' }
+      });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain('no encontrada');
+      expect((runtimeDB.bookings || []).length).toBe(0);
+    });
+
+    it('rechaza webhook de Wompi con referencia alterada cuando la API autoritativa de Wompi detecta discrepancia (HTTP 400)', async () => {
+      const prevKey = process.env.WOMPI_PRIVATE_KEY;
+      const origFetch = globalThis.fetch;
+      try {
+        process.env.WOMPI_PRIVATE_KEY = 'prv_test_secret_key_12345';
+
+        // Pago legítimo en base de datos local
+        runtimeDB.payments = [{
+          id: 'pay-tamper-check',
+          reference: 'ref-alterada-atacante',
+          amount: 150000,
+          status: 'pending'
+        }];
+
+        // Mock fetch para devolver la transacción original oficial de Wompi con reference 'ref-original-legitima'
+        globalThis.fetch = async (url) => {
+          if (String(url).includes('/transactions/tx-tamper-01')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                data: {
+                  id: 'tx-tamper-01',
+                  reference: 'ref-original-legitima',
+                  status: 'APPROVED',
+                  amount_in_cents: 15000000,
+                  currency: 'COP'
+                }
+              })
+            };
+          }
+          return { ok: false, status: 404 };
+        };
+
+        const rawPayload = {
+          data: {
+            transaction: {
+              id: 'tx-tamper-01',
+              reference: 'ref-alterada-atacante',
+              status: 'APPROVED',
+              amount_in_cents: 15000000,
+              currency: 'COP'
+            }
+          },
+          signature: {
+            properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+            checksum: crypto
+              .createHash('sha256')
+              .update(`tx-tamper-01APPROVED150000001792000000test_events_secret_2026`)
+              .digest('hex')
+          },
+          timestamp: 1792000000,
+          event: 'transaction.updated'
+        };
+
+        const res = await invokeApp('POST', '/api/payments/webhook', { body: rawPayload });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain('Discrepancia crítica entre los datos del webhook');
+      } finally {
+        globalThis.fetch = origFetch;
+        if (prevKey) process.env.WOMPI_PRIVATE_KEY = prevKey;
+        else delete process.env.WOMPI_PRIVATE_KEY;
+      }
+    });
+
+    it('fallo al persistir rechazo de pago (DECLINED/ERROR) no muta el estado en memoria y permite reintento limpio', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+
+        const payment = {
+          id: 'pay-fail-persist-declined',
+          reference: 'ref-fail-declined',
+          amount: 50000,
+          status: 'pending'
+        };
+        runtimeDB.payments = [payment];
+
+        const payload = {
+          data: {
+            transaction: {
+              id: 'tx-declined-err-99',
+              reference: 'ref-fail-declined',
+              status: 'DECLINED',
+              amount_in_cents: 5000000,
+              currency: 'COP'
+            }
+          },
+          signature: {
+            properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+            checksum: crypto
+              .createHash('sha256')
+              .update(`tx-declined-err-99DECLINED50000001792000000test_events_secret_2026`)
+              .digest('hex')
+          },
+          timestamp: 1792000000,
+          event: 'transaction.updated'
+        };
+
+        const res = await invokeApp('POST', '/api/payments/webhook', { body: payload });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toContain('Fallo al persistir el rechazo');
+
+        // El estado en memoria NO debe haber mutado a 'rejected' para no bloquear futuros reintentos
+        const inMemPayment = runtimeDB.payments.find(p => p.id === payment.id);
+        expect(inMemPayment.status).toBe('pending');
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
+
+    it('operaciones administrativas en producción sin MongoDB configurado devuelven 503 (fail-closed)', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevUri = process.env.MONGODB_URI;
+      const adminToken = createAdminToken({ pwd: 1 });
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.MONGODB_URI;
+
+        const endpoints = [
+          { method: 'PATCH', url: '/api/admin/bookings/book-123', body: { status: 'confirmed' } },
+          { method: 'DELETE', url: '/api/admin/bookings/book-123' },
+          { method: 'PATCH', url: '/api/admin/payments/pay-123', body: { status: 'verified' } },
+          { method: 'DELETE', url: '/api/admin/payments/pay-123' },
+          { method: 'POST', url: '/api/admin/wallets', body: { nequi: 100 } },
+          { method: 'POST', url: '/api/packages', body: { packages: [] } },
+          { method: 'POST', url: '/api/settings', body: { photographerName: 'Test' } },
+          { method: 'POST', url: '/api/admin/catalog', body: { title: 'Test', url: 'https://example.com/test.jpg' } },
+          { method: 'DELETE', url: '/api/admin/catalog/cat-123' },
+          { method: 'POST', url: '/api/admin/vip', body: { client: { name: 'VIP', phone: '3001234567' } } },
+          { method: 'DELETE', url: '/api/admin/vip/vip-123' }
+        ];
+
+        for (const ep of endpoints) {
+          const res = await invokeApp(ep.method, ep.url, {
+            headers: { Authorization: `Bearer ${adminToken}` },
+            body: ep.body || {}
+          });
+          expect(res.status).toBe(503);
+          expect(res.body.error).toContain('persistencia de datos activa');
+        }
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+      }
+    });
 
     it('estado de salud (/api/health) distingue entre URI configurada y conexión real', async () => {
       const prevEnv = process.env.NODE_ENV;
@@ -992,5 +1157,69 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         if (prevUri) process.env.MONGODB_URI = prevUri;
       }
     });
+
+    it('si falla la persistencia de la reserva en MongoDB durante el webhook, el pago NO se marca verificado en memoria (HTTP 500)', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+
+        const payment = {
+          id: 'pay-persist-fail-booking',
+          reference: 'ref-fail-booking-atomic',
+          amount: 20000,
+          status: 'pending',
+          bookingId: 'book-fail-atomic-1'
+        };
+        const booking = {
+          id: 'book-fail-atomic-1',
+          clientName: 'Cliente Atomic',
+          totalPrice: 120000,
+          status: 'pending',
+          depositPaid: false
+        };
+        runtimeDB.payments = [payment];
+        runtimeDB.bookings = [booking];
+
+        const payload = {
+          data: {
+            transaction: {
+              id: 'tx-atomic-fail-88',
+              reference: 'ref-fail-booking-atomic',
+              status: 'APPROVED',
+              amount_in_cents: 2000000,
+              currency: 'COP'
+            }
+          },
+          signature: {
+            properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+            checksum: crypto
+              .createHash('sha256')
+              .update(`tx-atomic-fail-88APPROVED20000001792000000test_events_secret_2026`)
+              .digest('hex')
+          },
+          timestamp: 1792000000,
+          event: 'transaction.updated'
+        };
+
+        const res = await invokeApp('POST', '/api/payments/webhook', { body: payload });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toContain('Fallo al');
+
+        // Memoria NO debe haber sido mutada a verified ni la reserva a confirmed
+        const inMemPayment = runtimeDB.payments.find(p => p.id === payment.id);
+        const inMemBooking = runtimeDB.bookings.find(b => b.id === booking.id);
+        expect(inMemPayment.status).toBe('pending');
+        expect(inMemPayment._isProcessing).toBeFalsy();
+        expect(inMemBooking.status).toBe('pending');
+        expect(inMemBooking.depositPaid).toBe(false);
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
   });
 });

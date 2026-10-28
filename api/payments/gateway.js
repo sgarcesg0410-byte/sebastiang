@@ -148,3 +148,57 @@ export function validateCheckoutAmount({ concept, amount, booking, sessionRemain
 
   return { valid: false, expectedAmount: 0, error: `Concepto de pago desconocido: "${concept}".` };
 }
+
+/**
+ * Consulta de forma autoritativa los detalles de una transacción directamente en la API de Wompi.
+ * Permite contrastar los datos del webhook con la fuente oficial de Wompi para garantizar
+ * que la referencia, el estado, el monto y la moneda no hayan sido alterados.
+ *
+ * @param {string} transactionId ID de la transacción en Wompi (ej: '12345-167890-54321')
+ * @param {Object} [options]
+ * @param {string} [options.privateKey] Llave privada de Wompi (prv_prod_... o prv_test_...)
+ * @param {string} [options.apiBaseUrl] URL base de la API de Wompi
+ * @returns {Promise<{ ok: boolean, transaction?: Object, error?: string, status?: number }>}
+ */
+export async function fetchWompiTransaction(transactionId, {
+  privateKey = process.env.WOMPI_PRIVATE_KEY,
+  apiBaseUrl = process.env.WOMPI_API_URL || 'https://production.wompi.co/v1'
+} = {}) {
+  if (!transactionId) {
+    return { ok: false, error: 'transactionId requerido para consultar en Wompi API' };
+  }
+  if (!privateKey) {
+    return { ok: false, error: 'WOMPI_PRIVATE_KEY no configurada en el servidor' };
+  }
+
+  try {
+    const url = `${apiBaseUrl.replace(/\/+$/, '')}/transactions/${encodeURIComponent(transactionId)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    if (timeout && timeout.unref) timeout.unref();
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${privateKey}`,
+        Accept: 'application/json'
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: `Error HTTP ${res.status} consultando transacción en Wompi API` };
+    }
+
+    const json = await res.json();
+    const tx = json?.data;
+    if (!tx || !tx.id) {
+      return { ok: false, error: 'Respuesta inválida de Wompi API (sin data)' };
+    }
+
+    return { ok: true, transaction: tx };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}

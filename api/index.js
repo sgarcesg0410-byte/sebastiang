@@ -60,7 +60,8 @@ import {
   generatePaymentReference,
   generateWompiSignature,
   verifyWompiChecksum,
-  validateCheckoutAmount
+  validateCheckoutAmount,
+  fetchWompiTransaction
 } from './payments/gateway.js';
 import {
   isMongoConfigured,
@@ -237,6 +238,17 @@ function mergeBookingObjectsServer(existing, incoming) {
     }
   }
   return normalizeBookingDoc(merged);
+}
+
+export function requireDurablePersistence(res) {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    res.status(503).json({
+      error: 'La operación requiere persistencia de datos activa (MongoDB Atlas no disponible en producción).'
+    });
+    return false;
+  }
+  return true;
 }
 
 async function persistBookingToMongo(b, { throwOnError = false } = {}) {
@@ -770,52 +782,63 @@ app.get('/api/admin/wallets', requireAdminAuth, async (req, res) => {
 });
 
 app.post('/api/admin/wallets', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const balances = req.body;
   if (balances && typeof balances === 'object') {
-    runtimeDB.walletBalances = { ...runtimeDB.walletBalances, ...balances };
+    const candidateBalances = { ...runtimeDB.walletBalances, ...balances };
     if (isMongoConfigured()) {
       try {
-        await upsertMongoDoc('settings', { id: 'wallet_balances' }, { id: 'wallet_balances', ...runtimeDB.walletBalances });
+        const ok = await upsertMongoDoc('settings', { id: 'wallet_balances' }, { id: 'wallet_balances', ...candidateBalances }, { throwOnError: true });
+        if (!ok) throw new Error('Fallo al persistir saldos de billeteras');
       } catch (eMongo) {
-        console.warn('⚠️ [MongoDB] Error guardando wallets:', eMongo?.message || eMongo);
+        console.error('❌ [Admin Wallets] Error guardando wallets:', eMongo?.message || eMongo);
+        return res.status(500).json({ error: 'Fallo al guardar saldos en la base de datos central.' });
       }
     }
+    runtimeDB.walletBalances = candidateBalances;
   }
   res.json({ success: true, walletBalances: runtimeDB.walletBalances });
 });
 
 app.post('/api/packages', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { packages } = req.body;
   if (Array.isArray(packages)) {
-    runtimeDB.packages = packages;
     if (isMongoConfigured()) {
       try {
         for (const pkg of packages) {
           if (pkg && pkg.id) {
-            await upsertMongoDoc('packages', { id: pkg.id }, pkg);
+            const ok = await upsertMongoDoc('packages', { id: pkg.id }, pkg, { throwOnError: true });
+            if (!ok) throw new Error(`Fallo al persistir paquete ${pkg.id}`);
           }
         }
       } catch (eMongo) {
-        console.warn('⚠️ [MongoDB] Error guardando paquetes:', eMongo?.message || eMongo);
+        console.error('❌ [Packages] Error guardando paquetes:', eMongo?.message || eMongo);
+        return res.status(500).json({ error: 'Fallo al guardar paquetes en la base de datos central.' });
       }
     }
+    runtimeDB.packages = packages;
   }
   res.json({ success: true, packages: runtimeDB.packages });
 });
 
 app.post('/api/settings', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const newSettings = req.body;
   if (newSettings && typeof newSettings === 'object') {
     // Nunca permitir que se sobreescriba el hash del PIN por este endpoint
     const { adminPin, adminPinHash, ...safeSettings } = newSettings;
-    runtimeDB.settings = { ...runtimeDB.settings, ...safeSettings };
+    const candidateSettings = { ...runtimeDB.settings, ...safeSettings };
     if (isMongoConfigured()) {
       try {
-        await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...safeSettings });
+        const ok = await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...safeSettings }, { throwOnError: true });
+        if (!ok) throw new Error('Fallo al persistir configuración general');
       } catch (eMongo) {
-        console.warn('⚠️ [MongoDB] Error guardando settings:', eMongo?.message || eMongo);
+        console.error('❌ [Settings] Error guardando settings:', eMongo?.message || eMongo);
+        return res.status(500).json({ error: 'Fallo al guardar configuración en la base de datos central.' });
       }
     }
+    runtimeDB.settings = candidateSettings;
   }
   res.json({ success: true, settings: runtimeDB.settings });
 });
@@ -1608,6 +1631,8 @@ app.get('/api/admin/bookings', async (req, res) => {
 });
 
 app.patch('/api/admin/bookings/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+
   const { id } = req.params;
   const updates = req.body || {};
   const supaId = id.startsWith('book-') ? id : `book-${id}`;
@@ -1630,37 +1655,45 @@ app.patch('/api/admin/bookings/:id', async (req, res) => {
     }
   }
 
+  // NUNCA crear reservas ficticias si el ID solicitado no existe
   if (!booking) {
-    booking = normalizeBookingDoc({ id, ...updates, isReal: true });
-    if (!runtimeDB.bookings) runtimeDB.bookings = [];
-    runtimeDB.bookings.unshift(booking);
-  } else {
-    booking = mergeBookingObjectsServer(booking, updates);
-    const idx = (runtimeDB.bookings || []).findIndex(b => b.id === id || b.id === supaId);
-    if (idx !== -1) runtimeDB.bookings[idx] = booking;
+    return res.status(404).json({ error: 'Reserva no encontrada para actualizar.' });
   }
+
+  const candidateBooking = mergeBookingObjectsServer(booking, updates);
 
   if (isMongoConfigured()) {
     try {
-      await persistBookingToMongo(booking, { throwOnError: true });
+      await persistBookingToMongo(candidateBooking, { throwOnError: true });
     } catch (eMongo) {
       console.error('❌ [Admin Update] Fallo al actualizar reserva en MongoDB Atlas:', eMongo?.message || eMongo);
       return res.status(500).json({ error: 'Fallo al guardar la actualización de la reserva en la base de datos central.' });
     }
   }
+
+  // Mutar memoria ÚNICAMENTE tras el éxito de la persistencia duradera
+  const idx = (runtimeDB.bookings || []).findIndex(b => b.id === id || b.id === supaId);
+  if (idx !== -1) {
+    runtimeDB.bookings[idx] = candidateBooking;
+  } else {
+    runtimeDB.bookings.unshift(candidateBooking);
+  }
+
   await recordFinancialAuditLog({
     action: 'booking_updated',
     actor: 'admin',
     entityType: 'booking',
-    entityId: booking.id,
-    amount: booking.totalPrice,
-    status: booking.status,
+    entityId: candidateBooking.id,
+    amount: candidateBooking.totalPrice,
+    status: candidateBooking.status,
     ip: getClientIp(req)
   }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
-  res.json({ success: true, booking });
+  res.json({ success: true, booking: candidateBooking });
 });
 
 app.delete('/api/admin/bookings/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+
   const { id } = req.params;
   const supaId = id.startsWith('book-') ? id : `book-${id}`;
 
@@ -2032,27 +2065,46 @@ app.post('/api/payments/webhook', async (req, res) => {
   const isIncomingTerminalFail = ['DECLINED', 'VOIDED', 'ERROR'].includes(tx.status);
 
   if (isCurrentlyVerified || (isCurrentlyRejected && isIncomingTerminalFail)) {
-    // RECONCILIACIÓN EN REINTENTO IDEMPOTENTE:
-    // Si el pago ya figura aprobado pero la reserva asociada quedó en estado 'pending'
-    // o con 'depositPaid: false' (por un fallo transitorio de persistencia en un intento previo),
-    // el reintento DEBE reconciliar y persistir la reserva antes de dar la respuesta final.
+    // A) Reconciliación en reintento idempotente de pago aprobado:
     if (isCurrentlyVerified && payment.bookingId) {
       const associatedBooking = await findBookingById(payment.bookingId);
       if (associatedBooking && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
-        associatedBooking.status = 'confirmed';
-        associatedBooking.depositPaid = true;
-        const inMemB = (runtimeDB.bookings || []).find(b => b.id === associatedBooking.id);
-        if (inMemB) Object.assign(inMemB, associatedBooking);
-
+        const reconciledBooking = {
+          ...associatedBooking,
+          status: 'confirmed',
+          depositPaid: true
+        };
         if (isMongoConfigured()) {
           try {
-            await persistBookingToMongo(associatedBooking, { throwOnError: true });
+            await persistBookingToMongo(reconciledBooking, { throwOnError: true });
           } catch (eMongo) {
             console.error('❌ [Wompi Webhook Reintento] Fallo reconciliando reserva en MongoDB Atlas:', eMongo?.message || eMongo);
             return res.status(500).json({
               error: 'Fallo al asegurar la reserva asociada durante reintento idempotente. Se requiere reintento de Wompi.'
             });
           }
+        }
+        const inMemB = (runtimeDB.bookings || []).find(b => b.id === associatedBooking.id);
+        if (inMemB) Object.assign(inMemB, reconciledBooking);
+      }
+    }
+
+    // B) Reconciliación en reintento idempotente de pago rechazado:
+    if (isCurrentlyRejected && isMongoConfigured()) {
+      const persistedDoc = await findMongoDoc('payments', { reference: tx.reference });
+      if (!persistedDoc || persistedDoc.status !== 'rejected') {
+        try {
+          await persistPaymentToMongo({
+            ...payment,
+            status: 'rejected',
+            gatewayStatus: tx.status,
+            transactionId: tx.id
+          }, { throwOnError: true });
+        } catch (eMongo) {
+          console.error('❌ [Wompi Webhook Reintento] Fallo asegurando rechazo persistente en MongoDB Atlas:', eMongo?.message || eMongo);
+          return res.status(500).json({
+            error: 'Fallo al asegurar rechazo en la base de datos central. Se requiere reintento de Wompi.'
+          });
         }
       }
     }
@@ -2070,6 +2122,43 @@ app.post('/api/payments/webhook', async (req, res) => {
   if (Number(tx.amount_in_cents) !== expectedCents) {
     console.error(`[Wompi Webhook] Discrepancia de monto: esperado ${expectedCents}, recibido ${tx.amount_in_cents}`);
     return res.status(400).json({ error: 'El monto de la transacción no coincide con el registro previo.' });
+  }
+
+  // Vinculación criptográfica y autoritativa contra la API de Wompi:
+  // Previene que se modifique 'reference' en el payload del webhook ya que
+  // signature.properties de Wompi no incluye obligatoriamente 'transaction.reference'.
+  if (process.env.WOMPI_PRIVATE_KEY) {
+    const remote = await fetchWompiTransaction(tx.id);
+    if (!remote.ok) {
+      console.error(`[Wompi Webhook] Error verificando transacción ${tx.id} en Wompi API:`, remote.error);
+      return res.status(502).json({
+        error: 'No se pudo verificar la transacción con la API oficial de Wompi. Se requiere reintento de webhook.'
+      });
+    }
+
+    const officialTx = remote.transaction;
+    const refMatches = officialTx.reference === tx.reference && officialTx.reference === payment.reference;
+    const statusMatches = officialTx.status === tx.status;
+    const amountMatches = Number(officialTx.amount_in_cents) === expectedCents;
+    const currencyMatches = (officialTx.currency || 'COP').toUpperCase() === (payment.currency || 'COP').toUpperCase();
+
+    if (!refMatches || !statusMatches || !amountMatches || !currencyMatches) {
+      console.error('[Wompi Webhook] DISCREPANCIA CRÍTICA con Wompi API:', {
+        officialRef: officialTx.reference,
+        payloadRef: tx.reference,
+        dbRef: payment.reference,
+        officialStatus: officialTx.status,
+        payloadStatus: tx.status,
+        officialAmount: officialTx.amount_in_cents,
+        expectedAmount: expectedCents
+      });
+      return res.status(400).json({
+        error: 'Discrepancia crítica entre los datos del webhook y el registro oficial en la API de Wompi.'
+      });
+    }
+  } else if (process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL)) {
+    console.error('⚠️ [Wompi Webhook] WOMPI_PRIVATE_KEY no configurada en entorno de producción.');
+    return res.status(503).json({ error: 'WOMPI_PRIVATE_KEY requerida para verificación estricta de transacciones.' });
   }
 
   if (tx.status === 'APPROVED') {
@@ -2093,22 +2182,16 @@ app.post('/api/payments/webhook', async (req, res) => {
 
         // Evaluación estricta de la atomicidad usando matchedCount y verificación en MongoDB Atlas:
         if (atomicResult && atomicResult.matchedCount === 0) {
-          // Ningún documento coincidió con { reference: tx.reference, status: { $ne: 'verified' } }
-          // Esto puede deberse a:
-          // A) El pago ya fue marcado como 'verified' por otra instancia concurrente.
-          // B) El pago no existe en MongoDB Atlas en absoluto.
           const persistedDoc = await findMongoDoc('payments', { reference: tx.reference });
           if (persistedDoc && (persistedDoc.status === 'verified' || persistedDoc.status === 'approved')) {
             console.warn(`[Wompi Webhook] Pago con ref ${tx.reference} ya verificado en MongoDB Atlas por otra instancia.`);
-            // Reconciliación duradera de la reserva asociada si quedó pendiente:
             if (persistedDoc.bookingId) {
               const associatedBooking = await findBookingById(persistedDoc.bookingId);
               if (associatedBooking && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
-                associatedBooking.status = 'confirmed';
-                associatedBooking.depositPaid = true;
+                const recBooking = { ...associatedBooking, status: 'confirmed', depositPaid: true };
+                await persistBookingToMongo(recBooking, { throwOnError: true });
                 const inMemB = (runtimeDB.bookings || []).find(b => b.id === associatedBooking.id);
-                if (inMemB) Object.assign(inMemB, associatedBooking);
-                await persistBookingToMongo(associatedBooking, { throwOnError: true });
+                if (inMemB) Object.assign(inMemB, recBooking);
               }
             }
             return res.status(200).json({
@@ -2119,17 +2202,7 @@ app.post('/api/payments/webhook', async (req, res) => {
               reference: tx.reference
             });
           }
-
-          // Si el documento NO existe en MongoDB Atlas, persistirlo de forma duradera antes de continuar
-          if (!persistedDoc) {
-            console.warn(`[Wompi Webhook] Pago con ref ${tx.reference} no existía en MongoDB Atlas. Creando y persistiendo...`);
-            payment.status = 'verified';
-            payment.gatewayStatus = tx.status;
-            payment.transactionId = tx.id;
-            payment.paymentMethodType = tx.payment_method_type || 'WOMPI';
-            payment.approvedAt = new Date().toISOString();
-            await persistPaymentToMongo(payment, { throwOnError: true });
-          }
+          // Si NO existe en MongoDB Atlas aún, este worker continuará y persistirá duraderamente pago y reserva
         }
       } catch (eMongo) {
         console.error('❌ [Wompi Webhook] Fallo en transición atómica de pago en MongoDB Atlas:', eMongo?.message || eMongo);
@@ -2140,101 +2213,116 @@ app.post('/api/payments/webhook', async (req, res) => {
     }
 
     // 2. Control de concurrencia en memoria para peticiones concurrentes en el mismo proceso/hilo
-    if (payment._isProcessing || payment.status === 'verified') {
+    if (payment._isProcessing) {
       return res.status(200).json({
         success: true,
         idempotent: true,
         concurrentReplay: true,
-        message: 'Transacción ya procesada concurrentemente en este proceso.',
+        message: 'Transacción ya en procesamiento en este proceso.',
         reference: tx.reference
       });
     }
     payment._isProcessing = true;
 
-    // Estado canónico unificado para toda la contabilidad del sistema
-    payment.status = 'verified';
-    payment.gatewayStatus = tx.status;
-    payment.transactionId = tx.id;
-    payment.paymentMethodType = tx.payment_method_type || 'WOMPI';
-    payment.approvedAt = payment.approvedAt || new Date().toISOString();
+    // 3. Preparar candidatos de pago y reserva sin mutar memoria prematuramente
+    const approvedPayment = {
+      ...payment,
+      status: 'verified',
+      gatewayStatus: tx.status,
+      transactionId: tx.id,
+      paymentMethodType: tx.payment_method_type || 'WOMPI',
+      approvedAt: new Date().toISOString()
+    };
 
-    const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
-    if (inMem) {
-      Object.assign(inMem, payment);
-    } else if (runtimeDB.payments) {
-      runtimeDB.payments.unshift(payment);
-    }
-
-    let bookingToUpdate = null;
+    let approvedBooking = null;
     if (payment.bookingId) {
-      bookingToUpdate = await findBookingById(payment.bookingId);
-      if (bookingToUpdate) {
-        if (bookingToUpdate.status === 'pending') {
-          bookingToUpdate.status = 'confirmed';
-        }
-        bookingToUpdate.depositPaid = true;
-        const inMemB = (runtimeDB.bookings || []).find(b => b.id === bookingToUpdate.id);
-        if (inMemB) Object.assign(inMemB, bookingToUpdate);
+      const b = await findBookingById(payment.bookingId);
+      if (b) {
+        approvedBooking = {
+          ...b,
+          status: b.status === 'pending' ? 'confirmed' : b.status,
+          depositPaid: true
+        };
       }
     }
 
-    // Persistencia duradera de la reserva asociada en MongoDB Atlas (el pago ya fue asegurado atómicamente)
+    // 4. Persistir de forma duradera AMBOS (pago y reserva) en MongoDB Atlas con throwOnError: true
     if (isMongoConfigured()) {
       try {
-        if (bookingToUpdate) {
-          await persistBookingToMongo(bookingToUpdate, { throwOnError: true });
+        await persistPaymentToMongo(approvedPayment, { throwOnError: true });
+        if (approvedBooking) {
+          await persistBookingToMongo(approvedBooking, { throwOnError: true });
         }
       } catch (eMongo) {
-        console.error('❌ [Wompi Webhook] Fallo persistiendo reserva asociada en MongoDB Atlas:', eMongo?.message || eMongo);
+        payment._isProcessing = false;
+        console.error('❌ [Wompi Webhook] Fallo persistiendo pago o reserva asociada en MongoDB Atlas:', eMongo?.message || eMongo);
         return res.status(500).json({
-          error: 'Fallo al persistir la reserva asociada en la base de datos central. Se requiere reintento de webhook.'
+          error: 'Fallo al persistir la transacción o reserva en la base de datos central. Se requiere reintento de webhook.'
         });
       }
     }
 
+    // 5. SOLO TRAS CONFIRMAR LA ESCRITURA EN MONGODB SE PUBLICA EN MEMORIA
+    const inMemP = (runtimeDB.payments || []).find(p => p.id === payment.id);
+    if (inMemP) {
+      Object.assign(inMemP, approvedPayment);
+    } else if (runtimeDB.payments) {
+      runtimeDB.payments.unshift(approvedPayment);
+    }
+
+    if (approvedBooking) {
+      const inMemB = (runtimeDB.bookings || []).find(b => b.id === approvedBooking.id);
+      if (inMemB) {
+        Object.assign(inMemB, approvedBooking);
+      } else if (runtimeDB.bookings) {
+        runtimeDB.bookings.unshift(approvedBooking);
+      }
+    }
+
+    // 6. Notificaciones push, emails y auditoría
     await Promise.allSettled([
       recordFinancialAuditLog({
         action: 'wompi_payment_approved',
         actor: 'wompi_webhook',
         entityType: 'payment',
-        entityId: payment.id,
-        amount: payment.amount,
-        status: payment.status,
+        entityId: approvedPayment.id,
+        amount: approvedPayment.amount,
+        status: approvedPayment.status,
         ip: getClientIp(req),
-        metadata: { reference: payment.reference, transactionId: tx.id }
+        metadata: { reference: approvedPayment.reference, transactionId: tx.id }
       }, { runtimeDB, isMongoConfigured, upsertMongoDoc }),
       sendOneSignalPush({
         title: '💰 ¡Abono Confirmado en Wompi!',
-        message: `${payment.clientName} pagó $${payment.amount.toLocaleString('es-CO')} COP (${payment.concept === 'booking_deposit' ? 'Abono de Reserva' : 'Saldo'})`,
+        message: `${approvedPayment.clientName} pagó $${approvedPayment.amount.toLocaleString('es-CO')} COP (${approvedPayment.concept === 'booking_deposit' ? 'Abono de Reserva' : 'Saldo'})`,
         url: 'https://sebastiang.app/?mode=admin',
-        data: { type: 'payment', paymentId: payment.id, reference: payment.reference, transactionId: tx.id }
+        data: { type: 'payment', paymentId: approvedPayment.id, reference: approvedPayment.reference, transactionId: tx.id }
       }).catch(e => console.warn('OneSignal push error:', e)),
-      bookingToUpdate && bookingToUpdate.clientEmail ? sendBookingConfirmedEmail(bookingToUpdate, runtimeDB.settings).catch(e => console.warn('Email error:', e)) : Promise.resolve()
+      approvedBooking && approvedBooking.clientEmail ? sendBookingConfirmedEmail(approvedBooking, runtimeDB.settings).catch(e => console.warn('Email error:', e)) : Promise.resolve()
     ]);
 
-    return res.status(200).json({ success: true, status: 'APPROVED', reference: payment.reference });
+    return res.status(200).json({ success: true, status: 'APPROVED', reference: approvedPayment.reference });
   } else if (tx.status === 'DECLINED' || tx.status === 'VOIDED' || tx.status === 'ERROR') {
-    payment.status = 'rejected';
-    payment.gatewayStatus = tx.status;
-    payment.transactionId = tx.id;
-    payment.rejectedAt = new Date().toISOString();
-
-    const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
-    if (inMem) Object.assign(inMem, payment);
+    // 1. Preparar candidatos sin mutar memoria prematuramente
+    const rejectedPayment = {
+      ...payment,
+      status: 'rejected',
+      gatewayStatus: tx.status,
+      transactionId: tx.id,
+      rejectedAt: new Date().toISOString()
+    };
 
     let bookingToRevert = null;
     if (payment.bookingId) {
-      bookingToRevert = await findBookingById(payment.bookingId);
-      if (bookingToRevert) {
-        bookingToRevert.depositPaid = false;
-        const inMemB = (runtimeDB.bookings || []).find(b => b.id === bookingToRevert.id);
-        if (inMemB) Object.assign(inMemB, bookingToRevert);
+      const b = await findBookingById(payment.bookingId);
+      if (b) {
+        bookingToRevert = { ...b, depositPaid: false };
       }
     }
 
+    // 2. Persistir en MongoDB Atlas con throwOnError: true
     if (isMongoConfigured()) {
       try {
-        await persistPaymentToMongo(payment, { throwOnError: true });
+        await persistPaymentToMongo(rejectedPayment, { throwOnError: true });
         if (bookingToRevert) {
           await persistBookingToMongo(bookingToRevert, { throwOnError: true });
         }
@@ -2246,20 +2334,29 @@ app.post('/api/payments/webhook', async (req, res) => {
       }
     }
 
+    // 3. SOLO TRAS ÉXITO EN MONGODB MUTAR MEMORIA
+    const inMem = (runtimeDB.payments || []).find(p => p.id === payment.id);
+    if (inMem) Object.assign(inMem, rejectedPayment);
+
+    if (bookingToRevert) {
+      const inMemB = (runtimeDB.bookings || []).find(b => b.id === bookingToRevert.id);
+      if (inMemB) Object.assign(inMemB, bookingToRevert);
+    }
+
     await Promise.allSettled([
       recordFinancialAuditLog({
         action: 'wompi_payment_rejected',
         actor: 'wompi_webhook',
         entityType: 'payment',
-        entityId: payment.id,
-        amount: payment.amount,
-        status: payment.status,
+        entityId: rejectedPayment.id,
+        amount: rejectedPayment.amount,
+        status: rejectedPayment.status,
         ip: getClientIp(req),
-        metadata: { reference: payment.reference, transactionId: tx.id, gatewayStatus: tx.status }
+        metadata: { reference: rejectedPayment.reference, transactionId: tx.id, gatewayStatus: tx.status }
       }, { runtimeDB, isMongoConfigured, upsertMongoDoc })
     ]);
 
-    return res.status(200).json({ success: true, status: tx.status, reference: payment.reference });
+    return res.status(200).json({ success: true, status: tx.status, reference: rejectedPayment.reference });
   } else {
     return res.status(200).json({ success: true, status: tx.status });
   }
@@ -2283,6 +2380,8 @@ app.get('/api/payments/status/:reference', async (req, res) => {
 });
 
 app.patch('/api/admin/payments/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+
   const { id } = req.params;
   const { status } = req.body;
   const cleanId = String(id);
@@ -2296,38 +2395,48 @@ app.patch('/api/admin/payments/:id', async (req, res) => {
       if (doc) {
         const { _id, ...cleanDoc } = doc;
         payment = cleanDoc;
-        if (!runtimeDB.payments) runtimeDB.payments = [];
-        runtimeDB.payments.unshift(payment);
       }
     } catch (eMongo) {}
   }
 
   if (!payment) return res.status(404).json({ error: 'Pago no encontrado.' });
-  payment.status = status;
+
+  const candidatePayment = { ...payment, status };
 
   if (isMongoConfigured()) {
     try {
-      await persistPaymentToMongo(payment, { throwOnError: true });
+      await persistPaymentToMongo(candidatePayment, { throwOnError: true });
     } catch (eMongo) {
       console.error('❌ [Admin Payment Patch] Fallo al actualizar pago en MongoDB Atlas:', eMongo?.message || eMongo);
       return res.status(500).json({ error: 'Fallo al guardar la actualización del pago en la base de datos central.' });
     }
   }
 
+  // Mutar memoria ÚNICAMENTE tras confirmación de persistencia duradera
+  const idx = (runtimeDB.payments || []).findIndex(p => p.id === cleanId || p.id === supaId);
+  if (idx !== -1) {
+    runtimeDB.payments[idx] = candidatePayment;
+  } else {
+    if (!runtimeDB.payments) runtimeDB.payments = [];
+    runtimeDB.payments.unshift(candidatePayment);
+  }
+
   await recordFinancialAuditLog({
     action: 'payment_status_updated',
     actor: 'admin',
     entityType: 'payment',
-    entityId: payment.id,
-    amount: payment.amount,
-    status: payment.status,
+    entityId: candidatePayment.id,
+    amount: candidatePayment.amount,
+    status: candidatePayment.status,
     ip: getClientIp(req)
   }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
-  res.json({ success: true, payment });
+  res.json({ success: true, payment: candidatePayment });
 });
 
 app.delete('/api/admin/payments/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+
   const { id } = req.params;
   const cleanId = String(id);
   const supaId = cleanId.startsWith('pay-') ? cleanId : `pay-${cleanId}`;
@@ -2399,9 +2508,30 @@ app.get('/api/admin/sessions', async (req, res) => {
 });
 
 app.delete('/api/admin/sessions/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
   const rawId = (id || '').trim();
   const cleanId = rawId.replace(/^sess-/, '');
+
+  if (isMongoConfigured()) {
+    try {
+      const ok = await deleteMongoDoc('sessions', {
+        $or: [
+          { id: rawId },
+          { token: rawId },
+          { id: cleanId },
+          { token: cleanId },
+          { id: `sess-${cleanId}` },
+          { token: `sess-${cleanId}` }
+        ]
+      });
+      if (!ok) throw new Error('Fallo al eliminar sesión de MongoDB Atlas (no reconocida)');
+    } catch (eMongo) {
+      console.error('❌ [Sessions] Error eliminando sesión:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al eliminar la sesión en la base de datos central.' });
+    }
+  }
+
   runtimeDB.sessions = (runtimeDB.sessions || []).filter(s => {
     if (!s) return false;
     const match =
@@ -2414,27 +2544,11 @@ app.delete('/api/admin/sessions/:id', async (req, res) => {
     return !match;
   });
 
-  // Eliminar de MongoDB Atlas
-  if (isMongoConfigured()) {
-    try {
-      await deleteMongoDoc('sessions', {
-        $or: [
-          { id: rawId },
-          { token: rawId },
-          { id: cleanId },
-          { token: cleanId },
-          { id: `sess-${cleanId}` },
-          { token: `sess-${cleanId}` }
-        ]
-      });
-    } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error eliminando sesión:', eMongo?.message || eMongo);
-    }
-  }
-  res.json({ success: true });
+  res.json({ success: true, message: 'Sesión eliminada correctamente' });
 });
 
 app.post('/api/admin/sessions', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const {
     clientName, clientWhatsApp, packageTitle, maxPhotosAllowed, photos,
     totalPrice, packagePrice, sessionBasePrice, bookingId, location
@@ -2480,16 +2594,18 @@ app.post('/api/admin/sessions', async (req, res) => {
     }))
   };
 
-  runtimeDB.sessions.unshift(newSession);
-
-  // Guardar en MongoDB Atlas
+  // Guardar en MongoDB Atlas antes de mutar la memoria
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('sessions', { token: newSession.token }, newSession);
+      const ok = await upsertMongoDoc('sessions', { token: newSession.token }, newSession, { throwOnError: true });
+      if (!ok) throw new Error('Fallo al persistir sesión en MongoDB Atlas');
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando sesión:', eMongo?.message || eMongo);
+      console.error('❌ [Sessions] Error guardando sesión:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al guardar la sesión en la base de datos central.' });
     }
   }
+
+  runtimeDB.sessions.unshift(newSession);
 
   res.status(201).json({
     success: true,
@@ -2499,29 +2615,37 @@ app.post('/api/admin/sessions', async (req, res) => {
 });
 
 app.post('/api/admin/sessions/:id/reopen', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
   const { additionalDays = 3, allowReSelection = true } = req.body;
   const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   const newExpires = new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000);
-  session.expiresAt = newExpires.toISOString();
-  session.revoked = false;
-  if (allowReSelection || session.status === 'revoked') {
-    session.status = 'pending';
-    session.submittedAt = null;
-  }
+  const candidate = {
+    ...session,
+    expiresAt: newExpires.toISOString(),
+    revoked: false,
+    status: (allowReSelection || session.status === 'revoked') ? 'pending' : session.status,
+    submittedAt: (allowReSelection || session.status === 'revoked') ? null : session.submittedAt
+  };
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('sessions', { token: session.token }, session);
-    } catch (eMongo) {}
+      const ok = await upsertMongoDoc('sessions', { token: candidate.token }, candidate, { throwOnError: true });
+      if (!ok) throw new Error('Fallo al actualizar sesión en MongoDB Atlas');
+    } catch (eMongo) {
+      console.error('❌ [Sessions Reopen] Error en MongoDB:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al reabrir sesión en la base de datos central.' });
+    }
   }
 
+  Object.assign(session, candidate);
   res.json({ success: true, session });
 });
 
 app.post('/api/admin/sessions/:id/revoke', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
   let session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
   if (!session && isMongoConfigured()) {
@@ -2530,27 +2654,40 @@ app.post('/api/admin/sessions/:id/revoke', async (req, res) => {
       if (doc) {
         const { _id, ...cleanSession } = doc;
         session = cleanSession;
-        runtimeDB.sessions = runtimeDB.sessions || [];
-        runtimeDB.sessions.push(session);
       }
     } catch (eMongo) {}
   }
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
-  session.revoked = true;
-  session.status = 'revoked';
-  session.revokedAt = new Date().toISOString();
+  const candidate = {
+    ...session,
+    revoked: true,
+    status: 'revoked',
+    revokedAt: new Date().toISOString()
+  };
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('sessions', { token: session.token }, session);
-    } catch (eMongo) {}
+      const ok = await upsertMongoDoc('sessions', { token: candidate.token }, candidate, { throwOnError: true });
+      if (!ok) throw new Error('Fallo al revocar sesión en MongoDB Atlas');
+    } catch (eMongo) {
+      console.error('❌ [Sessions Revoke] Error en MongoDB:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al revocar la sesión en la base de datos central.' });
+    }
   }
 
-  res.json({ success: true, session });
+  const inMem = (runtimeDB.sessions || []).find(s => s.id === session.id || s.token === session.token);
+  if (inMem) Object.assign(inMem, candidate);
+  else {
+    if (!runtimeDB.sessions) runtimeDB.sessions = [];
+    runtimeDB.sessions.push(candidate);
+  }
+
+  res.json({ success: true, session: candidate });
 });
 
 app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
   const { finalDeliveryUrl, deliveryService = 'wetransfer', deliveryNotes = '', finalPhotos = [] } = req.body;
   let session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
@@ -2561,62 +2698,76 @@ app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
       if (doc) {
         const { _id, ...cleanSession } = doc;
         session = cleanSession;
-        runtimeDB.sessions = runtimeDB.sessions || [];
-        runtimeDB.sessions.push(session);
       }
     } catch (eMongo) {}
   }
 
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
-  session.status = 'delivered';
-  session.finalDeliveryUrl = (finalDeliveryUrl || '').trim();
-  session.deliveryService = deliveryService;
-  session.deliveryNotes = (deliveryNotes || '').trim();
-  session.deliveredAt = new Date().toISOString();
+  const candidate = {
+    ...session,
+    status: 'delivered',
+    finalDeliveryUrl: (finalDeliveryUrl || '').trim(),
+    deliveryService,
+    deliveryNotes: (deliveryNotes || '').trim(),
+    deliveredAt: new Date().toISOString()
+  };
   if (Array.isArray(finalPhotos) && finalPhotos.length > 0) {
-    session.finalPhotos = finalPhotos;
+    candidate.finalPhotos = finalPhotos;
   }
 
-  // Guardar en MongoDB Atlas
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('sessions', { token: session.token }, session);
+      const ok = await upsertMongoDoc('sessions', { token: candidate.token }, candidate, { throwOnError: true });
+      if (!ok) throw new Error('Fallo al persistir entrega en MongoDB Atlas');
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando entrega:', eMongo?.message || eMongo);
+      console.error('❌ [Sessions Deliver] Error guardando entrega:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Fallo al guardar la entrega en la base de datos central.' });
     }
   }
 
-  res.json({ success: true, session });
+  const inMem = (runtimeDB.sessions || []).find(s => s.id === session.id || s.token === session.token);
+  if (inMem) Object.assign(inMem, candidate);
+  else {
+    if (!runtimeDB.sessions) runtimeDB.sessions = [];
+    runtimeDB.sessions.push(candidate);
+  }
+
+  res.json({ success: true, session: candidate });
 });
 
 app.post('/api/admin/settings', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { settings, packages } = req.body;
   if (settings) {
-    // Nunca permitir que se sobreescriba el hash del PIN por este endpoint
     const { adminPin, adminPinHash, ...safeSettings } = settings;
-    runtimeDB.settings = { ...runtimeDB.settings, ...safeSettings };
+    const candidateSettings = { ...runtimeDB.settings, ...safeSettings };
     if (isMongoConfigured()) {
       try {
-        await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...safeSettings });
+        const ok = await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...safeSettings }, { throwOnError: true });
+        if (!ok) throw new Error('Fallo al guardar configuración en MongoDB Atlas');
       } catch (eMongo) {
-        console.warn('⚠️ [MongoDB] Error guardando settings en admin:', eMongo?.message || eMongo);
+        console.error('❌ [Admin Settings] Error guardando settings:', eMongo?.message || eMongo);
+        return res.status(500).json({ error: 'Fallo al guardar configuración en la base de datos central.' });
       }
     }
+    runtimeDB.settings = candidateSettings;
   }
   if (packages && Array.isArray(packages)) {
-    runtimeDB.packages = packages;
     if (isMongoConfigured()) {
       try {
         for (const pkg of packages) {
           if (pkg && pkg.id) {
-            await upsertMongoDoc('packages', { id: pkg.id }, pkg);
+            const ok = await upsertMongoDoc('packages', { id: pkg.id }, pkg, { throwOnError: true });
+            if (!ok) throw new Error(`Fallo al guardar paquete ${pkg.id}`);
           }
         }
       } catch (eMongo) {
-        console.warn('⚠️ [MongoDB] Error guardando packages en admin:', eMongo?.message || eMongo);
+        console.error('❌ [Admin Settings] Error guardando paquetes:', eMongo?.message || eMongo);
+        return res.status(500).json({ error: 'Fallo al guardar paquetes en la base de datos central.' });
       }
     }
+    runtimeDB.packages = packages;
   }
   res.json({ success: true, settings: runtimeDB.settings, packages: runtimeDB.packages });
 });
@@ -2625,6 +2776,7 @@ app.post('/api/admin/settings', async (req, res) => {
 // GESTIÓN DE CATÁLOGO
 // ==============================================================================
 app.post('/api/admin/catalog', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id, title, category, url, location } = req.body;
   if (!title || !url) {
     return res.status(400).json({ error: 'Faltan título o imagen de la foto.' });
@@ -2641,46 +2793,62 @@ app.post('/api/admin/catalog', async (req, res) => {
     location: (location || 'Colombia').trim(),
     createdAt: new Date().toISOString()
   };
-  if (!runtimeDB.catalog) runtimeDB.catalog = [];
-  runtimeDB.catalog = runtimeDB.catalog.filter(c => c.id !== newItem.id && c.url !== newItem.url);
-  runtimeDB.catalog.unshift(newItem);
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('catalog', { id: newItem.id }, newItem);
+      await upsertMongoDoc('catalog', { id: newItem.id }, newItem, { throwOnError: true });
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando catálogo:', eMongo?.message || eMongo);
+      console.error('❌ [MongoDB] Error guardando catálogo:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Error persistiendo foto en la base de datos principal.' });
     }
   }
+
+  if (!runtimeDB.catalog) runtimeDB.catalog = [];
+  runtimeDB.catalog = runtimeDB.catalog.filter(c => c.id !== newItem.id && c.url !== newItem.url);
+  runtimeDB.catalog.unshift(newItem);
 
   res.status(201).json({ success: true, item: newItem });
 });
 
 app.delete('/api/admin/catalog/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
   const bodyTitle = req.body && req.body.title ? req.body.title.trim().toLowerCase() : null;
   const target = (runtimeDB.catalog || []).find(c => c.id === id);
   const targetTitle = bodyTitle || (target?.title ? target.title.trim().toLowerCase() : null);
+
+  if (isMongoConfigured()) {
+    try {
+      await deleteMongoDoc('catalog', { id }, { throwOnError: true });
+    } catch (eMongo) {
+      console.error('❌ [MongoDB] Error eliminando catálogo:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Error eliminando foto de la base de datos principal.' });
+    }
+  }
+
   runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => {
     if (c.id === id) return false;
     if (targetTitle && c.title && c.title.trim().toLowerCase() === targetTitle) return false;
     return true;
   });
 
-  if (isMongoConfigured()) {
-    try {
-      await deleteMongoDoc('catalog', { id });
-    } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error eliminando catálogo:', eMongo?.message || eMongo);
-    }
-  }
-
   res.json({ success: true, id });
 });
 
-app.post('/api/admin/catalog/delete-samples', (req, res) => {
+app.post('/api/admin/catalog/delete-samples', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+  const sampleIds = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'];
+  if (isMongoConfigured()) {
+    try {
+      for (const sId of sampleIds) {
+        await deleteMongoDoc('catalog', { id: sId });
+      }
+    } catch (eMongo) {
+      console.warn('⚠️ [MongoDB] Error eliminando fotos de muestra:', eMongo?.message || eMongo);
+    }
+  }
   runtimeDB.catalog = (runtimeDB.catalog || []).filter(c => {
-    const isSample = ['cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6', 'cat-7', 'cat-8'].includes(c.id) ||
+    const isSample = sampleIds.includes(c.id) ||
       (c.url && c.url.includes('unsplash.com'));
     return !isSample;
   });
@@ -3241,17 +3409,20 @@ app.post('/api/gallery/:token/review', async (req, res) => {
 });
 
 app.delete('/api/admin/reviews/:id', async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
-  runtimeDB.reviews = (runtimeDB.reviews || []).filter(r => r.id !== id);
 
   // Eliminar de MongoDB Atlas
   if (isMongoConfigured()) {
     try {
-      await deleteMongoDoc('reviews', { id });
+      await deleteMongoDoc('reviews', { id }, { throwOnError: true });
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error eliminando reseña:', eMongo?.message || eMongo);
+      console.error('❌ [MongoDB] Error eliminando reseña:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Error eliminando reseña de la base de datos principal.' });
     }
   }
+
+  runtimeDB.reviews = (runtimeDB.reviews || []).filter(r => r.id !== id);
   res.json({ success: true, id });
 });
 
@@ -3382,6 +3553,7 @@ app.get('/api/admin/vip', requireAdminAuth, async (req, res) => {
 });
 
 app.post('/api/admin/vip', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { client, id } = req.body || {};
   if (!client || typeof client !== 'object') {
     return res.status(400).json({ error: 'Falta el objeto "client".' });
@@ -3391,33 +3563,39 @@ app.post('/api/admin/vip', requireAdminAuth, async (req, res) => {
   if (!phone && !id) return res.status(400).json({ error: 'El cliente necesita telefono o id.' });
 
   const vipDoc = { ...client, id: rowId };
-  runtimeDB.vipClients = Array.isArray(runtimeDB.vipClients)
-    ? [vipDoc, ...runtimeDB.vipClients.filter(v => v?.id !== rowId)]
-    : [vipDoc];
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('vip_clients', { id: rowId }, vipDoc);
+      await upsertMongoDoc('vip_clients', { id: rowId }, vipDoc, { throwOnError: true });
     } catch (eMongo) {
-      console.warn('⚠️ [MongoDB] Error guardando VIP:', eMongo?.message || eMongo);
+      console.error('❌ [MongoDB] Error guardando VIP:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Error persistiendo cliente VIP en la base de datos principal.' });
     }
   }
+
+  runtimeDB.vipClients = Array.isArray(runtimeDB.vipClients)
+    ? [vipDoc, ...runtimeDB.vipClients.filter(v => v?.id !== rowId)]
+    : [vipDoc];
 
   return res.json({ success: true, id: rowId });
 });
 
 app.delete('/api/admin/vip/:id', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const raw = String(req.params.id || '');
   const variants = [raw, raw.startsWith('vip-') ? raw : `vip-${raw}`, `vip-vip-${raw.replace(/^vip-/, '')}`];
 
-  if (Array.isArray(runtimeDB.vipClients)) {
-    runtimeDB.vipClients = runtimeDB.vipClients.filter(v => !variants.includes(v?.id));
-  }
-
   if (isMongoConfigured()) {
     try {
-      await deleteMongoDoc('vip_clients', { $or: variants.map(v => ({ id: v })) });
-    } catch (eMongo) {}
+      await deleteMongoDoc('vip_clients', { $or: variants.map(v => ({ id: v })) }, { throwOnError: true });
+    } catch (eMongo) {
+      console.error('❌ [MongoDB] Error eliminando VIP:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Error eliminando cliente VIP de la base de datos principal.' });
+    }
+  }
+
+  if (Array.isArray(runtimeDB.vipClients)) {
+    runtimeDB.vipClients = runtimeDB.vipClients.filter(v => !variants.includes(v?.id));
   }
 
   return res.json({ success: true });
