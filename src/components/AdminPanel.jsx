@@ -183,6 +183,10 @@ import {
 } from '../services/systemAuditor';
 
 import { findNextBookingSameDay, parseDateTimeString, minutesToLabel } from '../services/bookingAvailability';
+import AdminSidebar from './admin/AdminSidebar';
+import AdminHeader from './admin/AdminHeader';
+import AdminMetricsBar from './admin/AdminMetricsBar';
+import AdminBottomNav from './admin/AdminBottomNav';
 
 // Función para quemar la marca de agua antipiratería directamente en los píxeles de la imagen
 function applyCanvasWatermark(ctx, width, height, title = 'SEBASTIAN G', sub = 'MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA') {
@@ -469,7 +473,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   };
 
   // Pestañas
-  const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' | 'payments' | 'reviews' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
+  const [activeTab, setActiveTab] = useState('bookings');
+  // Navegación Modular y Búsqueda Global del Panel Moderno
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('admin_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleSidebarCollapse = (val) => {
+    setIsSidebarCollapsed(val);
+    try {
+      localStorage.setItem('admin_sidebar_collapsed', String(val));
+    } catch {}
+  };
+
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [adminSearchQuery, setAdminSearchQuery] = useState(''); // 'bookings' | 'payments' | 'reviews' | 'analytics' | 'loyalty' | 'create-session' | 'sessions' | 'catalog-manager' | 'pricing-manager' | 'settings'
 
   // Saldos base reales de cuentas y filtro de pagos por pasarela
   const [walletBaseBalances, setWalletBaseBalances] = useState(getWalletBaseBalances);
@@ -4221,126 +4243,65 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   return (
     <div 
       onContextMenu={(e) => { e.preventDefault(); return false; }}
-      className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 select-none"
+      className="min-h-screen bg-stone-950 text-stone-100 flex flex-col md:flex-row select-none"
     >
-      
-      {/* BARRA SUPERIOR EXCLUSIVA DEL PANEL (SEPARA EL DASHBOARD DE LA WEB PÚBLICA) */}
-      <div className="w-full bg-stone-900/90 border border-stone-800 rounded-3xl p-4 sm:p-5 mb-8 flex flex-wrap items-center justify-between gap-4 shadow-2xl backdrop-blur-xl">
-        <div className="flex items-center gap-3.5">
-          <img
-            src="/app-icon.png"
-            alt="Sebastian G"
-            className="h-10 w-10 sm:h-12 sm:w-12 rounded-2xl object-cover shadow-lg shadow-pink-500/25 border border-white/20"
-          />
-          <div className="border-l border-stone-800 pl-3">
-            <span className="text-[11px] font-black uppercase tracking-widest text-amber-400 block">
-              Panel de Fotógrafo
-            </span>
-            <span className="text-xs text-stone-400 font-medium block">
-              Sebastian G • Fotografía & Edición Profesional
-            </span>
-          </div>
-        </div>
+      {/* BARRA LATERAL CATEGORIZADA (DESKTOP STICKY & MOBILE DRAWER) */}
+      <AdminSidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        bookings={bookings}
+        payments={payments}
+        safeSessions={safeSessions}
+        reviewsList={reviewsList}
+        catalog={catalog}
+        auditConflicts={auditConflicts}
+        auditErrors={auditErrors}
+        isCollapsed={isSidebarCollapsed}
+        setIsCollapsed={handleToggleSidebarCollapse}
+        mobileOpen={isMobileNavOpen}
+        setMobileOpen={setIsMobileNavOpen}
+        onBackToHome={onBackToHome}
+        handleLogout={handleLogout}
+        handleSharePortfolioWhatsApp={handleSharePortfolioWhatsApp}
+      />
 
-        {/* Acciones Rápidas: Push, Instalar en Android, Ver Portafolio y Cerrar Sesión */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          {/* Control de Notificaciones Push estilo WhatsApp / Messenger */}
-          {pushPermission !== 'granted' ? (
-            <button
-              type="button"
-              onClick={handleEnablePush}
-              className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-lg shadow-emerald-600/30 active:scale-95 animate-pulse"
-              title="Activar notificaciones Push para que suenen como en WhatsApp cuando un cliente reserve"
-            >
-              <Bell className="w-4 h-4" />
-              <span>🔔 Activar Notificaciones Push</span>
-            </button>
-          ) : (
-            <div className="flex items-center gap-1.5 bg-stone-950/90 border border-emerald-500/40 px-3 py-1.5 rounded-xl">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-0.5" />
-              <span className="text-[11px] font-bold text-emerald-300">Push Flotante Activo</span>
-              {typeof window !== 'undefined' && window.AndroidNotificationBridge ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.AndroidNotificationBridge.testNativeNotification) {
-                        window.AndroidNotificationBridge.testNativeNotification();
-                      } else {
-                        handleTestPush();
-                      }
-                    }}
-                    className="ml-1 text-[11px] text-amber-300 hover:text-amber-200 underline font-bold"
-                    title="Disparar sonido VIP y alerta nativa flotante en este teléfono"
-                  >
-                    🔊 Probar Alerta APK
-                  </button>
-                  {window.AndroidNotificationBridge.requestIgnoreBatteryOptimizations && (
-                    <button
-                      type="button"
-                      onClick={() => window.AndroidNotificationBridge.requestIgnoreBatteryOptimizations()}
-                      className="ml-1 text-[11px] text-emerald-400 hover:text-emerald-300 font-bold"
-                      title="Permitir alertas 24/7 con pantalla apagada desactivando el ahorro de batería de Android"
-                    >
-                      ⚡ Alertas 24/7
-                    </button>
-                  )}
-                  {window.AndroidNotificationBridge.openNotificationSettings && (
-                    <button
-                      type="button"
-                      onClick={() => window.AndroidNotificationBridge.openNotificationSettings()}
-                      className="ml-1 text-[11px] text-amber-400 hover:text-amber-200 underline font-bold"
-                      title="Configurar permisos de notificaciones flotantes en los ajustes de Android"
-                    >
-                      ⚙️ Ajustes
-                    </button>
-                  )}
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleTestPush}
-                  className="ml-1 text-[11px] text-stone-300 hover:text-amber-300 underline font-semibold"
-                  title="Hacer sonar y probar una notificación flotante de prueba"
-                >
-                  (Probar Alerta)
-                </button>
-              )}
-            </div>
-          )}
+      {/* CONTENEDOR PRINCIPAL DEL PANEL */}
+      <div className="flex-1 flex flex-col min-w-0 pb-16 md:pb-8">
+        {/* BARRA SUPERIOR DE CONTROL, BÚSQUEDA Y ACCIONES RÁPIDAS */}
+        <AdminHeader
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          setMobileOpen={setIsMobileNavOpen}
+          searchQuery={adminSearchQuery}
+          setSearchQuery={setAdminSearchQuery}
+          pushPermission={pushPermission}
+          handleEnablePush={handleEnablePush}
+          handleTestPush={handleTestPush}
+          onBackToHome={onBackToHome}
+          handleLogout={handleLogout}
+          handleSharePortfolioWhatsApp={handleSharePortfolioWhatsApp}
+          handleCopyStandalonePackagesLink={handleCopyStandalonePackagesLink}
+          onOpenNewBookingModal={() => {
+            const defaultPkg = (packages || [])[0] || DEFAULT_PACKAGES[0];
+            setNewBookingForm({
+              clientName: '',
+              clientWhatsApp: '',
+              clientEmail: '',
+              packageId: defaultPkg?.id || 'pkg-4fotos',
+              locationType: 'san_antero',
+              specificLocation: 'San Antero',
+              dateTime: new Date().toLocaleDateString('es-CO'),
+              description: '',
+              totalPrice: defaultPkg?.price || 45000,
+              status: 'pending'
+            });
+            setShowCreateBookingModal(true);
+          }}
+        />
 
-
-          <button
-            type="button"
-            onClick={handleSharePortfolioWhatsApp}
-            className="px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-black flex items-center gap-1.5 transition-all shadow-md active:scale-95 shadow-emerald-950/40 cursor-pointer"
-            title="Compartir enlace de tu web y catálogo por WhatsApp a tus clientes"
-          >
-            <MessageCircle className="w-3.5 h-3.5 fill-white text-white" />
-            <span>📲 Compartir Web por WhatsApp</span>
-          </button>
-
-          {onBackToHome && (
-            <button
-              onClick={onBackToHome}
-              className="px-3.5 py-2.5 rounded-xl bg-stone-950 border border-stone-700 hover:border-amber-400 text-stone-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-md active:scale-95"
-            >
-              <Eye className="w-3.5 h-3.5 text-amber-400" />
-              <span>Ver Web Pública</span>
-            </button>
-          )}
-
-          <button
-            onClick={handleLogout}
-            className="px-4 py-2.5 rounded-xl bg-red-950/80 border border-red-500/50 hover:bg-red-900 text-red-200 text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-md active:scale-95 shadow-red-950/40"
-          >
-            <LogOut className="w-3.5 h-3.5 text-red-400" />
-            <span>Cerrar Sesión</span>
-          </button>
-        </div>
-      </div>
-
-      {/* ALERTA FLOTANTE EN TIEMPO REAL ESTILO WHATSAPP / MESSENGER */}
+        {/* ESPACIO DE TRABAJO (ÁREA DE CONTENIDO ACTIVO) */}
+        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-5 max-w-7xl w-full mx-auto space-y-6">
+          {/* ALERTA FLOTANTE EN TIEMPO REAL ESTILO WHATSAPP / MESSENGER */}
       {realtimeAlert && (
         <div className="fixed top-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 animate-bounce-in">
           <div className="bg-stone-950/95 border-2 border-amber-400 rounded-3xl p-4 sm:p-5 shadow-[0_20px_60px_rgba(245,158,11,0.4)] backdrop-blur-2xl text-left text-white ring-4 ring-amber-400/20">
@@ -4451,114 +4412,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         </div>
       )}
 
-      {/* BARRA DE MÉTRICAS EN VIVO Y ESTADÍSTICAS RÁPIDAS */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-        <div 
-          onClick={() => setActiveTab('analytics')}
-          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
-        >
-          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
-            <span className="font-semibold">Visitas Totales</span>
-            <Eye className="w-4 h-4 text-amber-400" />
-          </div>
-          <span className="text-2xl font-black text-white font-mono">{analyticsStats.totalVisits}</span>
-          <span className="text-[10px] text-emerald-400 block mt-0.5 font-bold">+{analyticsStats.todayVisits} hoy</span>
-        </div>
-
-        <div 
-          onClick={() => setActiveTab('analytics')}
-          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
-        >
-          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
-            <span className="font-semibold">Enlace Compartido</span>
-            <Share2 className="w-4 h-4 text-pink-400" />
-          </div>
-          <span className="text-2xl font-black text-white font-mono">{analyticsStats.totalShares}</span>
-          <span className="text-[10px] text-stone-400 block mt-0.5">Por WhatsApp / Web</span>
-        </div>
-
-        <div 
-          onClick={() => setActiveTab('payments')}
-          className="bg-stone-900/80 border border-stone-800 hover:border-emerald-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg group"
-        >
-          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
-            <span className="font-semibold">Pagos en Vivo</span>
-            <div className="flex items-center gap-1.5 bg-stone-950 px-2 py-0.5 rounded-lg border border-stone-800">
-              <NequiLogo className="w-3.5 h-3.5" showText={false} />
-              <DaviPlataLogo className="w-3.5 h-3.5" showText={false} />
-              <DaleLogo className="w-3.5 h-3.5" showText={false} />
-            </div>
-          </div>
-          <span className="text-2xl font-black text-white font-mono">{payments.length}</span>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="text-[10px] text-purple-400 font-bold">Nequi</span>
-            <span className="text-[10px] text-stone-600">•</span>
-            <span className="text-[10px] text-red-400 font-bold">DaviPlata</span>
-            <span className="text-[10px] text-stone-600">•</span>
-            <span className="text-[10px] text-amber-400 font-bold">Dale!</span>
-          </div>
-        </div>
-
-        <div 
-          onClick={() => setActiveTab('reviews')}
-          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg group"
-        >
-          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
-            <span className="font-semibold">Opiniones</span>
-            <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-          </div>
-          <span className="text-2xl font-black text-white font-mono">
-            {reviewsList.length > 0 ? '5.0 ⭐' : '0'}
-          </span>
-          <span className="text-[10px] text-amber-400 block mt-0.5 font-bold">
-            {reviewsList.length > 0 ? `${reviewsList.length} reseñas web` : 'Sin reseñas aún'}
-          </span>
-        </div>
-
-        <div 
-          onClick={() => setActiveTab('loyalty')}
-          className="bg-stone-900/80 border border-stone-800 hover:border-amber-500/40 p-3.5 rounded-2xl cursor-pointer transition-all text-left shadow-lg"
-        >
-          <div className="flex items-center justify-between text-stone-400 text-xs mb-1">
-            <span className="font-semibold">Fidelización VIP</span>
-            <Crown className="w-4 h-4 text-amber-400" />
-          </div>
-          <span className="text-2xl font-black text-white font-mono">15%</span>
-          <span className="text-[10px] text-amber-400 block mt-0.5 font-bold">Clientes recurrentes</span>
-        </div>
-      </div>
-
-      {/* CABECERA DEL PANEL DE CONTROL */}
-      <div className="flex flex-col gap-4 pb-6 border-b border-stone-800 mb-8">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-xs font-bold uppercase tracking-widest text-amber-400">
-                Administración Oficial
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Sincronizado en Tiempo Real (PC ⇄ Celular)</span>
-              </span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-serif font-bold text-white">
-              Panel de Control • Sebastian G
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setActiveTab('reviews')}
-              className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
-            >
-              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-              <span>⭐ Link de Opiniones para Clientes</span>
-            </button>
-          </div>
-        </div>
-
-        {/* BANNER NOTIFICACIONES ONESIGNAL */}
+          {/* BANNER NOTIFICACIONES ONESIGNAL */}
         {!isPushSubscribed && (
           <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/40 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
             <div className="flex items-center gap-3">
@@ -4585,184 +4439,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           </div>
         )}
 
-        {/* Pestañas de navegación 100% responsive: Grid adaptable */}
-        <div className="w-full bg-stone-900/95 p-1.5 sm:p-2 rounded-2xl border border-stone-800/90 shadow-xl no-scrollbar">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-11 gap-1.5 sm:gap-2">
-            <button
-              onClick={() => setActiveTab('bookings')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'bookings'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5 shrink-0" />
-              <span>Reservas</span>
-              {bookings.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'bookings' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
-                  {bookings.length}
-                </span>
-              )}
-            </button>
+          {/* BARRA DE MÉTRICAS Y ESTADÍSTICAS RÁPIDAS (MODERNA & MINIMIZABLE) */}
+          <AdminMetricsBar
+            analyticsStats={analyticsStats}
+            payments={payments}
+            reviewsList={reviewsList}
+            setActiveTab={setActiveTab}
+          />
 
-            <button
-              onClick={() => setActiveTab('payments')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'payments'
-                  ? 'bg-gradient-to-r from-emerald-500 to-emerald-400 text-stone-950 shadow-lg shadow-emerald-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <CreditCard className="w-3.5 h-3.5 shrink-0" />
-              <span>Pagos</span>
-              {payments.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'payments' ? 'bg-stone-950 text-emerald-400' : 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'}`}>
-                  {payments.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('reviews')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'reviews'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <Star className="w-3.5 h-3.5 shrink-0 text-amber-400 fill-amber-400" />
-              <span>Opiniones</span>
-              {reviewsList.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'reviews' ? 'bg-stone-950 text-amber-400' : 'bg-amber-950 text-amber-300 border border-amber-500/40'}`}>
-                  {reviewsList.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'analytics'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5 shrink-0" />
-              <span>Tráfico</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('loyalty')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'loyalty'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <Crown className="w-3.5 h-3.5 shrink-0" />
-              <span>Fidelización</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('create-session')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'create-session'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <Plus className="w-3.5 h-3.5 shrink-0" />
-              <span>Subir Fotos</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('sessions')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'sessions'
-                  ? 'bg-gradient-to-r from-purple-600 via-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-purple-950/40 scale-[1.02] font-black'
-                  : 'text-purple-300 hover:text-white bg-purple-950/30 hover:bg-purple-900/50 border border-purple-500/30 font-semibold'
-              }`}
-            >
-              <PackageCheck className="w-3.5 h-3.5 shrink-0 text-purple-400" />
-              <span>Galerías & Entrega</span>
-              {safeSessions.length > 0 && (
-                <div className="flex items-center gap-1">
-                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'sessions' ? 'bg-stone-950 text-amber-400' : 'bg-purple-900 text-purple-200 border border-purple-500/40'}`}>
-                    {safeSessions.length}
-                  </span>
-                  {safeSessions.some(s => s.status === 'submitted') && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-black bg-emerald-400 text-stone-950 animate-pulse shadow-sm shadow-emerald-500/50">
-                      {safeSessions.filter(s => s.status === 'submitted').length} {safeSessions.filter(s => s.status === 'submitted').length === 1 ? 'lista' : 'listas'}
-                    </span>
-                  )}
-                </div>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('catalog-manager')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'catalog-manager'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <FolderPlus className="w-3.5 h-3.5 shrink-0" />
-              <span>Catálogo</span>
-              {catalog.length > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'catalog-manager' ? 'bg-stone-950 text-amber-400' : 'bg-stone-800 text-stone-300'}`}>
-                  {catalog.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setActiveTab('pricing-manager')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'pricing-manager'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <DollarSign className="w-3.5 h-3.5 shrink-0" />
-              <span>Precios</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation ${
-                activeTab === 'settings'
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-stone-950 shadow-lg shadow-amber-500/25 scale-[1.02]'
-                  : 'text-stone-400 hover:text-stone-100 hover:bg-stone-800/80'
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5 shrink-0" />
-              <span>Ajustes</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('auditor')}
-              className={`px-2.5 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 touch-manipulation relative ${
-                activeTab === 'auditor'
-                  ? 'bg-gradient-to-r from-cyan-500 via-teal-400 to-blue-500 text-stone-950 shadow-lg shadow-cyan-500/25 scale-[1.02] font-black'
-                  : 'text-cyan-300 hover:text-white bg-cyan-950/20 hover:bg-cyan-900/40 border border-cyan-500/30'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-              <span>Auditor</span>
-              {((auditConflicts?.conflictsCount || 0) > 0 || auditErrors.length > 0) ? (
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-black bg-rose-500 text-white animate-pulse shadow-sm shadow-rose-500/50">
-                  {(auditConflicts?.conflictsCount || 0) + auditErrors.length}
-                </span>
-              ) : (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* PESTAÑA 1: RESERVAS DE CLIENTES (VISTA LISTA & CALENDARIO INTERACTIVO) */}
+          {/* PESTAÑA 1: RESERVAS DE CLIENTES (VISTA LISTA & CALENDARIO INTERACTIVO) */}
       {activeTab === 'bookings' && (
         <div className="space-y-6">
           {/* BANNER / TARJETA DE ACCESO RÁPIDO PARA ENVIAR PAQUETES & PRECIOS POR WHATSAPP */}
@@ -4918,7 +4603,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             const pendingAbonoBookings = bookings.filter(b => getFinancials(b).isPendingAbono && b.status !== 'completed');
             const activeBookings = bookings.filter(b => b.status !== 'completed');
 
-            const displayedBookings =
+            const rawDisplayedBookings =
               bookingFilterStatus === 'completed' || bookingFilterStatus === 'session_done'
                 ? sessionCompletedBookings
                 : bookingFilterStatus === 'paid_full'
@@ -4930,6 +4615,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 : bookingFilterStatus === 'all'
                 ? bookings
                 : activeBookings;
+
+            const displayedBookings = rawDisplayedBookings.filter(b => {
+              if (!adminSearchQuery || !adminSearchQuery.trim()) return true;
+              const q = adminSearchQuery.trim().toLowerCase();
+              return (
+                (b.clientName && b.clientName.toLowerCase().includes(q)) ||
+                (b.clientWhatsApp && b.clientWhatsApp.includes(q)) ||
+                (b.specificLocation && b.specificLocation.toLowerCase().includes(q)) ||
+                (b.packageName && b.packageName.toLowerCase().includes(q)) ||
+                (b.id && b.id.toLowerCase().includes(q))
+              );
+            });
 
             return (
               <div className="space-y-5">
@@ -6467,9 +6164,20 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         const daleBalance = (walletBaseBalances?.dale || 0) + daleSum;
         const totalSoftwareBalance = nequiBalance + daviplataBalance + daleBalance;
 
-        const filteredPayments = selectedPaymentGateway === 'all'
+        const rawFilteredPayments = selectedPaymentGateway === 'all'
           ? payments
           : payments.filter(p => p.method === selectedPaymentGateway);
+
+        const filteredPayments = rawFilteredPayments.filter(p => {
+          if (!adminSearchQuery || !adminSearchQuery.trim()) return true;
+          const q = adminSearchQuery.trim().toLowerCase();
+          return (
+            (p.clientName && p.clientName.toLowerCase().includes(q)) ||
+            (p.reference && p.reference.toLowerCase().includes(q)) ||
+            (p.phone && p.phone.includes(q)) ||
+            (p.sessionToken && p.sessionToken.toLowerCase().includes(q))
+          );
+        });
 
         return (
           <div className="space-y-6">
@@ -10827,6 +10535,19 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           )}
         </div>
       )}
+
+              </main>
+      </div>
+
+      {/* NAVEGACIÓN INFERIOR PARA DISPOSITIVOS MÓVILES */}
+      <AdminBottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        setMobileOpen={setIsMobileNavOpen}
+        bookings={bookings}
+        payments={payments}
+        safeSessions={safeSessions}
+      />
 
       {/* MODAL DETALLE DE SELECCIÓN DEL CLIENTE */}
       {viewingSession && (
