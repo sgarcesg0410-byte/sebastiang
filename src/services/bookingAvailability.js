@@ -106,7 +106,7 @@ export function buildSchedule(bookings = []) {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({
-      id: String(b.id),
+      id: String(b.id || key),
       dateKey: p.dateKey,
       startMin: p.startMin,
       endMin: p.startMin + SESSION_DURATION_MIN

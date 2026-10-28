@@ -98,11 +98,14 @@ export async function saveResetChallenge({ runtimeDB, challenge }) {
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('security', { key: 'admin_reset_challenge' }, {
+      await upsertMongoDoc('security', {
+        $or: [{ id: 'admin_reset_challenge' }, { key: 'admin_reset_challenge' }]
+      }, {
+        id: 'admin_reset_challenge',
         key: 'admin_reset_challenge',
         ...challenge,
         savedAt: new Date().toISOString()
-      });
+      }, { throwOnError: true });
     } catch (e) {
       console.warn('[MongoDB] Advertencia guardando challenge:', e?.message || e);
     }
@@ -115,7 +118,9 @@ export async function saveResetChallenge({ runtimeDB, challenge }) {
 export async function getResetChallenge({ runtimeDB }) {
   if (isMongoConfigured()) {
     try {
-      const docs = await findMongoDocs('security', { key: 'admin_reset_challenge' });
+      const docs = await findMongoDocs('security', {
+        $or: [{ id: 'admin_reset_challenge' }, { key: 'admin_reset_challenge' }]
+      });
       if (docs && docs[0] && docs[0].codeHash) {
         return docs[0];
       }
@@ -128,28 +133,28 @@ export async function getResetChallenge({ runtimeDB }) {
 }
 
 /**
- * Guarda la nueva clave y passwordVersion en MongoDB Atlas y memoria
+ * Guarda la nueva clave y passwordVersion en MongoDB Atlas y memoria de forma duradera
  */
 export async function updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion }) {
+  if (isMongoConfigured()) {
+    const ok = await upsertMongoDoc('security', {
+      $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }]
+    }, {
+      id: 'system_admin_pin_hash',
+      key: 'admin_pin_hash',
+      scryptHash: newScryptHash,
+      passwordVersion: newVersion,
+      updatedAt: new Date().toISOString()
+    }, { throwOnError: true });
+    if (!ok) throw new Error('Fallo al persistir nueva clave en MongoDB Atlas');
+  }
+
   if (runtimeDB) {
     runtimeDB.settings = runtimeDB.settings || {};
     runtimeDB.settings.adminPinScrypt = newScryptHash;
     runtimeDB.settings.adminPasswordVersion = newVersion;
   }
   setCachedPasswordVersion(newVersion);
-
-  if (isMongoConfigured()) {
-    try {
-      await upsertMongoDoc('security', { key: 'admin_pin_hash' }, {
-        key: 'admin_pin_hash',
-        scryptHash: newScryptHash,
-        passwordVersion: newVersion,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (e) {
-      console.warn('[MongoDB] Advertencia actualizando contraseña:', e?.message || e);
-    }
-  }
 }
 
 /**
@@ -158,7 +163,9 @@ export async function updateAdminPasswordInStore({ runtimeDB, newScryptHash, new
 export async function getActivePasswordVersionFromStore({ runtimeDB }) {
   if (isMongoConfigured()) {
     try {
-      const docs = await findMongoDocs('security', { key: 'admin_pin_hash' });
+      const docs = await findMongoDocs('security', {
+        $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }]
+      });
       if (docs && docs[0]?.passwordVersion) {
         const v = Number(docs[0].passwordVersion);
         if (Number.isFinite(v) && v >= 1) {

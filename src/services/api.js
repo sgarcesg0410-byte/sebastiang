@@ -1348,18 +1348,27 @@ export async function createBooking(data) {
         directWhatsAppUrl = result.directWhatsAppUrl || '';
         secondaryWhatsAppUrl = result.secondaryWhatsAppUrl || '';
       }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errData.error || 'No se pudo crear la reserva en el servidor.',
+        code: errData.code || 'SERVER_ERROR',
+        status: res.status
+      };
     }
   } catch (err) {
     console.warn('Server offline o error al reservar en API Vercel:', err);
   }
 
-  // Objeto de reserva definitivo
+  // Objeto de reserva definitivo (solo si el servidor la creó o en modo offline defensivo)
   const newBooking = serverBooking || {
     id: `book-${Date.now()}`,
     ...data,
     totalPrice: data.totalPrice || 75000,
     createdAt: new Date().toISOString(),
-    status: 'pending'
+    status: 'pending',
+    offlinePendingSync: true
   };
 
   // 1. Guardar localmente
@@ -2204,12 +2213,19 @@ export async function createPayment(paymentData) {
       if (serverResult?.payment) {
         saveLocalPayment(serverResult.payment);
       }
+    } else {
+      const errJson = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errJson.error || 'Error al registrar el pago en el servidor.',
+        status: res.status
+      };
     }
   } catch (err) {
     console.warn('Creando pago con respaldo local:', err);
   }
 
-  // Fallback local garantizado
+  // Fallback local garantizado (status SIEMPRE pending por defecto, nunca verified sin confirmación del servidor)
   const newPayment = serverResult?.payment || {
     id: `pay-${Date.now()}`,
     clientName: (paymentData.clientName || 'Cliente').trim(),
@@ -2225,7 +2241,8 @@ export async function createPayment(paymentData) {
     printedPhotos10x15Count: Number(paymentData.printedPhotos10x15Count) || 0,
     printedPhotos15x20Count: Number(paymentData.printedPhotos15x20Count) || 0,
     concept: paymentData.concept || 'Sesión Fotográfica',
-    status: paymentData.status || 'verified',
+    status: (serverResult?.payment?.status === 'verified') ? 'verified' : 'pending',
+    offlinePendingSync: !serverResult?.payment,
     createdAt: new Date().toISOString()
   };
   saveLocalPayment(newPayment);
@@ -2293,19 +2310,26 @@ export async function createPayment(paymentData) {
 
 export async function updatePaymentStatus(id, status) {
   try {
-    const res = await fetch(`${API_BASE}/admin/payments/${id}`, {
+    const token = getAdminSessionToken();
+    const res = await fetch(`${API_BASE}/admin/payments/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
       body: JSON.stringify({ status })
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.payment) {
-        saveLocalPayment(data.payment);
-      }
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return { success: false, error: errData.error || 'Fallo al actualizar estado de pago en el servidor.' };
+    }
+    const data = await res.json();
+    if (data && data.payment) {
+      saveLocalPayment(data.payment);
     }
   } catch (err) {
     console.warn(err);
+    return { success: false, error: err.message || 'Error de conexión al actualizar estado de pago.' };
   }
 
   const local = getLocalPayments().map(p => p.id === id ? { ...p, status } : p);

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { paymentBelongsToBooking } from '../../api/financials.js';
+import { updateAdminPasswordInStore } from '../../api/passwordReset.js';
 import {
   detectBufferMimeType,
   validateImagePayload,
@@ -1512,6 +1514,210 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         // La memoria NO debe estar en 'submitted'
         const inMemS = runtimeDB.sessions.find(s => s.token === 'tok-submit-fail-1');
         expect(inMemS.status).toBe('ready');
+      } finally {
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
+  });
+
+  describe('9. Blindaje Definitivo de Producción (Allowlist de Configuración, Saldo Real en Checkout, Depósito de Webhook y Persistencia Duradera)', () => {
+    it('GET /api/settings filtra estrictamente los secretos y nunca expone hashes, versión de clave ni retos de reseteo', async () => {
+      runtimeDB.settings = {
+        photographerName: 'Sebastian G Fotografía',
+        photographerWhatsApp: '+573244725167',
+        adminPinScrypt: 'scrypt$secret$hash',
+        adminPinHash: 'sha256$secret$hash',
+        adminPasswordVersion: 5,
+        adminResetChallenge: { codeHash: 'secret-challenge-hash', used: false },
+        revokedApkDeviceIds: ['apk-device-1', 'apk-device-2'],
+        _loadedFromMongo: true
+      };
+
+      const res = await invokeApp('GET', '/api/settings');
+      expect(res.status).toBe(200);
+      expect(res.body.photographerName).toBe('Sebastian G Fotografía');
+      expect(res.body.photographerWhatsApp).toBe('+573244725167');
+      expect(res.body.adminPinScrypt).toBeUndefined();
+      expect(res.body.adminPinHash).toBeUndefined();
+      expect(res.body.adminPasswordVersion).toBeUndefined();
+      expect(res.body.adminResetChallenge).toBeUndefined();
+      expect(res.body.revokedApkDeviceIds).toBeUndefined();
+      expect(res.body._loadedFromMongo).toBeUndefined();
+    });
+
+    it('POST /api/payments/checkout calcula el saldo pendiente real y rechaza montos arbitrarios en session_balance', async () => {
+      process.env.WOMPI_INTEGRITY_SECRET = 'test_integrity_secret';
+      const token = 'sess-balance-check-1';
+      runtimeDB.sessions = [{
+        id: 'sess-123',
+        token,
+        clientName: 'Cliente Saldo',
+        totalPrice: 120000,
+        status: 'pending',
+        photos: []
+      }];
+      runtimeDB.payments = [
+        { id: 'p1', sessionToken: token, amount: 20000, status: 'verified' }
+      ];
+
+      // Saldo pendiente real = 120.000 - 20.000 = 100.000 COP
+      // Si el cliente intenta pagar 5.000 COP, debe ser rechazado con 400
+      const badCheckout = await invokeApp('POST', '/api/payments/checkout', {
+        body: {
+          sessionToken: token,
+          concept: 'session_balance',
+          amount: 5000
+        }
+      });
+      expect(badCheckout.status).toBe(400);
+      expect(badCheckout.body.expectedAmount).toBe(100000);
+
+      // Si el cliente envía exactamente el saldo pendiente real (100.000), es aprobado
+      const goodCheckout = await invokeApp('POST', '/api/payments/checkout', {
+        body: {
+          sessionToken: token,
+          concept: 'session_balance',
+          amount: 100000
+        }
+      });
+      expect([200, 201]).toContain(goodCheckout.status);
+      expect(goodCheckout.body.reference).toBeDefined();
+    });
+
+    it('POST /api/payments/webhook NO confirma depósito en reserva si el concepto no es abono o el monto no cubre el depósito', async () => {
+      const bookingId = 'book-non-deposit-test';
+      runtimeDB.bookings = [{
+        id: bookingId,
+        clientName: 'Cliente No Deposito',
+        totalPrice: 150000,
+        status: 'pending',
+        depositPaid: false
+      }];
+      const payRef = 'ref-non-deposit-100';
+      runtimeDB.payments = [{
+        id: 'pay-non-deposit-1',
+        bookingId,
+        reference: payRef,
+        amount: 5000,
+        concept: 'session_balance',
+        status: 'pending_gateway'
+      }];
+
+      process.env.WOMPI_EVENTS_SECRET = 'wompi_sec_events_test';
+      const rawPayload = {
+        event: 'transaction.updated',
+        data: {
+          transaction: {
+            id: 'tx-non-dep-1',
+            reference: payRef,
+            amount_in_cents: 500000,
+            currency: 'COP',
+            status: 'APPROVED'
+          }
+        },
+        sent_at: new Date().toISOString(),
+        timestamp: Math.floor(Date.now() / 1000),
+        signature: {
+          properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+          checksum: crypto.createHash('sha256').update(
+            `tx-non-dep-1APPROVED500000${Math.floor(Date.now() / 1000)}wompi_sec_events_test`
+          ).digest('hex')
+        }
+      };
+
+      const res = await invokeApp('POST', '/api/payments/webhook', { body: rawPayload });
+      expect(res.status).toBe(200);
+
+      const b = runtimeDB.bookings.find(item => item.id === bookingId);
+      expect(b.depositPaid).toBe(false);
+    });
+
+    it('POST /api/payments requiere versión de contraseña vigente para otorgar isAdminCaller', async () => {
+      const staleToken = createAdminToken({ pwd: 1 });
+      runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 2 };
+
+      const res = await invokeApp('POST', '/api/payments', {
+        headers: { Authorization: `Bearer ${staleToken}` },
+        body: {
+          clientName: 'Cliente Stale',
+          amount: 50000,
+          status: 'verified'
+        }
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.payment.status).toBe('pending');
+    });
+
+    it('POST /api/bookings rechaza formatos de fecha y hora inválidos con HTTP 400', async () => {
+      const res = await invokeApp('POST', '/api/bookings', {
+        body: {
+          clientName: 'Cliente Fecha Inválida',
+          clientWhatsApp: '+573009998877',
+          packageId: 'pkg-4fotos',
+          dateTime: 'fecha-totalmente-invalida'
+        }
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('INVALID_DATETIME');
+    });
+
+    it('POST /api/gallery/:token/live-selection rechaza sesiones enviadas y recalcula selectedCount', async () => {
+      const token = 'tok-live-sel-hardened';
+      runtimeDB.sessions = [{
+        id: 'sess-live-sel',
+        token,
+        status: 'submitted',
+        photos: [
+          { id: 'p1', selected: false },
+          { id: 'p2', selected: false }
+        ]
+      }];
+
+      const res = await invokeApp('POST', `/api/gallery/${token}/live-selection`, {
+        body: {
+          selections: [{ id: 'p1', selected: true }],
+          selectedCount: 999
+        }
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('ya fue enviada');
+    });
+
+    it('POST /api/reviews asigna verified: false por defecto a reseñas anónimas', async () => {
+      const res = await invokeApp('POST', '/api/reviews', {
+        body: {
+          clientName: 'Cliente Anónimo',
+          rating: 5,
+          comment: 'Excelente sesión'
+        }
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.review.verified).toBe(false);
+    });
+
+    it('paymentBelongsToBooking vincula pagos por bookingId prioritariamente', () => {
+      const b = { id: 'book-target-123', clientWhatsApp: '3001112233' };
+      const matchingPay = { bookingId: 'book-target-123', clientWhatsApp: '3999999999' };
+      const mismatchPay = { bookingId: 'book-other-999', clientWhatsApp: '3001112233' };
+
+      expect(paymentBelongsToBooking(matchingPay, b)).toBe(true);
+      expect(paymentBelongsToBooking(mismatchPay, b)).toBe(false);
+    });
+
+    it('updateAdminPasswordInStore persiste duraderamente con identificador unificado y falla si Mongo falla', async () => {
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_db_test?serverSelectionTimeoutMS=200';
+        await expect(updateAdminPasswordInStore({
+          runtimeDB: { settings: {} },
+          newScryptHash: 'scrypt$dummy$fail',
+          newVersion: 10
+        })).rejects.toThrow();
       } finally {
         if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
         else delete process.env.ALLOW_MONGO_IN_TESTS;

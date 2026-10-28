@@ -81,7 +81,8 @@ const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000'
+  'http://127.0.0.1:3000',
+  'capacitor://localhost'
 ];
 
 const app = express();
@@ -91,9 +92,7 @@ app.use(cors({
     if (!origin) return callback(null, true);
     if (
       ALLOWED_ORIGINS.includes(origin) ||
-      /^https:\/\/[a-z0-9-]+(\.vercel\.app)$/.test(origin) ||
-      origin.startsWith('capacitor://') ||
-      origin.startsWith('http://localhost')
+      /^https:\/\/[a-z0-9-]+(\.vercel\.app)$/.test(origin)
     ) {
       return callback(null, true);
     }
@@ -103,7 +102,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-apk-device-token', 'x-apk-key']
 }));
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '2mb' }));
 
 // ==============================================================================
 // CONFIGURACIÓN Y CLIENTE ONESIGNAL PUSH 24/7
@@ -670,6 +669,46 @@ app.post('/api/send-push', requireAdminAuth, async (req, res) => {
   res.json({ success: true, result });
 });
 
+// ==============================================================================
+// LISTA BLANCA ESTRICTA DE CONFIGURACIONES PÚBLICAS (PREVIENE FUGA DE SECRETOS)
+// ==============================================================================
+export const PUBLIC_SETTINGS_ALLOWLIST = new Set([
+  'photographerName',
+  'photographerWhatsApp',
+  'photographerWhatsApp2',
+  'outOfSanAnteroSurcharge',
+  'currencySymbol',
+  'tagline',
+  'watermarkText',
+  'watermarkSubtext',
+  'watermarkLogoUrl',
+  'googleBusinessUrl',
+  'printedPhotoPrice',
+  'printedPhoto15x20Price',
+  'printedPhoto20x30Price',
+  'printedPhoto30x45Price',
+  'printedPhoto40x50Price',
+  'printedPhoto50x70Price',
+  'printedPhoto70x50Price',
+  'printedPhoto70x100Price',
+  'retabloCost20x30',
+  'retabloCost30x45',
+  'retabloCost40x50',
+  'retabloCost50x70',
+  'retabloCost70x50',
+  'retabloCost70x100'
+]);
+
+export function extractPublicSettings(settings = {}) {
+  const result = {};
+  for (const key of PUBLIC_SETTINGS_ALLOWLIST) {
+    if (settings && settings[key] !== undefined) {
+      result[key] = settings[key];
+    }
+  }
+  return result;
+}
+
 app.get('/api/settings', async (req, res) => {
   if (isMongoConfigured() && (!runtimeDB.settings || !runtimeDB.settings._loadedFromMongo)) {
     try {
@@ -682,8 +721,7 @@ app.get('/api/settings', async (req, res) => {
       console.warn('⚠️ [MongoDB] Error cargando settings:', eMongo?.message || eMongo);
     }
   }
-  const { adminPin, adminPinHash, _loadedFromMongo, ...publicSettings } = runtimeDB.settings || {};
-  res.json(publicSettings);
+  res.json(extractPublicSettings(runtimeDB.settings || {}));
 });
 
 export function getCatalogItemTimestamp(item) {
@@ -827,8 +865,12 @@ app.post('/api/settings', requireAdminAuth, async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const newSettings = req.body;
   if (newSettings && typeof newSettings === 'object') {
-    // Nunca permitir que se sobreescriba el hash del PIN por este endpoint
-    const { adminPin, adminPinHash, ...safeSettings } = newSettings;
+    // Nunca permitir que se sobreescriban credenciales o hashes de seguridad por este endpoint
+    const {
+      adminPin, adminPinHash, adminPinScrypt, adminPasswordVersion,
+      adminResetChallenge, revokedApkDeviceIds, _loadedFromMongo, id, _id,
+      ...safeSettings
+    } = newSettings;
     const candidateSettings = { ...runtimeDB.settings, ...safeSettings };
     if (isMongoConfigured()) {
       try {
@@ -841,7 +883,7 @@ app.post('/api/settings', requireAdminAuth, async (req, res) => {
     }
     runtimeDB.settings = candidateSettings;
   }
-  res.json({ success: true, settings: runtimeDB.settings });
+  res.json({ success: true, settings: extractPublicSettings(runtimeDB.settings) });
 });
 
 // Parser de fecha/hora para validar solapamiento de cupos en el servidor (duración estimada: 120 min)
@@ -1020,11 +1062,30 @@ app.post('/api/bookings', async (req, res) => {
 
   // Prevención de doble reserva en el servidor (409 Conflict si hay solapamiento en ventana de 120 min)
   const requestedSlot = parseServerBookingDateTime(dateTime);
-  if (requestedSlot) {
+  if (!requestedSlot) {
+    return res.status(400).json({
+      error: 'Formato de fecha u horario inválido. Debe especificar una fecha y hora válidas (ej: YYYY-MM-DD HH:mm).',
+      code: 'INVALID_DATETIME'
+    });
+  }
+
+  const slotLockKey = `slot_lock_${requestedSlot.dateKey}_${requestedSlot.startMin}`;
+  if (!global.__activeSlotLocks) global.__activeSlotLocks = new Set();
+  if (global.__activeSlotLocks.has(slotLockKey)) {
+    return res.status(409).json({
+      error: 'Ese horario ya se encuentra en proceso de reserva por otro usuario. Por favor elige otro horario disponible.',
+      code: 'SLOT_ALREADY_BOOKED'
+    });
+  }
+  global.__activeSlotLocks.add(slotLockKey);
+
+  try {
     let existingBookings = Array.isArray(runtimeDB.bookings) ? [...runtimeDB.bookings] : [];
     if (isMongoConfigured()) {
       try {
-        const mongoDocs = await findMongoDocs('bookings', {}, { createdAt: -1 }, 200);
+        const mongoDocs = await findMongoDocs('bookings', {
+          status: { $nin: ['cancelled', 'canceled', 'cancelada', 'anulada', 'rejected', 'completed', 'delivered'] }
+        }, { createdAt: -1 }, 1000);
         if (Array.isArray(mongoDocs)) {
           existingBookings = [...existingBookings, ...mongoDocs];
         }
@@ -1049,7 +1110,6 @@ app.post('/api/bookings', async (req, res) => {
         });
       }
     }
-  }
 
   const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
 
@@ -1160,6 +1220,11 @@ app.post('/api/bookings', async (req, res) => {
     directWhatsAppUrl: `https://wa.me/${photogWhatsApp1}?text=${msgText}`,
     secondaryWhatsAppUrl: `https://wa.me/${photogWhatsApp2}?text=${msgText}`
   });
+  } finally {
+    if (global.__activeSlotLocks) {
+      global.__activeSlotLocks.delete(slotLockKey);
+    }
+  }
 });
 
 app.post('/api/send-email', requireAdminAuth, async (req, res) => {
@@ -1290,12 +1355,16 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
   if (!checkPublicWriteRateLimit(getClientIp(req), 120, 'gallery-live')) {
     return res.status(429).json({ error: 'Demasiadas actualizaciones simultáneas. Intenta en unos segundos.' });
   }
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({ error: 'La actualización de selección requiere base de datos persistente activa.' });
+  }
   try {
     const { token } = req.params;
     if (!isValidGalleryTokenFormat(token)) {
       return res.status(404).json({ error: 'Galería no encontrada.' });
     }
-    const { selections, selectedCount } = req.body || {};
+    const { selections } = req.body || {};
     let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
     if (!session && isMongoConfigured()) {
@@ -1312,45 +1381,60 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
       } catch (errMongo) {}
     }
 
-    if (session) {
-      if (session.revoked || session.status === 'revoked') {
-        return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
-      }
-      const now = Date.now();
-      const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
-      if (expiresTime > 0 && now > expiresTime && session.status !== 'delivered') {
-        return res.status(410).json({ error: 'La vigencia de 3 días de esta sesión ha expirado.' });
-      }
+    if (!session) {
+      return res.status(404).json({ error: 'Galería no encontrada.' });
+    }
+    if (session.revoked || session.status === 'revoked') {
+      return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
+    }
+    if (session.status === 'submitted' || session.status === 'completed' || session.status === 'delivered') {
+      return res.status(400).json({ error: 'La selección de esta galería ya fue enviada o procesada y no puede modificarse.' });
+    }
+    const now = Date.now();
+    const expiresTime = session.expiresAt ? new Date(session.expiresAt).getTime() : 0;
+    if (expiresTime > 0 && now > expiresTime && session.status !== 'delivered') {
+      return res.status(410).json({ error: 'La vigencia de 3 días de esta sesión ha expirado.' });
+    }
 
-      if (Array.isArray(selections)) {
-        const selMap = new Map();
-        selections.forEach(item => {
-          selMap.set(item.id, {
-            selected: Boolean(item.selected),
-            comment: (item.clientComment || '').trim()
-          });
+    let updatedPhotos = session.photos || [];
+    if (Array.isArray(selections)) {
+      const selMap = new Map();
+      selections.forEach(item => {
+        selMap.set(item.id, {
+          selected: Boolean(item.selected),
+          comment: (item.clientComment || '').trim()
         });
-        session.photos = (session.photos || []).map(p => {
-          const update = selMap.get(p.id);
-          if (update) return { ...p, selected: update.selected, clientComment: update.comment };
-          return p;
-        });
-      }
-      session.selectedCount = selectedCount || (session.photos ? session.photos.filter(p => p.selected).length : 0);
-      session.lastSelectionUpdate = new Date().toISOString();
+      });
+      updatedPhotos = updatedPhotos.map(p => {
+        const update = selMap.get(p.id);
+        if (update) return { ...p, selected: update.selected, clientComment: update.comment };
+        return p;
+      });
+    }
 
-      // Guardar en MongoDB Atlas
-      if (isMongoConfigured()) {
-        try {
-          const ok = await upsertMongoDoc('sessions', { token }, session, { throwOnError: true });
-          if (!ok) throw new Error('Fallo al actualizar live selection en MongoDB Atlas');
-        } catch (eMongo) {
-          console.error('❌ [MongoDB] Error actualizando live selection:', eMongo?.message || eMongo);
-          return res.status(500).json({ error: 'Error guardando selección en la base de datos central.' });
-        }
+    // Recalcular SIEMPRE en el servidor; nunca confiar en selectedCount provisto por el cliente
+    const calculatedCount = updatedPhotos.filter(p => p.selected).length;
+    const candidateSession = {
+      ...session,
+      photos: updatedPhotos,
+      selectedCount: calculatedCount,
+      lastSelectionUpdate: new Date().toISOString()
+    };
+
+    // Guardar en MongoDB Atlas ANTES de mutar memoria
+    if (isMongoConfigured()) {
+      try {
+        const ok = await upsertMongoDoc('sessions', { token }, candidateSession, { throwOnError: true });
+        if (!ok) throw new Error('Fallo al actualizar live selection en MongoDB Atlas');
+      } catch (eMongo) {
+        console.error('❌ [MongoDB] Error actualizando live selection:', eMongo?.message || eMongo);
+        return res.status(500).json({ error: 'Error guardando selección en la base de datos central.' });
       }
     }
-    res.json({ success: true, selectedCount: session?.selectedCount || 0 });
+
+    // Mutar memoria ÚNICAMENTE tras persistencia confirmada
+    Object.assign(session, candidateSession);
+    return res.json({ success: true, selectedCount: calculatedCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1478,7 +1562,9 @@ async function getActiveAdminScryptHash() {
   // MongoDB Atlas (fuente única de verdad)
   if (isMongoConfigured()) {
     try {
-      const secDoc = await findMongoDoc('security', { id: 'system_admin_pin_hash' });
+      const secDoc = await findMongoDoc('security', {
+        $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }]
+      });
       if (secDoc?.scryptHash) {
         runtimeDB.settings = runtimeDB.settings || {};
         runtimeDB.settings.adminPinScrypt = secDoc.scryptHash;
@@ -1771,7 +1857,7 @@ app.get('/api/admin/payments', async (req, res) => {
   res.json(runtimeDB.payments);
 });
 
-app.post('/api/payments', async (req, res) => {
+app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
   if (!checkPublicWriteRateLimit(getClientIp(req), 15, 'payments')) {
     return res.status(429).json({ error: 'Demasiados registros de pago desde tu conexión. Intenta nuevamente en unos minutos.' });
   }
@@ -1798,9 +1884,11 @@ app.post('/api/payments', async (req, res) => {
     }
   }
 
-  // Solo un administrador con sesión válida puede dar por verificado un pago.
+  // Solo un administrador con sesión válida y passwordVersion vigente puede dar por verificado un pago.
   // Un cliente anónimo puede registrar su comprobante, pero siempre queda pendiente.
-  const isAdminCaller = Boolean(verifyAdminToken(readAdminToken(req)));
+  const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+  const adminPayload = verifyAdminToken(readAdminToken(req), { expectedPasswordVersion: activeVersion });
+  const isAdminCaller = Boolean(adminPayload && adminPayload.pwd === activeVersion);
 
   const newPayment = {
     id: `pay-${Date.now()}`,
@@ -1948,7 +2036,70 @@ app.post('/api/payments/checkout', async (req, res) => {
 
   let sessionRemaining = undefined;
   if (concept === 'session_balance' || concept === 'saldo_galeria') {
-    sessionRemaining = Number(amount);
+    let session = null;
+    if (sessionToken) {
+      session = (runtimeDB.sessions || []).find(s => s.token === sessionToken || s.id === sessionToken);
+      if (!session && isMongoConfigured()) {
+        try {
+          const doc = await findMongoDoc('sessions', { $or: [{ token: sessionToken }, { id: sessionToken }] });
+          if (doc) {
+            const { _id, ...cleanSession } = doc;
+            session = cleanSession;
+          }
+        } catch (eMongo) {}
+      }
+    } else if (booking) {
+      session = (runtimeDB.sessions || []).find(s => s.bookingId === booking.id);
+      if (!session && isMongoConfigured()) {
+        try {
+          const doc = await findMongoDoc('sessions', { bookingId: booking.id });
+          if (doc) {
+            const { _id, ...cleanSession } = doc;
+            session = cleanSession;
+          }
+        } catch (eMongo) {}
+      }
+    }
+
+    const totalAmount = session
+      ? Number(session.totalPrice || session.packagePrice || session.sessionBasePrice || 0)
+      : (booking ? Number(booking.totalPrice || 0) : 0);
+
+    // Sumar todos los pagos verificados correspondientes a esta sesión/reserva
+    const relevantPayments = (runtimeDB.payments || []).filter(p =>
+      (p.status === 'verified' || p.status === 'approved' || p.status === 'completed') &&
+      ((session && session.token && p.sessionToken === session.token) ||
+       (session && session.bookingId && p.bookingId === session.bookingId) ||
+       (booking && (p.bookingId === booking.id || (p.sessionToken && p.sessionToken === booking.id))))
+    );
+
+    if (isMongoConfigured()) {
+      try {
+        const queryOr = [];
+        if (session?.token) queryOr.push({ sessionToken: session.token });
+        if (session?.bookingId) queryOr.push({ bookingId: session.bookingId });
+        if (booking?.id) {
+          queryOr.push({ bookingId: booking.id });
+          queryOr.push({ sessionToken: booking.id });
+        }
+        if (queryOr.length > 0) {
+          const mongoPays = await findMongoDocs('payments', {
+            status: { $in: ['verified', 'approved', 'completed'] },
+            $or: queryOr
+          });
+          if (Array.isArray(mongoPays)) {
+            for (const mp of mongoPays) {
+              if (!relevantPayments.some(p => p.id === mp.id || (p.reference && p.reference === mp.reference))) {
+                relevantPayments.push(mp);
+              }
+            }
+          }
+        }
+      } catch (eMongo) {}
+    }
+
+    const verifiedPaid = relevantPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    sessionRemaining = Math.max(0, totalAmount - verifiedPaid);
   }
 
   const check = validateCheckoutAmount({
@@ -2154,7 +2305,11 @@ app.post('/api/payments/webhook', async (req, res) => {
     // A) Reconciliación en reintento idempotente de pago aprobado:
     if (isCurrentlyVerified && payment.bookingId) {
       const associatedBooking = await findBookingById(payment.bookingId);
-      if (associatedBooking && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
+      const isDepositPayment = payment.concept === 'booking_deposit' ||
+        payment.concept === 'abono' ||
+        Number(payment.amount) >= Math.min(20000, Number(associatedBooking?.totalPrice || 20000));
+
+      if (associatedBooking && isDepositPayment && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
         const reconciledBooking = {
           ...associatedBooking,
           status: 'confirmed',
@@ -2229,7 +2384,11 @@ app.post('/api/payments/webhook', async (req, res) => {
             console.warn(`[Wompi Webhook] Pago con ref ${tx.reference} ya verificado en MongoDB Atlas por otra instancia.`);
             if (persistedDoc.bookingId) {
               const associatedBooking = await findBookingById(persistedDoc.bookingId);
-              if (associatedBooking && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
+              const isDepositPayment = payment.concept === 'booking_deposit' ||
+                payment.concept === 'abono' ||
+                Number(payment.amount) >= Math.min(20000, Number(associatedBooking?.totalPrice || 20000));
+
+              if (associatedBooking && isDepositPayment && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
                 const recBooking = { ...associatedBooking, status: 'confirmed', depositPaid: true };
                 await persistBookingToMongo(recBooking, { throwOnError: true });
                 const inMemB = (runtimeDB.bookings || []).find(b => b.id === associatedBooking.id);
@@ -2280,10 +2439,16 @@ app.post('/api/payments/webhook', async (req, res) => {
     if (payment.bookingId) {
       const b = await findBookingById(payment.bookingId);
       if (b) {
+        const isDepositPayment = payment.concept === 'booking_deposit' ||
+          payment.concept === 'abono' ||
+          Number(payment.amount) >= Math.min(20000, Number(b.totalPrice || 20000));
+
         approvedBooking = {
           ...b,
-          status: b.status === 'pending' ? 'confirmed' : b.status,
-          depositPaid: true
+          ...(isDepositPayment ? {
+            status: b.status === 'pending' ? 'confirmed' : b.status,
+            depositPaid: true
+          } : {})
         };
       }
     }
@@ -2605,7 +2770,7 @@ app.delete('/api/admin/sessions/:id', async (req, res) => {
   });
 });
 
-app.post('/api/admin/sessions', async (req, res) => {
+app.post('/api/admin/sessions', express.json({ limit: '50mb' }), async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const {
     clientName, clientWhatsApp, packageTitle, maxPhotosAllowed, photos,
@@ -2833,7 +2998,7 @@ app.post('/api/admin/settings', async (req, res) => {
 // ==============================================================================
 // GESTIÓN DE CATÁLOGO
 // ==============================================================================
-app.post('/api/admin/catalog', async (req, res) => {
+app.post('/api/admin/catalog', express.json({ limit: '50mb' }), async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const { id, title, category, url, location } = req.body;
   if (!title || !url) {
@@ -2945,6 +3110,7 @@ app.post('/api/admin/catalog/delete-samples', async (req, res) => {
 // SEGURIDAD: CAMBIO DE CONTRASEÑA EN EL DASHBOARD (PERSISTENTE EN MONGODB ATLAS CON SCRYPT)
 // ==============================================================================
 app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const { currentPin, newPin } = req.body || {};
   if (!currentPin || !newPin) {
     return res.status(400).json({ error: 'Por favor completa la contraseña actual y la nueva contraseña.' });
@@ -2978,11 +3144,16 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });
   const newVersion = (currentVersion || 1) + 1;
 
-  await updateAdminPasswordInStore({
-    runtimeDB,
-    newScryptHash,
-    newVersion
-  });
+  try {
+    await updateAdminPasswordInStore({
+      runtimeDB,
+      newScryptHash,
+      newVersion
+    });
+  } catch (eMongo) {
+    console.error('❌ [Admin Change PIN] Error persistiendo nueva contraseña:', eMongo?.message || eMongo);
+    return res.status(500).json({ error: 'Fallo al guardar la nueva contraseña en la base de datos central.' });
+  }
 
   await recordFinancialAuditLog({
     action: 'admin_password_changed',
@@ -3184,7 +3355,8 @@ app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
   });
 });
 
-app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
+app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
   const clientIp = getClientIp(req);
   if (!checkPublicWriteRateLimit(clientIp, 5, 'admin-backup-restore')) {
     return res.status(429).json({ error: 'Límite de restauración de backups alcanzado temporalmente.' });
@@ -3206,7 +3378,6 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
     const clean = sanitizeBackupSnapshot(incomingSnapshot);
     const decryptAndSanitizeMs = Math.max(1, Math.round(performance.now() - decryptStartMs));
 
-    const memStartMs = performance.now();
     // Conservar intactos los parámetros críticos de seguridad actuales en memoria
     const preservedSecurity = {
       adminPinScrypt: runtimeDB.settings?.adminPinScrypt,
@@ -3216,44 +3387,64 @@ app.post('/api/admin/backup/restore', requireAdminAuth, async (req, res) => {
       revokedApkDeviceIds: runtimeDB.settings?.revokedApkDeviceIds
     };
 
-    runtimeDB.settings = {
+    const candidateSettings = {
       ...(runtimeDB.settings || {}),
       ...(clean.settings || {}),
       ...Object.fromEntries(Object.entries(preservedSecurity).filter(([, v]) => v !== undefined))
     };
-    if (Array.isArray(clean.packages) && clean.packages.length > 0) {
-      runtimeDB.packages = clean.packages;
-    }
-    runtimeDB.catalog = Array.isArray(clean.catalog) ? clean.catalog : [];
-    runtimeDB.bookings = Array.isArray(clean.bookings)
+    const candidatePackages = (Array.isArray(clean.packages) && clean.packages.length > 0)
+      ? clean.packages
+      : runtimeDB.packages;
+    const candidateCatalog = Array.isArray(clean.catalog) ? clean.catalog : [];
+    const candidateBookings = Array.isArray(clean.bookings)
       ? clean.bookings.map(b => normalizeBookingDoc(b)).filter(Boolean)
       : [];
-    runtimeDB.payments = Array.isArray(clean.payments) ? clean.payments : [];
-    runtimeDB.sessions = Array.isArray(clean.sessions) ? clean.sessions : [];
-    runtimeDB.reviews = Array.isArray(clean.reviews) ? clean.reviews : [];
-    const memoryRestoreMs = Math.max(1, Math.round(performance.now() - memStartMs));
+    const candidatePayments = Array.isArray(clean.payments) ? clean.payments : [];
+    const candidateSessions = Array.isArray(clean.sessions) ? clean.sessions : [];
+    const candidateReviews = Array.isArray(clean.reviews) ? clean.reviews : [];
 
     let mongoPersistMs = 0;
     let indexReport = { verified: false, elapsedMs: 0, indexes: [] };
     if (isMongoConfigured()) {
       const mongoStartMs = performance.now();
-      const ops = [];
-      for (const b of runtimeDB.bookings) {
-        if (b?.id) ops.push(persistBookingToMongo(b));
+      try {
+        const ops = [];
+        for (const b of candidateBookings) {
+          if (b?.id) ops.push(persistBookingToMongo(b, { throwOnError: true }));
+        }
+        for (const p of candidatePayments) {
+          if (p?.id) ops.push(persistPaymentToMongo(p, { throwOnError: true }));
+        }
+        for (const s of candidateSessions) {
+          if (s?.token) ops.push(upsertMongoDoc('sessions', { token: s.token }, s, { throwOnError: true }));
+        }
+        for (const r of candidateReviews) {
+          if (r?.id) ops.push(upsertMongoDoc('reviews', { id: r.id }, r, { throwOnError: true }));
+        }
+        for (const c of candidateCatalog) {
+          if (c?.id) ops.push(upsertMongoDoc('catalog', { id: c.id }, c, { throwOnError: true }));
+        }
+        await Promise.all(ops);
+        mongoPersistMs = Math.max(1, Math.round(performance.now() - mongoStartMs));
+        indexReport = await ensureMongoIndexes();
+      } catch (eMongo) {
+        console.error('❌ [Restore] Fallo persistiendo respaldo en MongoDB Atlas:', eMongo?.message || eMongo);
+        return res.status(500).json({
+          error: 'Fallo al restaurar el respaldo en la base de datos central. No se modificó el estado en memoria.'
+        });
       }
-      for (const p of runtimeDB.payments) {
-        if (p?.id) ops.push(persistPaymentToMongo(p));
-      }
-      for (const s of runtimeDB.sessions) {
-        if (s?.token) ops.push(upsertMongoDoc('sessions', { token: s.token }, s));
-      }
-      for (const r of runtimeDB.reviews) {
-        if (r?.id) ops.push(upsertMongoDoc('reviews', { id: r.id }, r));
-      }
-      await Promise.allSettled(ops);
-      mongoPersistMs = Math.max(1, Math.round(performance.now() - mongoStartMs));
-      indexReport = await ensureMongoIndexes();
     }
+
+    // Mutar memoria ÚNICAMENTE tras persistencia confirmada
+    const memStartMs = performance.now();
+    runtimeDB.settings = candidateSettings;
+    runtimeDB.packages = candidatePackages;
+    runtimeDB.catalog = candidateCatalog;
+    runtimeDB.bookings = candidateBookings;
+    runtimeDB.payments = candidatePayments;
+    runtimeDB.sessions = candidateSessions;
+    runtimeDB.reviews = candidateReviews;
+    const memoryRestoreMs = Math.max(1, Math.round(performance.now() - memStartMs));
 
     const recoveryTimeMs = Math.max(1, Math.round(performance.now() - startMs));
     const phasesMs = {
@@ -3406,6 +3597,10 @@ app.post('/api/reviews', async (req, res) => {
   if (!checkPublicWriteRateLimit(getClientIp(req), 20, 'reviews')) {
     return res.status(429).json({ error: 'Demasiadas reseñas desde tu conexión. Intenta más tarde.' });
   }
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({ error: 'El registro de reseñas requiere base de datos persistente activa en producción.' });
+  }
   const { clientName, rating, recommend, comment } = req.body || {};
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan nombre del cliente o comentario.' });
@@ -3417,7 +3612,7 @@ app.post('/api/reviews', async (req, res) => {
     recommend: recommend !== false,
     comment: String(comment).trim(),
     date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: true,
+    verified: false,
     createdAt: new Date().toISOString()
   };
 

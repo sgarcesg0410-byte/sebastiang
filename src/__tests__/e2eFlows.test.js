@@ -120,10 +120,10 @@ describe('Suite E2E de Operación Segura y Producción Definitiva', () => {
     expect(booking.totalPrice).toBe(75000);
     expect(typeof receiptToken).toBe('string');
 
-    // 2. El horario aparece ocupado en la agenda pública (sin filtrar PII)
+    // 2. El horario aparece ocupado en la agenda pública (sin filtrar PII ni booking IDs)
     const scheduleRes = await invokeE2E('GET', '/api/public/schedule');
     expect(scheduleRes.status).toBe(200);
-    const bookedSlot = scheduleRes.body.slots.find(s => s.id === booking.id);
+    const bookedSlot = scheduleRes.body.slots.find(s => s.dateTime === slotDate || s.id === booking.id);
     expect(bookedSlot).toBeDefined();
     expect(bookedSlot.clientName).toBeUndefined();
     expect(bookedSlot.clientWhatsApp).toBeUndefined();

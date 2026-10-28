@@ -5,12 +5,25 @@
 // Ubicado dentro de api/ para garantizar resolución nativa en Vercel Serverless.
 // ==============================================================================
 
+export const REQUIRED_BOOKING_DEPOSIT = 20000;
+
 export function paymentBelongsToBooking(payment, booking) {
   if (!payment || !booking) return false;
 
   const bId = String(booking.id || '').trim();
   const bCleanId = bId.replace(/^book-/, '');
 
+  // 1. Vinculación primaria por bookingId explícito
+  if (payment.bookingId) {
+    const pBookingId = String(payment.bookingId).trim();
+    if (pBookingId === bId || (bCleanId && pBookingId.replace(/^book-/, '') === bCleanId)) {
+      return true;
+    }
+    // Si tiene un bookingId diferente explícito, no pertenece a esta reserva
+    return false;
+  }
+
+  // 2. Vinculación por sessionToken si coincide con el id de reserva
   const token = String(payment.sessionToken || '').trim();
   const tokenCleanId = token.replace(/^book-/, '');
 
@@ -21,6 +34,7 @@ export function paymentBelongsToBooking(payment, booking) {
     return false;
   }
 
+  // 3. Fallback por teléfono del cliente
   const pPhone = String(payment.clientWhatsApp || '').replace(/\D/g, '');
   const bPhone = String(booking.clientWhatsApp || '').replace(/\D/g, '');
   if (pPhone.length >= 7 && bPhone.length >= 7) {

@@ -6,9 +6,11 @@
 // de verdad pura, testeable y libre de dependencias de renderizado.
 // ==============================================================================
 
+export const REQUIRED_BOOKING_DEPOSIT = 20000;
+
 /**
  * Determina si un pago corresponde a una reserva específica.
- * Empareja por sessionToken (con o sin prefijo 'book-') o por teléfono del cliente para pagos antiguos sin token.
+ * Prioriza bookingId explícito, luego sessionToken, y como último recurso teléfono para pagos antiguos.
  */
 export function paymentBelongsToBooking(payment, booking) {
   if (!payment || !booking) return false;
@@ -16,10 +18,19 @@ export function paymentBelongsToBooking(payment, booking) {
   const bId = String(booking.id || '').trim();
   const bCleanId = bId.replace(/^book-/, '');
 
+  // 1. Vinculación primaria por bookingId explícito
+  if (payment.bookingId) {
+    const pBookingId = String(payment.bookingId).trim();
+    if (pBookingId === bId || (bCleanId && pBookingId.replace(/^book-/, '') === bCleanId)) {
+      return true;
+    }
+    return false;
+  }
+
   const token = String(payment.sessionToken || '').trim();
   const tokenCleanId = token.replace(/^book-/, '');
 
-  // 1. Si el pago tiene token:
+  // 2. Si el pago tiene token:
   if (token) {
     if (token === bId || (bCleanId && tokenCleanId === bCleanId)) {
       return true;
@@ -28,7 +39,7 @@ export function paymentBelongsToBooking(payment, booking) {
     return false;
   }
 
-  // 2. Si no tiene token (pagos antiguos), emparejar por teléfono si ambos están presentes
+  // 3. Si no tiene token ni bookingId (pagos antiguos), emparejar por teléfono si ambos están presentes
   const pPhone = String(payment.clientWhatsApp || '').replace(/\D/g, '');
   const bPhone = String(booking.clientWhatsApp || '').replace(/\D/g, '');
   if (pPhone.length >= 7 && bPhone.length >= 7) {

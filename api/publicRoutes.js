@@ -123,18 +123,17 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   }
 
   // ----------------------------------------------------------------------------
-  // 1. CUPOS OCUPADOS DEL CALENDARIO (sin ningún dato personal)
+  // 1. CUPOS OCUPADOS DEL CALENDARIO (sin ningún dato personal ni IDs internos)
   // ----------------------------------------------------------------------------
-  // Devuelve solo lo necesario para pintar el calendario: id, cuándo y estado.
-  // El navegador sigue construyendo la rejilla de horarios con su propio parser,
-  // así no duplicamos esa lógica (y no puede desincronizarse).
+  // Devuelve solo lo necesario para pintar el calendario: cuándo y estado.
+  // Protege la privacidad omitiendo por completo los IDs internos de las reservas.
   app.get('/api/public/schedule', publicLimiter, async (req, res) => {
     try {
       const bookings = await getAllBookings();
       const slots = bookings
-        .filter(b => b && b.id && b.dateTime)
+        .filter(b => b && b.dateTime)
         .filter(b => !['cancelled', 'cancelada', 'anulada'].includes(String(b.status || '').toLowerCase()))
-        .map(b => ({ id: b.id, dateTime: b.dateTime, status: b.status || 'pending' }));
+        .map(b => ({ dateTime: b.dateTime, status: b.status || 'pending' }));
 
       res.setHeader('Cache-Control', 'public, max-age=60');
       return res.json({ slots });
@@ -145,11 +144,12 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   });
 
   // ----------------------------------------------------------------------------
-  // 2. FIDELIDAD DEL CLIENTE (solo un booleano y un porcentaje)
+  // 2. FIDELIDAD DEL CLIENTE (solo un booleano y un porcentaje, con rate limit estricto)
   // ----------------------------------------------------------------------------
-  app.get('/api/public/loyalty', publicLimiter, async (req, res) => {
+  const loyaltyLimiter = createPublicRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
+  app.get('/api/public/loyalty', loyaltyLimiter, async (req, res) => {
     const phone = String(req.query.phone || '').replace(/\D/g, '');
-    if (phone.length < 7) {
+    if (phone.length < 10) {
       return res.json({ isLoyal: false, discountPercent: 0 });
     }
 
