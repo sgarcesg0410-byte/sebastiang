@@ -18,11 +18,13 @@ import {
   verifyApkDeviceToken,
   recordFinancialAuditLog,
   getTrustedClientIp,
-  toMinimalApkFeed
+  toMinimalApkFeed,
+  isValidOfficialDomain
 } from '../../api/security.js';
 import app, {
   checkPublicWriteRateLimit,
-  clearApiRateLimiters
+  clearApiRateLimiters,
+  runtimeDB
 } from '../../api/index.js';
 import {
   getColombiaTodayIso,
@@ -646,6 +648,89 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const buildGradle = fs.readFileSync(buildGradlePath, 'utf8');
       expect(buildGradle).toContain('isMinifyEnabled = true');
       expect(buildGradle).toContain('androidx.security:security-crypto');
+    });
+
+    it('comprueba funcionalmente DomainValidator (rechazo de prefijos, puertos no autorizados, HTTP y credenciales)', () => {
+      // Válidos
+      expect(isValidOfficialDomain('https://sebastiang.app')).toBe(true);
+      expect(isValidOfficialDomain('https://sebastiang.app/')).toBe(true);
+      expect(isValidOfficialDomain('https://www.sebastiang.app')).toBe(true);
+      expect(isValidOfficialDomain('https://sebastiang.app/api/apk/feed')).toBe(true);
+      expect(isValidOfficialDomain('https://sebastiang.app:443/agenda')).toBe(true);
+
+      // Ataques de prefijo con startsWith (¡deben ser rechazados!)
+      expect(isValidOfficialDomain('https://sebastiang.app.ejemplo.com')).toBe(false);
+      expect(isValidOfficialDomain('https://sebastiang.app.attacker.com/malicious')).toBe(false);
+      expect(isValidOfficialDomain('https://sebastiang.app-phishing.com')).toBe(false);
+
+      // Esquemas no permitidos
+      expect(isValidOfficialDomain('http://sebastiang.app')).toBe(false);
+      expect(isValidOfficialDomain('javascript:alert(1)')).toBe(false);
+      expect(isValidOfficialDomain('file:///etc/passwd')).toBe(false);
+
+      // Puertos no autorizados
+      expect(isValidOfficialDomain('https://sebastiang.app:8080')).toBe(false);
+      expect(isValidOfficialDomain('https://sebastiang.app:3000')).toBe(false);
+
+      // Credenciales embebidas en URL (evitar user:pass@host)
+      expect(isValidOfficialDomain('https://admin:secret@sebastiang.app')).toBe(false);
+
+      // Valores nulos o vacíos
+      expect(isValidOfficialDomain('')).toBe(false);
+      expect(isValidOfficialDomain('   ')).toBe(false);
+      expect(isValidOfficialDomain(null)).toBe(false);
+      expect(isValidOfficialDomain(undefined)).toBe(false);
+    });
+
+    it('garantiza reconciliación de reservas en reintentos de webhook si la reserva quedó pendiente por fallo previo', async () => {
+      // Simular un pago que ya está 'verified' en memoria pero cuya reserva quedó 'pending' (p. ej. por un fallo transitorio)
+      const orphanBookingId = 'book-reconcile-test-01';
+      runtimeDB.bookings.unshift({
+        id: orphanBookingId,
+        clientName: 'Reconcile Test',
+        status: 'pending',
+        depositPaid: false
+      });
+      const paymentRef = 'ref-wompi-reconcile-01';
+      runtimeDB.payments.unshift({
+        id: 'pay-reconcile-01',
+        reference: paymentRef,
+        bookingId: orphanBookingId,
+        amount: 20000,
+        status: 'verified' // Pago ya verificado previamente
+      });
+
+      const txId = 'tx-reconcile-01';
+      const amountInCents = 2000000;
+      const ts = 1799000000;
+      const rawChecksum = `${txId}APPROVED${amountInCents}${ts}${process.env.WOMPI_EVENTS_SECRET}`;
+      const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
+
+      const webhookPayload = {
+        event: 'transaction.updated',
+        data: {
+          transaction: {
+            id: txId,
+            reference: paymentRef,
+            status: 'APPROVED',
+            amount_in_cents: amountInCents
+          }
+        },
+        timestamp: ts,
+        signature: {
+          properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+          checksum
+        }
+      };
+
+      const res = await invokeApp('POST', '/api/payments/webhook', { body: webhookPayload });
+      expect(res.status).toBe(200);
+      expect(res.body.idempotent).toBe(true);
+
+      // La reserva DEBE haber sido reconciliada a 'confirmed' y 'depositPaid: true'
+      const updatedBooking = runtimeDB.bookings.find(b => b.id === orphanBookingId);
+      expect(updatedBooking.status).toBe('confirmed');
+      expect(updatedBooking.depositPaid).toBe(true);
     });
 
     it('emite tokens de dispositivo APK con alcance exclusivo apk_feed:read (no admin) y permite revocarlos', async () => {

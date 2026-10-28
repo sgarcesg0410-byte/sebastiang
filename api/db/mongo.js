@@ -80,22 +80,32 @@ export async function getMongoDB() {
 }
 
 /**
- * Guarda o actualiza un documento en una colección de MongoDB de forma segura
+ * Guarda o actualiza un documento en una colección de MongoDB de forma segura.
+ * Si throwOnError es true, propaga cualquier error de conexión o rechazo de escritura
+ * para permitir control transaccional estricto en flujos críticos (pagos/reservas).
  */
-export async function upsertMongoDoc(collectionName, filter, doc) {
+export async function upsertMongoDoc(collectionName, filter, doc, { throwOnError = false } = {}) {
   try {
     const db = await getMongoDB();
-    if (!db) return false;
+    if (!db) {
+      if (throwOnError) throw new Error(`MongoDB no está conectado para escribir en ${collectionName}`);
+      return false;
+    }
     const col = db.collection(collectionName);
     const { _id, ...cleanDoc } = doc;
-    await col.updateOne(
+    const res = await col.updateOne(
       filter,
       { $set: { ...cleanDoc, updatedAt: new Date().toISOString() } },
       { upsert: true }
     );
+    if (res && res.acknowledged === false) {
+      if (throwOnError) throw new Error(`Escritura en ${collectionName} no reconocida por MongoDB Atlas`);
+      return false;
+    }
     return true;
   } catch (err) {
     console.warn(`⚠️ [MongoDB] Error guardando en ${collectionName}:`, err?.message || err);
+    if (throwOnError) throw err;
     return false;
   }
 }

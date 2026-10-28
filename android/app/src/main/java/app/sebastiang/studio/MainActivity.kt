@@ -63,10 +63,47 @@ class MainActivity : AppCompatActivity() {
                 if (url.contains("/api/apk/feed") && DomainValidator.isAllowedUrl(url)) {
                     val token = secureStorage.getDeviceToken()
                     if (!token.isNullOrBlank()) {
-                        // El token protegido se inyecta desde Kotlin
+                        try {
+                            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                            conn.requestMethod = request.method ?: "GET"
+                            request.requestHeaders?.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+                            // Inyección real del encabezado de autenticación APK desde la capa nativa Kotlin
+                            conn.setRequestProperty("x-apk-device-token", token)
+                            conn.connect()
+                            val contentType = conn.contentType ?: "application/json"
+                            val encoding = conn.contentEncoding ?: "UTF-8"
+                            val inputStream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+                            val headers = conn.headerFields.mapValues { it.value?.joinToString(",") ?: "" }
+                            return WebResourceResponse(
+                                contentType,
+                                encoding,
+                                conn.responseCode,
+                                conn.responseMessage ?: "OK",
+                                headers,
+                                inputStream
+                            )
+                        } catch (_: Exception) {
+                            return null
+                        }
                     }
                 }
                 return super.shouldInterceptRequest(view, request)
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (DomainValidator.isAllowedUrl(url)) {
+                    val token = secureStorage.getDeviceToken() ?: ""
+                    // Exponer el token en el contexto de la ventana para sincronización con el frontend
+                    view?.evaluateJavascript(
+                        """
+                        (function() {
+                            window.__APK_DEVICE_TOKEN__ = "${token.replace("\"", "\\\"")}";
+                        })();
+                        """.trimIndent(),
+                        null
+                    )
+                }
             }
         }
 

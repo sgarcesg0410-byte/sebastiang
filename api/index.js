@@ -243,7 +243,10 @@ async function persistBookingToMongo(b, { throwOnError = false } = {}) {
 
   if (isMongoConfigured() && normalized) {
     try {
-      await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id });
+      const ok = await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id }, { throwOnError });
+      if (!ok) {
+        throw new Error('Fallo al persistir documento de reserva en MongoDB Atlas (resultado no exitoso)');
+      }
       return true;
     } catch (eMongo) {
       console.error('⚠️ [MongoDB] Error guardando reserva:', eMongo?.message || eMongo);
@@ -260,7 +263,10 @@ async function persistPaymentToMongo(p, { throwOnError = false } = {}) {
 
   if (isMongoConfigured()) {
     try {
-      await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id });
+      const ok = await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id }, { throwOnError });
+      if (!ok) {
+        throw new Error('Fallo al persistir documento de pago en MongoDB Atlas (resultado no exitoso)');
+      }
       return true;
     } catch (eMongo) {
       console.error('⚠️ [MongoDB] Error guardando pago:', eMongo?.message || eMongo);
@@ -560,6 +566,7 @@ function getDefaultDB() {
 }
 
 let runtimeDB = getDefaultDB();
+export { runtimeDB };
 
 // ------------------------------------------------------------------------------
 // RUTAS PÚBLICAS ACOTADAS (calendario, fidelidad y recibo por token)
@@ -1921,10 +1928,35 @@ app.post('/api/payments/webhook', async (req, res) => {
   const isIncomingTerminalFail = ['DECLINED', 'VOIDED', 'ERROR'].includes(tx.status);
 
   if (isCurrentlyVerified || (isCurrentlyRejected && isIncomingTerminalFail)) {
+    // RECONCILIACIÓN EN REINTENTO IDEMPOTENTE:
+    // Si el pago ya figura aprobado pero la reserva asociada quedó en estado 'pending'
+    // o con 'depositPaid: false' (por un fallo transitorio de persistencia en un intento previo),
+    // el reintento DEBE reconciliar y persistir la reserva antes de dar la respuesta final.
+    if (isCurrentlyVerified && payment.bookingId) {
+      const associatedBooking = await findBookingById(payment.bookingId);
+      if (associatedBooking && (associatedBooking.status === 'pending' || !associatedBooking.depositPaid)) {
+        associatedBooking.status = 'confirmed';
+        associatedBooking.depositPaid = true;
+        const inMemB = (runtimeDB.bookings || []).find(b => b.id === associatedBooking.id);
+        if (inMemB) Object.assign(inMemB, associatedBooking);
+
+        if (isMongoConfigured()) {
+          try {
+            await persistBookingToMongo(associatedBooking, { throwOnError: true });
+          } catch (eMongo) {
+            console.error('❌ [Wompi Webhook Reintento] Fallo reconciliando reserva en MongoDB Atlas:', eMongo?.message || eMongo);
+            return res.status(500).json({
+              error: 'Fallo al asegurar la reserva asociada durante reintento idempotente. Se requiere reintento de Wompi.'
+            });
+          }
+        }
+      }
+    }
+
     return res.status(200).json({
       success: true,
       idempotent: true,
-      message: 'Transacción ya procesada previamente en estado final (idempotente).',
+      message: 'Transacción ya procesada previamente en estado final (idempotente reconciliado).',
       reference: payment.reference
     });
   }

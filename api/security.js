@@ -797,6 +797,25 @@ export function getOperationalMonitoringReport({ mongoConnected = false, runtime
   };
 }
 
+/**
+ * Validador estricto de orígenes y URLs oficiales (espejo funcional de DomainValidator.kt en Node.js).
+ * Erradica vulnerabilidades de prefijo (ej. https://sebastiang.app.attacker.com que burlan startsWith).
+ */
+export function isValidOfficialDomain(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  const trimmed = rawUrl.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false;
+    if (parsed.port && parsed.port !== '443') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === 'sebastiang.app' || host === 'www.sebastiang.app';
+  } catch {
+    return false;
+  }
+}
+
 
 
 
