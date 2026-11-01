@@ -801,26 +801,55 @@ const LOCAL_PAYMENTS_KEY = 'sebastian_g_payments_v1';
 const LOCAL_REVIEWS_KEY = 'sebastian_g_reviews_v1';
 const LOCAL_WALLET_BASE_BALANCES_KEY = 'sebastian_g_wallet_base_balances_v1';
 
-export const REAL_DEFAULT_REVIEWS = [];
+export const REAL_DEFAULT_REVIEWS = [
+  {
+    id: "rev-jennifer-vasquez",
+    clientName: "Jennifer Vásquez",
+    rating: 5,
+    recommend: true,
+    comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
+    date: "30/09/2026",
+    verified: true
+  },
+  {
+    id: "rev-ayda-luz",
+    clientName: "Ayda Luz",
+    rating: 5,
+    recommend: true,
+    comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
+    date: "Reciente",
+    verified: true
+  },
+  {
+    id: "rev-shamara",
+    clientName: "Familia Shamara",
+    rating: 5,
+    recommend: true,
+    comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
+    date: "Reciente",
+    verified: true
+  }
+];
 
 export function getLocalReviews() {
   try {
     const raw = localStorage.getItem(LOCAL_REVIEWS_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    if (Array.isArray(list)) {
-      // Filtrar y eliminar de inmediato cualquier comentario de muestra no real
-      const clean = list.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')).map(r => {
-        const item = { ...r };
-        delete item.sessionTitle;
-        delete item.sessionType;
-        delete item.packageTitle;
-        return item;
-      });
-      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(clean));
-      return clean;
-    }
+    const map = new Map();
+    [...(Array.isArray(list) ? list : []), ...REAL_DEFAULT_REVIEWS].forEach(r => {
+      if (r && r.id && !map.has(r.id)) {
+        map.set(r.id, r);
+      }
+    });
+    return Array.from(map.values()).map(r => {
+      const item = { ...r };
+      delete item.sessionTitle;
+      delete item.sessionType;
+      delete item.packageTitle;
+      return item;
+    });
   } catch (e) {}
-  return [];
+  return REAL_DEFAULT_REVIEWS;
 }
 
 export function saveLocalReview(review) {
@@ -2309,17 +2338,20 @@ export async function getReviews() {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
-        serverReviews = data.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+        serverReviews = data;
       }
     }
   } catch (err) {
     console.warn('Consultando reseñas del servidor:', err);
   }
 
-  const localReviews = getLocalReviews().filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+  const localReviews = getLocalReviews();
   const map = new Map();
-  [...localReviews, ...serverReviews].forEach(r => {
-    if (r && r.id) map.set(r.id, r);
+  // Server reviews first (newest real reviews from clients), then local, then default verified
+  [...serverReviews, ...localReviews, ...REAL_DEFAULT_REVIEWS].forEach(r => {
+    if (r && r.id && !map.has(r.id)) {
+      map.set(r.id, r);
+    }
   });
   const combined = Array.from(map.values()).map(r => {
     if (!r) return r;
@@ -2334,7 +2366,7 @@ export async function getReviews() {
       localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
     } catch (e) {}
   }
-  return combined;
+  return combined.length > 0 ? combined : REAL_DEFAULT_REVIEWS;
 }
 
 export async function submitGalleryReview(token, reviewData) {

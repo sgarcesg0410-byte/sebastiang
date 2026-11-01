@@ -45,6 +45,20 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
     }
   };
 
+  const scrollToTestimonials = () => {
+    setMobileMenuOpen(false);
+    if (currentView !== 'home') {
+      setCurrentView('home');
+      setTimeout(() => {
+        const el = document.getElementById('testimonials-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } else {
+      const el = document.getElementById('testimonials-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <header className="sticky top-0 z-40 bg-stone-950/90 backdrop-blur-md border-b border-stone-800/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 sm:h-24 flex items-center justify-between">
@@ -92,6 +106,13 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
             className="text-sm font-medium text-stone-300 hover:text-amber-400 transition-colors"
           >
             Cómo Funciona
+          </button>
+
+          <button
+            onClick={scrollToTestimonials}
+            className="text-sm font-medium text-stone-300 hover:text-amber-400 transition-colors"
+          >
+            Opiniones
           </button>
 
           <button
@@ -172,6 +193,12 @@ export default function Navbar({ onOpenBooking, onReplayIntro, currentView, setC
             className="block w-full text-left py-2 text-stone-200 font-medium text-base hover:text-amber-400"
           >
             Cómo Funciona (4 Pasos & Clima)
+          </button>
+          <button
+            onClick={scrollToTestimonials}
+            className="block w-full text-left py-2 text-stone-200 font-medium text-base hover:text-amber-400"
+          >
+            ⭐ Opiniones de Clientes
           </button>
           <button
             onClick={() => navigateTo('packages')}

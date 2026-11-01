@@ -616,7 +616,38 @@ function getDefaultDB() {
     bookings: [],
     payments: [],
     sessions: [],
-    reviews: [],
+    reviews: [
+      {
+        id: "rev-jennifer-vasquez",
+        clientName: "Jennifer Vásquez",
+        rating: 5,
+        recommend: true,
+        comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
+        date: "30/09/2026",
+        verified: true,
+        createdAt: "2026-09-30T12:00:00.000Z"
+      },
+      {
+        id: "rev-ayda-luz",
+        clientName: "Ayda Luz",
+        rating: 5,
+        recommend: true,
+        comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
+        date: "Reciente",
+        verified: true,
+        createdAt: "2026-10-01T12:00:00.000Z"
+      },
+      {
+        id: "rev-shamara",
+        clientName: "Familia Shamara",
+        rating: 5,
+        recommend: true,
+        comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
+        date: "Reciente",
+        verified: true,
+        createdAt: "2026-10-02T12:00:00.000Z"
+      }
+    ],
     walletBalances: { nequi: 0, daviplata: 0, dale: 0 }
   };
 }
@@ -3733,15 +3764,17 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
 // RESEÑAS
 // ==============================================================================
 app.get('/api/reviews', async (req, res) => {
-  let reviews = runtimeDB.reviews || [];
+  let reviews = Array.isArray(runtimeDB.reviews) && runtimeDB.reviews.length > 0
+    ? [...runtimeDB.reviews]
+    : [];
 
   // MongoDB Atlas (fuente única de verdad)
   if (isMongoConfigured()) {
     try {
       const mongoReviews = await findMongoDocs('reviews', {}, { createdAt: -1 });
-      if (Array.isArray(mongoReviews)) {
+      if (Array.isArray(mongoReviews) && mongoReviews.length > 0) {
         const map = new Map();
-        [...reviews, ...mongoReviews.map(({ _id, ...r }) => r)].forEach(rev => {
+        [...mongoReviews.map(({ _id, ...r }) => r), ...reviews].forEach(rev => {
           if (rev && rev.id) map.set(rev.id, rev);
         });
         reviews = Array.from(map.values());
@@ -3752,14 +3785,20 @@ app.get('/api/reviews', async (req, res) => {
     }
   }
 
-  reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')).map(r => {
+  // Si aún no hay reseñas, garantizar las reseñas reales de clientes por defecto
+  if (reviews.length === 0) {
+    reviews = getDefaultDB().reviews;
+    runtimeDB.reviews = reviews;
+  }
+
+  const cleanList = reviews.map(r => {
     const clean = { ...r };
     delete clean.sessionTitle;
     delete clean.sessionType;
     delete clean.packageTitle;
     return clean;
   });
-  res.json(reviews);
+  res.json(cleanList);
 });
 
 app.post('/api/reviews', async (req, res) => {

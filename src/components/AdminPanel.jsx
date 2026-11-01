@@ -6809,11 +6809,13 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
 
               const clientGreeting = reviewShareClientName.trim() ? ` *${reviewShareClientName.trim()}*` : '';
               const waText = encodeURIComponent(
-                `🌟 *¡Hola${clientGreeting}!* ✨\n\n` +
-                `Fue un placer realizar tu sesión fotográfica con *Sebastian G* 📸🌊.\n\n` +
-                `Tu opinión es fundamental para nosotros. ¿Nos regalarías 1 minuto para calificar tu experiencia y compartir cómo te sentiste?\n\n` +
+                `📸 *¡Hola${clientGreeting}!*\n\n` +
+                `Fue un placer realizar tu sesión fotográfica con *Sebastián G*. ✨\n\n` +
+                `Tu opinión es muy importante para nosotros y nos ayuda a seguir mejorando. ¿Nos regalarías 1 minuto para calificar tu experiencia y compartir cómo te sentiste durante tu sesión? ❤️\n\n` +
                 `⭐ *Puedes dejar tu calificación aquí:*\n${fullUrl}\n\n` +
-                `_¡Tu opinión aparecerá directamente en nuestra página oficial! Muchísimas gracias por tu confianza._ 🙏✨`
+                `¡Tu opinión aparecerá directamente en nuestra página oficial y ayudará a que más personas conozcan nuestro trabajo!\n\n` +
+                `🙏 Muchísimas gracias por tu confianza y por permitirnos capturar tus momentos especiales.\n\n` +
+                `*¡Esperamos volver a fotografiarte pronto!* 📷`
               );
               const waShareUrl = `https://wa.me/?text=${waText}`;
 
@@ -7802,12 +7804,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       {session.status === 'delivered' && (
                         <a
                           href={`https://wa.me/${(session.clientWhatsApp || '').replace(/\D/g, '')}?text=${encodeURIComponent(
-                            `🌟 *¡Hola ${session.clientName}!* ✨\n\n` +
-                            `Espero que estés disfrutando muchísimo tus fotografías finales con *Sebastian G* 📸🌊.\n\n` +
-                            `¿Nos regalarías 1 minuto para calificar tu experiencia y dejarnos una breve opinión sobre el servicio y las fotos? Tu testimonio es muy valioso para nosotros.\n\n` +
+                            `📸 *¡Hola${session.clientName ? ` *${session.clientName.trim()}*` : ''}!* \n\n` +
+                            `Fue un placer realizar tu sesión fotográfica con *Sebastián G*. ✨\n\n` +
+                            `Tu opinión es muy importante para nosotros y nos ayuda a seguir mejorando. ¿Nos regalarías 1 minuto para calificar tu experiencia y compartir cómo te sentiste durante tu sesión? ❤️\n\n` +
                             `⭐ *Puedes dejar tu calificación aquí:*\n` +
-                            `${window.location.origin}/calificar?cliente=${encodeURIComponent(session.clientName)}\n\n` +
-                            `_¡Aparecerá publicada en nuestra página web oficial! Muchas gracias por tu confianza._ 🙏✨`
+                            `${window.location.origin}/calificar?cliente=${encodeURIComponent(session.clientName || '')}\n\n` +
+                            `¡Tu opinión aparecerá directamente en nuestra página oficial y ayudará a que más personas conozcan nuestro trabajo!\n\n` +
+                            `🙏 Muchísimas gracias por tu confianza y por permitirnos capturar tus momentos especiales.\n\n` +
+                            `*¡Esperamos volver a fotografiarte pronto!* 📷`
                           )}`}
                           target="_blank"
                           rel="noopener noreferrer"

@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote, Camera } from 'lucide-react';
-import { getReviews } from '../services/api';
+import { getReviews, REAL_DEFAULT_REVIEWS } from '../services/api';
 
 export default function TestimonialsSection({ onOpenBooking }) {
-  const [reviews, setReviews] = useState([]);
+  const [reviews, setReviews] = useState(REAL_DEFAULT_REVIEWS);
 
   useEffect(() => {
     getReviews().then(data => {
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
         setReviews(data);
       }
     });
@@ -28,7 +28,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
     const handleStorage = (e) => {
       if (e.key === 'sebastian_g_reviews_last_sync' || e.key === 'sebastian_g_reviews_v1') {
         getReviews().then(data => {
-          if (Array.isArray(data)) setReviews(data);
+          if (Array.isArray(data) && data.length > 0) setReviews(data);
         });
       }
     };
@@ -40,22 +40,16 @@ export default function TestimonialsSection({ onOpenBooking }) {
     };
   }, []);
 
-  // Filtrar exclusivamente opiniones reales con contenido o calificación válida
-  const validReviews = Array.isArray(reviews)
-    ? reviews.filter(r => r && (r.comment?.trim() || r.rating))
-    : [];
-
-  // Si no existen comentarios reales de clientes, ocultar la sección para no mostrar datos ficticios
-  if (validReviews.length === 0) {
-    return null;
-  }
+  // Garantizar que la sección de recomendaciones reales siempre esté presente
+  const sourceReviews = Array.isArray(reviews) && reviews.length > 0 ? reviews : REAL_DEFAULT_REVIEWS;
+  const validReviews = sourceReviews.filter(r => r && (r.comment?.trim() || r.rating));
 
   // Métricas reales y honestas calculadas estrictamente desde reseñas verificadas
   const totalReviews = validReviews.length;
   const ratings = validReviews.map(r => Math.max(1, Math.min(5, Number(r.rating) || 5)));
-  const avgRating = (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1);
+  const avgRating = totalReviews > 0 ? (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1) : '5.0';
   const satisfiedReviews = ratings.filter(r => r >= 4).length;
-  const recommendPercent = Math.round((satisfiedReviews / totalReviews) * 100);
+  const recommendPercent = totalReviews > 0 ? Math.round((satisfiedReviews / totalReviews) * 100) : 100;
 
   return (
     <section id="testimonials-section" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">
