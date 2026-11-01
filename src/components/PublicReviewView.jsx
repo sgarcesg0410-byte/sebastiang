@@ -15,7 +15,7 @@ import {
   MapPin
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { submitGalleryReview, getSettings, DEFAULT_SETTINGS } from '../services/api';
+import { submitPublicReview, getSettings, DEFAULT_SETTINGS } from '../services/api';
 
 export default function PublicReviewView({ onBackToHome }) {
   const [clientName, setClientName] = useState('');
@@ -52,7 +52,7 @@ export default function PublicReviewView({ onBackToHome }) {
 
     try {
       setIsSubmitting(true);
-      const res = await submitGalleryReview('public-review', {
+      const res = await submitPublicReview({
         clientName: clientName.trim(),
         rating,
         recommend,

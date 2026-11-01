@@ -801,55 +801,34 @@ const LOCAL_PAYMENTS_KEY = 'sebastian_g_payments_v1';
 const LOCAL_REVIEWS_KEY = 'sebastian_g_reviews_v1';
 const LOCAL_WALLET_BASE_BALANCES_KEY = 'sebastian_g_wallet_base_balances_v1';
 
-export const REAL_DEFAULT_REVIEWS = [
-  {
-    id: "rev-jennifer-vasquez",
-    clientName: "Jennifer Vásquez",
-    rating: 5,
-    recommend: true,
-    comment: "¡Espectacular trabajo! Sebastian nos tomó las fotos del juramento de bandera de mi hijo en Coveñas y quedaron hermosas. Muy puntual, atento y las fotos en alta calidad.",
-    date: "30/09/2026",
-    verified: true
-  },
-  {
-    id: "rev-ayda-luz",
-    clientName: "Ayda Luz",
-    rating: 5,
-    recommend: true,
-    comment: "Celebramos un cumpleaños en San Antero rodeado de la magia de sus fotos. Nos encantó la atención, la paciencia con las poses y la rapidez de la entrega.",
-    date: "Reciente",
-    verified: true
-  },
-  {
-    id: "rev-shamara",
-    clientName: "Familia Shamara",
-    rating: 5,
-    recommend: true,
-    comment: "Fotos de primer cumpleaños divinas, la entrega fue súper rápida y la plataforma para elegir las fotos es comodísima. ¡100% recomendado!",
-    date: "Reciente",
-    verified: true
-  }
-];
+export const REAL_DEFAULT_REVIEWS = [];
 
 export function getLocalReviews() {
   try {
     const raw = localStorage.getItem(LOCAL_REVIEWS_KEY);
     const list = raw ? JSON.parse(raw) : [];
     const map = new Map();
-    [...(Array.isArray(list) ? list : []), ...REAL_DEFAULT_REVIEWS].forEach(r => {
-      if (r && r.id && !map.has(r.id)) {
-        map.set(r.id, r);
+    (Array.isArray(list) ? list : []).forEach(r => {
+      // Filtrar cualquier reseña de muestra o no auténtica previa
+      if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
+        if (!map.has(r.id)) {
+          map.set(r.id, r);
+        }
       }
     });
-    return Array.from(map.values()).map(r => {
+    const cleaned = Array.from(map.values()).map(r => {
       const item = { ...r };
       delete item.sessionTitle;
       delete item.sessionType;
       delete item.packageTitle;
       return item;
     });
+    if (raw && Array.isArray(list) && list.length !== cleaned.length) {
+      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch (e) {}
-  return REAL_DEFAULT_REVIEWS;
+  return [];
 }
 
 export function saveLocalReview(review) {
@@ -2347,10 +2326,12 @@ export async function getReviews() {
 
   const localReviews = getLocalReviews();
   const map = new Map();
-  // Server reviews first (newest real reviews from clients), then local, then default verified
-  [...serverReviews, ...localReviews, ...REAL_DEFAULT_REVIEWS].forEach(r => {
-    if (r && r.id && !map.has(r.id)) {
-      map.set(r.id, r);
+  // Server reviews first (newest real reviews from clients), then local
+  [...serverReviews, ...localReviews].forEach(r => {
+    if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
+      if (!map.has(r.id)) {
+        map.set(r.id, r);
+      }
     }
   });
   const combined = Array.from(map.values()).map(r => {
@@ -2366,7 +2347,111 @@ export async function getReviews() {
       localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
     } catch (e) {}
   }
-  return combined.length > 0 ? combined : REAL_DEFAULT_REVIEWS;
+  return combined;
+}
+
+export async function submitPublicReview(reviewData) {
+  let serverReview = null;
+  try {
+    const res = await fetch(`${API_BASE}/reviews`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reviewData)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      serverReview = data.review;
+    }
+  } catch (err) {
+    console.warn('Error al guardar reseña pública en servidor, guardando local:', err);
+  }
+
+  const newReview = serverReview || {
+    id: `rev-${Date.now()}`,
+    clientName: (reviewData.clientName || 'Cliente').trim(),
+    rating: Number(reviewData.rating) || 5,
+    recommend: reviewData.recommend !== false,
+    comment: (reviewData.comment || '').trim(),
+    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    verified: false
+  };
+
+  saveLocalReview(newReview);
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('reviews_realtime_sync');
+      bc.postMessage({ type: 'NEW_REVIEW', review: newReview, timestamp: Date.now() });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
+  } catch (e) {}
+
+  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
+  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+  const starsText = '⭐'.repeat(newReview.rating);
+  const waMsg = encodeURIComponent(
+    `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tus fotos:*\n\n` +
+    `👤 *Cliente:* ${newReview.clientName}\n` +
+    `⭐ *Calificación:* ${starsText} (${newReview.rating}/5 Estrellas)\n` +
+    `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
+    `💬 *Comentario:* "${newReview.comment}"\n\n` +
+    `_¡Muchísimas gracias por tu gran trabajo y profesionalismo!_`
+  );
+
+  return {
+    success: true,
+    review: newReview,
+    directWhatsAppUrl: `https://wa.me/${p1}?text=${waMsg}`,
+    secondaryWhatsAppUrl: `https://wa.me/${p2}?text=${waMsg}`
+  };
+}
+
+export async function createAdminReview(reviewData) {
+  let serverReview = null;
+  try {
+    const token = getAdminToken();
+    const res = await fetch(`${API_BASE}/admin/reviews`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify(reviewData)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      serverReview = data.review;
+    }
+  } catch (err) {
+    console.warn('Error al guardar reseña administrativa en servidor:', err);
+  }
+
+  const newReview = serverReview || {
+    id: `rev-${Date.now()}`,
+    clientName: (reviewData.clientName || 'Cliente').trim(),
+    rating: Number(reviewData.rating) || 5,
+    recommend: reviewData.recommend !== false,
+    comment: (reviewData.comment || '').trim(),
+    date: reviewData.date || new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+    verified: reviewData.verified !== false
+  };
+
+  saveLocalReview(newReview);
+
+  try {
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('reviews_realtime_sync');
+      bc.postMessage({ type: 'NEW_REVIEW', review: newReview, timestamp: Date.now() });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
+  } catch (e) {}
+
+  return {
+    success: true,
+    review: newReview
+  };
 }
 
 export async function submitGalleryReview(token, reviewData) {

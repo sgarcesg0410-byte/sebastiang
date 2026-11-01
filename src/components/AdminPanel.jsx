@@ -117,6 +117,7 @@ import {
   formatPhotoUrl,
   getReviews,
   deleteReview,
+  createAdminReview,
   getWalletBaseBalances,
   fetchCloudWalletBaseBalances,
   saveWalletBaseBalances,
@@ -503,6 +504,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [reviewShareSession, setReviewShareSession] = useState('');
   const [copiedReviewLink, setCopiedReviewLink] = useState(false);
   const [deletingReviewId, setDeletingReviewId] = useState(null);
+  const [showAddReviewModal, setShowAddReviewModal] = useState(false);
+  const [isSavingReview, setIsSavingReview] = useState(false);
+  const [manualReviewForm, setManualReviewForm] = useState({
+    clientName: '',
+    rating: 5,
+    recommend: true,
+    comment: '',
+    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  });
 
   // Gestión de Precios
   const [editablePackages, setEditablePackages] = useState(DEFAULT_PACKAGES);
@@ -6699,13 +6709,23 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 Reseñas dejadas por clientes al recibir sus fotos finales en la galería digital. Se muestran públicamente en la página principal.
               </p>
             </div>
-            <button
-              onClick={loadAllAdminData}
-              className="p-2 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 flex items-center gap-1 text-xs self-start sm:self-auto"
-            >
-              <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
-              <span>Actualizar Opiniones</span>
-            </button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setShowAddReviewModal(true)}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+              >
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <span>Registrar Opinión Real</span>
+              </button>
+              <button
+                onClick={loadAllAdminData}
+                className="p-2 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 flex items-center gap-1 text-xs"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin' : ''}`} />
+                <span>Actualizar Opiniones</span>
+              </button>
+            </div>
           </div>
 
           {/* TARJETAS RESUMEN DE SATISFACCIÓN */}
@@ -6943,6 +6963,203 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* MODAL PARA REGISTRAR OPINIÓN REAL MANUALMENTE */}
+          {showAddReviewModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+              <div className="bg-stone-900 border border-stone-800 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl relative space-y-5">
+                <div className="flex items-center justify-between pb-3 border-b border-stone-800">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                      <Star className="w-5 h-5 fill-amber-400" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-bold text-white font-serif">
+                        Registrar Opinión Real de Cliente
+                      </h4>
+                      <p className="text-[11px] text-stone-400">
+                        Agrega un testimonio recibido por WhatsApp, llamada o en persona.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddReviewModal(false)}
+                    className="p-1.5 text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!manualReviewForm.clientName.trim()) {
+                      alert('Por favor ingresa el nombre del cliente.');
+                      return;
+                    }
+                    if (!manualReviewForm.comment.trim()) {
+                      alert('Por favor escribe el comentario o testimonio del cliente.');
+                      return;
+                    }
+                    try {
+                      setIsSavingReview(true);
+                      const res = await createAdminReview({
+                        clientName: manualReviewForm.clientName.trim(),
+                        rating: Number(manualReviewForm.rating) || 5,
+                        recommend: manualReviewForm.recommend !== false,
+                        comment: manualReviewForm.comment.trim(),
+                        date: manualReviewForm.date.trim() || new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+                        verified: true
+                      });
+                      if (res && res.review) {
+                        setReviewsList(prev => [res.review, ...prev.filter(r => r.id !== res.review.id)]);
+                      }
+                      setShowAddReviewModal(false);
+                      setManualReviewForm({
+                        clientName: '',
+                        rating: 5,
+                        recommend: true,
+                        comment: '',
+                        date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                      });
+                      alert('¡Calificación real registrada y publicada con éxito en tu página web!');
+                    } catch (err) {
+                      alert('Error al registrar la opinión: ' + (err.message || 'Intenta de nuevo'));
+                    } finally {
+                      setIsSavingReview(false);
+                    }
+                  }}
+                  className="space-y-4 text-xs"
+                >
+                  <div>
+                    <label className="block text-stone-300 font-semibold mb-1">
+                      Nombre del Cliente <span className="text-amber-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={manualReviewForm.clientName}
+                      onChange={(e) => setManualReviewForm(prev => ({ ...prev, clientName: e.target.value }))}
+                      placeholder="Ej: Carolina Martínez"
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-stone-300 font-semibold mb-1">
+                        Calificación (Estrellas)
+                      </label>
+                      <div className="flex items-center gap-1.5 py-1">
+                        {[1, 2, 3, 4, 5].map((starVal) => (
+                          <button
+                            key={starVal}
+                            type="button"
+                            onClick={() => setManualReviewForm(prev => ({ ...prev, rating: starVal }))}
+                            className="p-1 hover:scale-110 transition-transform cursor-pointer"
+                          >
+                            <Star
+                              className={`w-6 h-6 ${
+                                starVal <= manualReviewForm.rating
+                                  ? 'text-amber-400 fill-amber-400'
+                                  : 'text-stone-700'
+                              }`}
+                            />
+                          </button>
+                        ))}
+                        <span className="text-xs font-mono font-bold text-amber-300 ml-2">
+                          {manualReviewForm.rating}.0 / 5
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-stone-300 font-semibold mb-1">
+                        Fecha de la Sesión / Opinión
+                      </label>
+                      <input
+                        type="text"
+                        value={manualReviewForm.date}
+                        onChange={(e) => setManualReviewForm(prev => ({ ...prev, date: e.target.value }))}
+                        placeholder="DD/MM/AAAA"
+                        className="w-full bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-white placeholder-stone-600 focus:border-amber-400 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-stone-300 font-semibold mb-1">
+                      ¿Recomienda el Trabajo?
+                    </label>
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer text-stone-200">
+                        <input
+                          type="radio"
+                          name="manualReviewRecommend"
+                          checked={manualReviewForm.recommend === true}
+                          onChange={() => setManualReviewForm(prev => ({ ...prev, recommend: true }))}
+                          className="accent-amber-500"
+                        />
+                        <span>Sí, 100% recomendado</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-stone-200">
+                        <input
+                          type="radio"
+                          name="manualReviewRecommend"
+                          checked={manualReviewForm.recommend === false}
+                          onChange={() => setManualReviewForm(prev => ({ ...prev, recommend: false }))}
+                          className="accent-amber-500"
+                        />
+                        <span>Neutral / No</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-stone-300 font-semibold mb-1">
+                      Comentario o Testimonio Real <span className="text-amber-400">*</span>
+                    </label>
+                    <textarea
+                      required
+                      rows={4}
+                      value={manualReviewForm.comment}
+                      onChange={(e) => setManualReviewForm(prev => ({ ...prev, comment: e.target.value }))}
+                      placeholder="Copia aquí lo que el cliente te escribió o expresó sobre tu trabajo..."
+                      className="w-full bg-stone-950 border border-stone-800 rounded-xl p-3 text-white placeholder-stone-600 focus:border-amber-400 outline-none resize-none leading-relaxed"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-stone-800">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddReviewModal(false)}
+                      className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingReview}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingReview ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Guardando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Guardar y Publicar en Web</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
         </div>
