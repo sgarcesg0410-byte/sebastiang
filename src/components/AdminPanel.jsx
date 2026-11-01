@@ -11855,7 +11855,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       onChange={(e) => {
                         const val = e.target.value;
                         setReceiptType(val);
-                        if (val === 'remaining') {
+                        if (val === 'paid_deposit') {
+                          setReceiptPaidAmount(alreadyPaid);
+                          setReceiptNotes(`Abono recibido para confirmación y reserva de sesión fotográfica. Saldo pendiente: ${remaining.toLocaleString('es-CO')} COP a cancelar el día de la sesión.`);
+                        } else if (val === 'remaining') {
                           setReceiptPaidAmount(remaining > 0 ? remaining : total);
                           setReceiptNotes(`Saldo final para completar el 100% de la sesión fotográfica (Abono previo de $${alreadyPaid.toLocaleString('es-CO')} COP acreditado).`);
                         } else if (val === 'deposit') {
@@ -11869,7 +11872,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       className="w-full bg-stone-900 border border-stone-700 rounded-lg px-2.5 py-1.5 text-white font-medium"
                     >
                       {alreadyPaid > 0 && remaining > 0 && (
-                        <option value="remaining">Saldo Restante Final (${remaining.toLocaleString('es-CO')} COP)</option>
+                        <React.Fragment>
+                          <option value="paid_deposit">Abono Recibido (${alreadyPaid.toLocaleString('es-CO')} COP - Saldo: ${remaining.toLocaleString('es-CO')} COP)</option>
+                          <option value="remaining">Cobro de Saldo Restante (${remaining.toLocaleString('es-CO')} COP)</option>
+                        </React.Fragment>
                       )}
                       <option value="deposit">Abono Inicial (50%)</option>
                       <option value="total">Pago Total (100%)</option>
@@ -12010,9 +12016,25 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     );
                     const alreadyPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
                     const isTotal = receiptType === 'total';
-                    const effectivePrev = isTotal ? 0 : alreadyPaid;
-                    const balance = Math.max(0, total - (effectivePrev + paidNow));
-                    const isFull = balance === 0 || isTotal || (effectivePrev + paidNow) >= total;
+                    let displayPrev = 0;
+                    let balance = 0;
+
+                    if (isTotal) {
+                      balance = 0;
+                    } else if (receiptType === 'paid_deposit' || receiptType === 'deposit') {
+                      balance = Math.max(0, total - paidNow);
+                    } else if (receiptType === 'remaining') {
+                      displayPrev = alreadyPaid > 0 ? alreadyPaid : Math.max(0, total - paidNow);
+                      balance = Math.max(0, total - (displayPrev + paidNow));
+                    } else {
+                      if (alreadyPaid > 0 && Math.abs(alreadyPaid - paidNow) > 0.01) {
+                        displayPrev = alreadyPaid;
+                        balance = Math.max(0, total - (displayPrev + paidNow));
+                      } else {
+                        balance = Math.max(0, total - paidNow);
+                      }
+                    }
+                    const isFull = balance === 0 || isTotal || (displayPrev + paidNow) >= total;
 
                     return (
                       <>
@@ -12020,14 +12042,14 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <span className="font-bold">Total Pactado:</span>
                           <span className="font-mono font-bold">${total.toLocaleString('es-CO')} COP</span>
                         </div>
-                        {effectivePrev > 0 && (
+                        {displayPrev > 0 && (
                           <div className="flex justify-between text-purple-300 font-semibold bg-purple-950/20 px-2.5 py-1.5 rounded-lg border border-purple-500/20">
                             <span>Abono Previo Acreditado:</span>
-                            <span className="font-mono">${effectivePrev.toLocaleString('es-CO')} COP</span>
+                            <span className="font-mono">${displayPrev.toLocaleString('es-CO')} COP</span>
                           </div>
                         )}
                         <div className="flex justify-between text-emerald-400 font-bold bg-emerald-950/20 px-2.5 py-1.5 rounded-lg border border-emerald-500/20">
-                          <span>{effectivePrev > 0 ? 'Saldo Recibido Hoy' : 'Monto Recibido'} ({receiptPaymentMethod}):</span>
+                          <span>{displayPrev > 0 ? 'Saldo Recibido Hoy' : 'Valor Abonado / Recibido Hoy'} ({receiptPaymentMethod}):</span>
                           <span className="font-mono">${paidNow.toLocaleString('es-CO')} COP</span>
                         </div>
                         {balance > 0 ? (
@@ -12081,9 +12103,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     );
                     const alreadyPaid = bPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
                     const isTotal = receiptType === 'total';
-                    const effectivePrev = isTotal ? 0 : alreadyPaid;
-                    const totalPaid = isTotal ? total : Math.min(total, effectivePrev + paidNow);
-                    const isFull = Math.max(0, total - (effectivePrev + paidNow)) === 0 || isTotal || (effectivePrev + paidNow) >= total;
+                    let totalPaid = 0;
+                    if (isTotal) {
+                      totalPaid = total;
+                    } else if (receiptType === 'paid_deposit' || receiptType === 'deposit') {
+                      totalPaid = paidNow;
+                    } else if (receiptType === 'remaining') {
+                      const prev = alreadyPaid > 0 ? alreadyPaid : Math.max(0, total - paidNow);
+                      totalPaid = Math.min(total, prev + paidNow);
+                    } else {
+                      totalPaid = (alreadyPaid > 0 && Math.abs(alreadyPaid - paidNow) > 0.01) ? Math.min(total, alreadyPaid + paidNow) : paidNow;
+                    }
+                    const isFull = totalPaid >= total || isTotal;
                     const pct = Math.min(100, Math.round((totalPaid / (total || 1)) * 100));
 
                     return (

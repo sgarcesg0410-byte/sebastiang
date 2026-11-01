@@ -1341,6 +1341,7 @@ export async function createBooking(data) {
       `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n\n` +
       `👤 *Nombre:* ${newBooking.clientName}\n` +
       `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
+      `🎯 *Tipo de Evento:* ${newBooking.eventType || 'Sesión Fotográfica'}\n` +
       `📦 *Paquete:* ${newBooking.packageName || 'Sesión Fotográfica'} ($${Number(newBooking.totalPrice || 0).toLocaleString('es-CO')} COP)\n` +
       printedDetails +
       `📍 *Lugar:* ${newBooking.specificLocation || 'Locación Acordada'}\n` +
@@ -1412,12 +1413,12 @@ export async function getGalleryByToken(token) {
       isDelivered: false,
       timeRemainingMs: 30 * 24 * 60 * 60 * 1000,
       photos: [
-        { id: "photo-1", title: "Foto 001 - Retrato Primer Plano", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-2", title: "Foto 002 - Mirada al Atardecer", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-3", title: "Foto 003 - Sonrisa en la Orilla", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-4", title: "Foto 004 - Movimiento y Brisa", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-5", title: "Foto 005 - Plano Entero en la Playa", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-6", title: "Foto 006 - Silueta en Contraluz", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
+        { id: "photo-1", title: "Foto 001 - Retrato Principal", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-2", title: "Foto 002 - Luz Natural & Detalle", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-3", title: "Foto 003 - Sonrisa Espontánea", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-4", title: "Foto 004 - Encuadre Dinámico", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-5", title: "Foto 005 - Plano Entero", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-6", title: "Foto 006 - Composición Artística", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
       ],
       watermarkSettings: {
         watermarkText: DEFAULT_SETTINGS.watermarkText,

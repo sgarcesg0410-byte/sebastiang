@@ -36,6 +36,21 @@ function ensureWompiWidgetLoaded() {
   return wompiScriptPromise;
 }
 
+export const EVENT_TYPES = [
+  { id: 'cumpleanos', label: 'Cumpleaños', icon: '🎂' },
+  { id: 'grado', label: 'Grado / Ceremonia', icon: '🎓' },
+  { id: 'quinceanera', label: 'Quinceañera', icon: '👑' },
+  { id: 'boda', label: 'Boda / Matrimonio', icon: '💍' },
+  { id: 'familiar', label: 'Familiar', icon: '👨‍👩‍👧‍👦' },
+  { id: 'pareja', label: 'Pareja / Enamorados', icon: '❤️' },
+  { id: 'retrato', label: 'Retrato Personal', icon: '👤' },
+  { id: 'maternidad', label: 'Embarazo / Maternidad', icon: '🤰' },
+  { id: 'infantil', label: 'Infantil / Niños / Bebé', icon: '👶' },
+  { id: 'social', label: 'Evento Social / Fiesta', icon: '🎉' },
+  { id: 'playa', label: 'Playa / Vacaciones', icon: '🏖️' },
+  { id: 'otro', label: 'Otro Evento', icon: '✍️' }
+];
+
 export default function BookingModal({ isOpen, onClose, packages = [], preselectedPackage, preselectedPhoto, preselectedDate = '', preselectedCombo = null, settings = {} }) {
   const scrollRef = useRef(null);
   const modalDialogRef = useRef(null);
@@ -56,6 +71,8 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     clientEmail: '',
     referralCode: '',
     packageId: preselectedPackage ? preselectedPackage.id : (packages[2]?.id || packages[0]?.id || ''),
+    eventType: '',
+    customEventType: '',
     locationType: 'san_antero',
     specificLocation: '',
     date: '',
@@ -157,6 +174,22 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   };
 
   const handleNextStep2 = () => {
+    if (!formData.packageId) {
+      setErrorMessage('Por favor selecciona tu paquete de fotos.');
+      return;
+    }
+    if (!formData.eventType) {
+      setErrorMessage('Por favor selecciona para qué es la sesión de fotos / tipo de evento (Obligatorio).');
+      return;
+    }
+    if (formData.eventType === 'Otro Evento' && !formData.customEventType?.trim()) {
+      setErrorMessage('Por favor escribe el motivo específico de tu sesión de fotos (Obligatorio).');
+      return;
+    }
+    if (!formData.specificLocation?.trim()) {
+      setErrorMessage('Por favor escribe el lugar o locación exacta donde se realizará la sesión (Obligatorio).');
+      return;
+    }
     setErrorMessage('');
     setBookingStep(3);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -409,19 +442,24 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
       const formattedTime12 = formatTo12Hour(formData.time);
       const formattedDateTime = `${formattedDate} a las ${formattedTime12}`;
 
+      const resolvedEventType = formData.eventType === 'Otro Evento'
+        ? (formData.customEventType?.trim() || 'Otro Evento')
+        : (formData.eventType || 'Sesión Fotográfica');
+
       const bookingPayload = {
         clientName: formData.clientName.trim(),
         clientWhatsApp: formData.clientWhatsApp.trim(),
         clientEmail: (formData.clientEmail || '').trim(),
         packageId: formData.packageId,
         packageName: currentPackage ? `${currentPackage.name} (+ 2 Fotos Gratis)` : 'Sesión Fotográfica',
+        eventType: resolvedEventType,
         totalPrice: calculatedPrice,
         loyaltyDiscount: loyaltyDiscount,
         isVipClient: loyalInfo.isLoyal,
         referralCode: formData.referralCode?.trim() || null,
         referralDiscountApplied: Boolean(isReferralEligible),
         locationType: formData.locationType,
-        specificLocation: formData.specificLocation || (formData.locationType === 'san_antero' ? 'Locación Local / Base' : 'Locación con Desplazamiento'),
+        specificLocation: formData.specificLocation.trim(),
         dateTime: formattedDateTime,
         printedPhotosCount: paperPhotosCount,
         printedPhotos10x15Count: Number(formData.printedSizes?.['10x15'] ?? formData.printedPhotosCount ?? 0),
@@ -575,6 +613,27 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
               onClick={() => {
                 if (!formData.clientName.trim() || !formData.clientWhatsApp.trim()) {
                   setErrorMessage('Por favor completa tus datos primero.');
+                  setBookingStep(1);
+                  return;
+                }
+                if (!formData.packageId) {
+                  setErrorMessage('Por favor selecciona tu paquete de fotos.');
+                  setBookingStep(2);
+                  return;
+                }
+                if (!formData.eventType) {
+                  setErrorMessage('Por favor selecciona para qué es la sesión de fotos / tipo de evento (Obligatorio).');
+                  setBookingStep(2);
+                  return;
+                }
+                if (formData.eventType === 'Otro Evento' && !formData.customEventType?.trim()) {
+                  setErrorMessage('Por favor escribe el motivo específico de tu sesión de fotos (Obligatorio).');
+                  setBookingStep(2);
+                  return;
+                }
+                if (!formData.specificLocation?.trim()) {
+                  setErrorMessage('Por favor escribe el lugar o locación exacta donde se realizará la sesión (Obligatorio).');
+                  setBookingStep(2);
                   return;
                 }
                 setErrorMessage('');
@@ -611,11 +670,19 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                   Gracias, {submittedBooking.clientName}
                 </h4>
                 <p className="text-xs sm:text-sm text-stone-300 mt-2 max-w-md mx-auto leading-relaxed">
-                  Hemos agendado tu solicitud para el <strong>{submittedBooking.dateTime}</strong> en <strong>{submittedBooking.specificLocation}</strong>.
+                  Hemos agendado tu solicitud para tu sesión de <strong>{submittedBooking.eventType || 'fotos'}</strong> el <strong>{submittedBooking.dateTime}</strong> en <strong>{submittedBooking.specificLocation}</strong>.
                 </p>
               </div>
 
               <div className="bg-stone-950 p-4 rounded-2xl border border-stone-800 text-left space-y-2 text-xs">
+                <div className="flex justify-between text-stone-300">
+                  <span className="text-stone-400">Tipo de Evento:</span>
+                  <span className="font-semibold text-amber-300">{submittedBooking.eventType || 'Sesión Fotográfica'}</span>
+                </div>
+                <div className="flex justify-between text-stone-300">
+                  <span className="text-stone-400">Lugar / Locación:</span>
+                  <span className="font-semibold text-white">{submittedBooking.specificLocation}</span>
+                </div>
                 <div className="flex justify-between text-stone-300">
                   <span className="text-stone-400">Paquete:</span>
                   <span className="font-semibold text-white">{submittedBooking.packageName}</span>
@@ -968,10 +1035,68 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Lugar de la Sesión *</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span>¿Para qué es tu sesión? / Tipo de Evento *</span>
+                      </label>
+                      <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                        Obligatorio
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Tipo de evento">
+                      {EVENT_TYPES.map(ev => {
+                        const isSelected = formData.eventType === ev.label;
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => {
+                              setFormData(prev => ({
+                                ...prev,
+                                eventType: ev.label,
+                                customEventType: ev.label === 'Otro Evento' ? prev.customEventType : ''
+                              }));
+                              setErrorMessage('');
+                            }}
+                            className={`p-2.5 rounded-xl border text-xs font-semibold transition-all flex items-center gap-2 text-left cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-500/20 text-white border-amber-400 shadow-sm shadow-amber-500/20 ring-1 ring-amber-400'
+                                : 'bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700 hover:text-white'
+                            }`}
+                          >
+                            <span className="text-base shrink-0">{ev.icon}</span>
+                            <span className="truncate">{ev.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {formData.eventType === 'Otro Evento' && (
+                      <div className="mt-2.5">
+                        <input
+                          type="text"
+                          name="customEventType"
+                          value={formData.customEventType || ''}
+                          onChange={handleInputChange}
+                          placeholder="Escribe para qué ocasión es tu sesión de fotos *"
+                          className="w-full bg-stone-950 border border-amber-400/60 rounded-xl px-4 py-2.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-stone-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Lugar o Locación de la Sesión *</span>
+                      </label>
+                      <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                        Obligatorio
+                      </span>
+                    </div>
 
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <button
@@ -1004,9 +1129,15 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                       name="specificLocation"
                       value={formData.specificLocation}
                       onChange={handleInputChange}
-                      placeholder={formData.locationType === 'outside' ? 'Ej: Otra ciudad, playa, hotel o cabaña con traslado' : 'Ej: Playa, parque, cabaña, hotel o punto acordado'}
-                      className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                      placeholder={formData.locationType === 'outside' ? 'Ej: Otra ciudad, cabaña, hotel, salón o playa con traslado *' : 'Ej: Cabaña, hotel, parque, salón de eventos, casa o playa *'}
+                      required
+                      className={`w-full bg-stone-950 border rounded-xl px-4 py-2.5 text-xs text-white placeholder-stone-500 focus:outline-none ${
+                        !formData.specificLocation?.trim() ? 'border-stone-800 focus:border-amber-500' : 'border-emerald-500/50 focus:border-emerald-400'
+                      }`}
                     />
+                    <span className="text-[10px] text-stone-400 mt-1 block">
+                      Indica exactamente el lugar acordado o deseado para las fotografías (Obligatorio).
+                    </span>
 
                     <div className="mt-2.5 bg-gradient-to-r from-sky-950/50 via-stone-900 to-sky-950/50 border border-sky-500/30 rounded-xl p-2.5 flex items-center gap-2">
                       <span className="text-base shrink-0">⛅</span>
@@ -1308,12 +1439,18 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
                   {/* RESUMEN TOTAL DE LA SESIÓN */}
                   <div className="p-3.5 rounded-2xl bg-gradient-to-r from-stone-950 via-stone-900 to-stone-950 border-2 border-amber-500/40 flex items-center justify-between shadow-lg">
-                    <div>
+                    <div className="space-y-0.5">
                       <span className="text-[10px] text-stone-400 uppercase tracking-wider block">
-                        Total de tu Sesión:
+                        Resumen de tu Sesión:
                       </span>
-                      <span className="text-xs text-stone-200 font-bold block">
-                        {currentPackage?.name} (+2 Fotos Gratis)
+                      <span className="text-xs text-amber-300 font-bold block">
+                        🎯 {formData.eventType === 'Otro Evento' ? (formData.customEventType || 'Otro Evento') : (formData.eventType || 'Sesión Fotográfica')}
+                      </span>
+                      <span className="text-xs text-stone-200 font-semibold block">
+                        📦 {currentPackage?.name} (+2 Fotos Gratis)
+                      </span>
+                      <span className="text-[11px] text-stone-300 block">
+                        📍 {formData.specificLocation || 'Locación Acordada'}
                       </span>
                       {paperPhotosCount > 0 && (
                         <span className="text-[11px] text-amber-300 font-medium block">

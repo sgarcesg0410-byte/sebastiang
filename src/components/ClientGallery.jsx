@@ -826,7 +826,10 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 Sesión de {galleryData.clientName}
               </h1>
               <p className="text-xs sm:text-sm text-stone-300 mt-1">
-                {galleryData.packageTitle} • Toca las fotos que más te gusten y déjanos tus notas debajo de cada una.
+                {galleryData.eventType ? <strong className="text-amber-300">{galleryData.eventType} • </strong> : null}
+                {galleryData.packageTitle}
+                {galleryData.location ? <span className="text-stone-400"> • 📍 {galleryData.location}</span> : null}
+                <span className="block text-stone-400 text-xs mt-0.5">Toca las fotos que más te gusten y déjanos tus notas debajo de cada una.</span>
               </p>
             </div>
 

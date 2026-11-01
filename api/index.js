@@ -204,6 +204,7 @@ function normalizeBookingDoc(b) {
   const email = sanitizeText(String(b.clientEmail || b.client_email || '')).slice(0, 100);
   const pkgId = sanitizeText(String(b.packageId || b.package_id || 'pkg-4fotos')).slice(0, 50);
   const pkgName = sanitizeText(String(b.packageName || b.package_name || 'Sesión Fotográfica')).slice(0, 100);
+  const evType = sanitizeText(String(b.eventType || b.event_type || b.sessionType || b.session_type || '')).slice(0, 100);
   const price = Number(b.totalPrice ?? b.total_price ?? 0);
   const locType = String(b.locationType || b.location_type || 'san_antero').trim();
   const specLoc = sanitizeText(String(b.specificLocation || b.specific_location || '')).slice(0, 150);
@@ -225,6 +226,8 @@ function normalizeBookingDoc(b) {
     package_id: pkgId,
     packageName: pkgName,
     package_name: pkgName,
+    eventType: evType || 'Sesión Fotográfica',
+    event_type: evType || 'Sesión Fotográfica',
     totalPrice: price,
     total_price: price,
     locationType: locType,
@@ -1101,7 +1104,7 @@ app.post('/api/bookings', async (req, res) => {
     });
   }
   const {
-    clientName, clientWhatsApp, clientEmail, packageId,
+    clientName, clientWhatsApp, clientEmail, packageId, eventType,
     locationType, specificLocation, dateTime, description,
     totalPrice, printedPhotosCount, printedPhotos10x15Count,
     printedPhotos15x20Count, retablosCount, printedSizes,
@@ -1195,6 +1198,7 @@ app.post('/api/bookings', async (req, res) => {
     clientEmail: sanitizeText(clientEmail || '').slice(0, 100),
     packageId: pkg.id,
     packageName: pkg.name,
+    eventType: sanitizeText(eventType || req.body.sessionType || 'Sesión Fotográfica').slice(0, 100),
     totalPrice: finalPrice,
     locationType: locationType === 'outside' ? 'outside_san_antero' : 'san_antero',
     specificLocation: sanitizeText(specificLocation || '').slice(0, 150),
@@ -1266,6 +1270,7 @@ app.post('/api/bookings', async (req, res) => {
     `👤 *Nombre:* ${newBooking.clientName}\n` +
     `📱 *WhatsApp:* ${newBooking.clientWhatsApp}\n` +
     (newBooking.clientEmail ? `✉️ *Correo:* ${newBooking.clientEmail}\n` : '') +
+    `🎯 *Tipo de Evento:* ${newBooking.eventType || 'Sesión Fotográfica'}\n` +
     `📦 *Paquete:* ${newBooking.packageName} ($${newBooking.totalPrice.toLocaleString('es-CO')} COP)\n` +
     (newBooking.paperPhotosSummary ? `🖼️ *Fotos Impresas (Papel):* ${newBooking.paperPhotosSummary}\n` : '') +
     (newBooking.retablosSummary ? `🪵 *Cuadros en Retablo:* ${newBooking.retablosSummary}\n` : (!newBooking.paperPhotosSummary && newBooking.printedPhotosSummary ? `🖼️ *Fotos Impresas / Cuadros:* ${newBooking.printedPhotosSummary}\n` : '')) +

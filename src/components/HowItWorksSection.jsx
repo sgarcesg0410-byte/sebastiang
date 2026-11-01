@@ -14,9 +14,9 @@ export default function HowItWorksSection({ onOpenBooking, onNavigateToPackages 
     },
     {
       step: '02',
-      title: 'Sesión Guiada en la Playa',
+      title: 'Sesión Guiada & Personalizada',
       subtitle: 'Disfruta sin poses forzadas',
-      description: 'Vivimos una experiencia divertida de 1 a 2 horas frente al mar. Te guiamos con poses naturales, buena música y la mejor iluminación dorada del atardecer caribeño. Cero timidez.',
+      description: 'Vivimos una experiencia cómoda y divertida de 1 a 2 horas en tu locación elegida. Te guiamos paso a paso con poses naturales, encuadres profesionales y la mejor iluminación. Cero timidez.',
       icon: Camera,
       accent: 'sky',
       tag: '100% Guiada & Divertida',

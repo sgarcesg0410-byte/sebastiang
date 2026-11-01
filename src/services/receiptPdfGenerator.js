@@ -44,11 +44,25 @@ function formatReadableDateTime(dateTimeStr) {
 export async function generateLuxuryReceiptPdf({
   booking,
   paidAmount = null,
-  paymentMethod = 'Nequi',
+  paymentMethod = 'Efectivo',
   notes = '',
   auditHash = null
 }) {
   if (!booking) return null;
+
+  // Normalizar método de pago para presentación oficial
+  let cleanMethod = 'Efectivo';
+  if (paymentMethod) {
+    const pmLower = String(paymentMethod).toLowerCase().trim();
+    if (pmLower.includes('efect')) cleanMethod = 'Efectivo';
+    else if (pmLower.includes('davi')) cleanMethod = 'DaviPlata';
+    else if (pmLower.includes('dale')) cleanMethod = 'Dale!';
+    else if (pmLower.includes('banco')) cleanMethod = 'Bancolombia';
+    else if (pmLower.includes('wompi') || pmLower.includes('tarj') || pmLower.includes('pse')) cleanMethod = 'Wompi / Tarjeta';
+    else if (pmLower.includes('transf')) cleanMethod = 'Transferencia Bancaria';
+    else if (pmLower.includes('nequi')) cleanMethod = 'Nequi';
+    else cleanMethod = paymentMethod;
+  }
 
   const total = Number(booking.totalPrice || 0);
   const actualPaid = paidAmount !== null
@@ -63,10 +77,11 @@ export async function generateLuxuryReceiptPdf({
   const clientEmail = (booking.clientEmail || '').trim();
   const location = booking.specificLocation || (booking.locationType === 'outside' ? 'Locación Especial / A Domicilio' : 'Locación Acordada');
   const packageName = booking.packageName || 'Sesión Fotográfica';
+  const eventType = booking.eventType || booking.sessionType || booking.event || 'Sesión Fotográfica';
   const formattedDateTime = formatReadableDateTime(booking.dateTime);
   const emissionDate = new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  const verifyUrl = `https://sebastiang.app/#recibo=${booking.receiptToken || booking.id}&paid=${actualPaid}&method=${encodeURIComponent(paymentMethod)}`;
+  const verifyUrl = `https://sebastiang.app/#recibo=${booking.receiptToken || booking.id}&paid=${actualPaid}&method=${encodeURIComponent(cleanMethod)}`;
   const displayHash = auditHash || `SG-${String(booking.id).slice(-6)}-${Date.now().toString(36).toUpperCase()}`;
 
   // 0. Carga bajo demanda de jsPDF y QRCode (evita descargar ~416 KB en la carga inicial)
@@ -227,7 +242,9 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7);
   pdf.setTextColor(4, 120, 87);
-  pdf.text('● Registro Verificado en el Sistema Oficial', margin + 4, currentY + 32);
+  pdf.setFillColor(4, 120, 87);
+  pdf.circle(margin + 5.5, currentY + 31.8, 0.9, 'F');
+  pdf.text('Registro Verificado en el Sistema Oficial', margin + 8, currentY + 32.5);
 
   // 1.2 Tarjeta Derecha: DETALLES DE LA CITA
   // Nota: Establecemos explícitamente el color de fondo para evitar cualquier bug de pantalla negra
@@ -246,24 +263,23 @@ export async function generateLuxuryReceiptPdf({
   pdf.text('DETALLES DE LA CITA', rightColX + 6, currentY + 7.5);
 
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(9.5);
+  pdf.setFontSize(9);
   pdf.setTextColor(15, 23, 42);
-  pdf.text(formattedDateTime, rightColX + 4, currentY + 15);
+  pdf.text(formattedDateTime, rightColX + 4, currentY + 14);
 
   pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8.5);
+  pdf.setFontSize(8);
   pdf.setTextColor(51, 65, 85);
-  pdf.text(`Locación: ${location}`, rightColX + 4, currentY + 21);
-
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8.5);
-  pdf.setTextColor(51, 65, 85);
-  pdf.text(`Paquete: ${packageName}`, rightColX + 4, currentY + 26.5);
+  pdf.text(`Evento: ${eventType}`, rightColX + 4, currentY + 19);
+  pdf.text(`Locación: ${location}`, rightColX + 4, currentY + 23.5);
+  pdf.text(`Paquete: ${packageName}`, rightColX + 4, currentY + 28);
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7);
   pdf.setTextColor(180, 83, 9);
-  pdf.text('● Cupo y Horario Reservados en Agenda', rightColX + 4, currentY + 32);
+  pdf.setFillColor(180, 83, 9);
+  pdf.circle(rightColX + 5.5, currentY + 31.8, 0.9, 'F');
+  pdf.text('Cupo y Horario Reservados en Agenda', rightColX + 8, currentY + 32.5);
 
   // ===== SECCIÓN 2: SERVICIOS CONTRATADOS & COBERTURA =====
   currentY += colHeight + 6;
@@ -286,7 +302,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(9.5);
   pdf.setTextColor(15, 23, 42);
-  pdf.text(`Sesión Fotográfica Profesional (${packageName})`, margin + 4, currentY + 5);
+  pdf.text(`Sesión Fotográfica Profesional - ${eventType} (${packageName})`, margin + 4, currentY + 5);
   pdf.text(`$${total.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, currentY + 5, { align: 'right' });
 
   pdf.setFont('helvetica', 'normal');
@@ -364,7 +380,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(9.5);
   pdf.setTextColor(4, 120, 87); // emerald-700
-  pdf.text(`VALOR RECIBIDO / ABONADO HOY (${paymentMethod}):`, margin + 4, currentY + 6);
+  pdf.text(`VALOR RECIBIDO / ABONADO HOY (${cleanMethod}):`, margin + 4, currentY + 6);
   pdf.text(`$${actualPaid.toLocaleString('es-CO')} COP`, pageWidth - margin - 4, currentY + 6, { align: 'right' });
   currentY += 9;
   pdf.line(margin, currentY, pageWidth - margin, currentY);
@@ -408,7 +424,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8);
   pdf.setTextColor(180, 83, 9);
-  pdf.text('⛅ GARANTÍA OFICIAL DE BUEN CLIMA:', margin + 4, currentY + 5);
+  pdf.text('GARANTÍA OFICIAL DE BUEN CLIMA:', margin + 4, currentY + 5);
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7.5);
@@ -451,7 +467,7 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8.5);
   pdf.setTextColor(isFull ? 6 : 146, isFull ? 95 : 64, isFull ? 70 : 14);
-  const stampTitle = isFull ? '✓ SESIÓN SALDADA (PAZ Y SALVO 100%)' : `✦ ABONO CONFIRMADO (${pctPaid}% PAGADO) ✦`;
+  const stampTitle = isFull ? 'SESIÓN SALDADA (PAZ Y SALVO 100%)' : `ABONO CONFIRMADO (${pctPaid}% PAGADO)`;
   pdf.text(stampTitle, stampX + (stampW / 2), currentY + 12.5, { align: 'center' });
 
   pdf.setFont('helvetica', 'normal');
