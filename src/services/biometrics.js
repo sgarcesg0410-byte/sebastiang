@@ -17,16 +17,33 @@ async function refreshServerSessionViaBiometrics() {
   try {
     const bioRefreshToken = localStorage.getItem('sebastian_g_bio_refresh_token');
     if (!bioRefreshToken) return false;
+
+    // 1. Solicitar desafío efímero de un solo uso al servidor
+    const challengeRes = await fetch('/api/admin/auth/bio-challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (!challengeRes.ok) return false;
+    const challengeData = await challengeRes.json().catch(() => ({}));
+    const challenge = challengeData?.challenge;
+    if (!challenge) return false;
+
+    // 2. Canjear bioRefreshToken + challenge de un solo uso; recibir token rotado
     const res = await fetch('/api/admin/auth/bio-refresh', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${bioRefreshToken}`
       },
-      body: JSON.stringify({ bioRefreshToken })
+      body: JSON.stringify({ bioRefreshToken, challenge })
     });
     if (res.ok) {
       const data = await res.json();
+      if (data?.bioRefreshToken) {
+        try {
+          localStorage.setItem('sebastian_g_bio_refresh_token', data.bioRefreshToken);
+        } catch (e) {}
+      }
       if (data?.token) {
         setAdminSessionToken(data.token);
         return true;

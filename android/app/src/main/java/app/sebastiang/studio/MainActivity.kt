@@ -1,7 +1,7 @@
 package app.sebastiang.studio
 
 import android.annotation.SuppressLint
-import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -9,92 +9,110 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import app.sebastiang.studio.bridge.AndroidNotificationBridge
 import app.sebastiang.studio.security.DomainValidator
 import app.sebastiang.studio.security.SecureTokenStorage
+import java.io.ByteArrayInputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
-/**
- * Actividad principal con WebView endurecido según los lineamientos de seguridad móvil.
- */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var secureStorage: SecureTokenStorage
+    private lateinit var tokenStorage: SecureTokenStorage
+    private lateinit var notificationBridge: AndroidNotificationBridge
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "RequiresFeature")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        secureStorage = SecureTokenStorage(this)
-        webView = WebView(this)
-        setContentView(webView)
-
-        // 1. Desactivar depuración en producción
+        // Prohibido habilitar WebContentsDebugging en producción
         WebView.setWebContentsDebuggingEnabled(false)
 
-        // 2. Endurecimiento estricto de WebSettings
+        tokenStorage = SecureTokenStorage(applicationContext)
+        webView = WebView(this)
+        notificationBridge = AndroidNotificationBridge(tokenStorage) { webView.url }
+        setContentView(webView)
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             allowFileAccess = false
             allowContentAccess = false
-            setGeolocationEnabled(false)
-            cacheMode = WebSettings.LOAD_DEFAULT
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            cacheMode = WebSettings.LOAD_DEFAULT
+            setSupportMultipleWindows(false)
         }
 
-        // 3. Registrar Javascript Bridge protegido
-        webView.addJavascriptInterface(
-            AndroidNotificationBridge(this, secureStorage),
-            "AndroidNotificationBridge"
-        )
+        // Canal preferente basado en WebViewCompat.addWebMessageListener restringido por reglas de origen nativas
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(
+                webView,
+                "SebastianGNativeChannel",
+                ALLOWED_ORIGIN_RULES
+            ) { _: WebView, message: WebMessageCompat, sourceOrigin: Uri, isMainFrame: Boolean, replyProxy: JavaScriptReplyProxy ->
+                val response = notificationBridge.handleSecureWebMessage(
+                    payloadJson = message.data ?: "{}",
+                    sourceOrigin = sourceOrigin.toString(),
+                    isMainFrame = isMainFrame
+                )
+                replyProxy.postMessage(response)
+            }
+        }
 
-        // 4. WebViewClient que valida dominios estrictamente y previene navegación no autorizada
+        // Puente auxiliar endurecido: valida el origen real del marco principal en el UI thread y nunca expone el token en claro
+        webView.addJavascriptInterface(notificationBridge, "AndroidNotificationBridge")
+
         webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val url = request?.url?.toString() ?: return true
-                // Restringir navegación únicamente a URLs válidas dentro del dominio oficial
-                val isOfficial = DomainValidator.isAllowedUrl(url)
-                return !isOfficial // true bloquea la carga no autorizada
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+                val url = request.url?.toString() ?: return true
+                // Bloquea cualquier navegación fuera de sebastiang.app (incluyendo subdominios engañosos)
+                return !DomainValidator.isAllowedUrl(url)
             }
 
-            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                val uri = request?.url ?: return null
-                val url = uri.toString()
-                val method = request.method ?: "GET"
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                val url = request.url?.toString() ?: return null
 
-                // Restricción estricta: solo interceptar GET a la ruta exacta /api/apk/feed bajo dominio oficial
-                if ("GET".equals(method, ignoreCase = true) &&
-                    uri.path == "/api/apk/feed" &&
-                    DomainValidator.isAllowedUrl(url)
-                ) {
-                    val token = secureStorage.getDeviceToken()
-                    if (!token.isNullOrBlank()) {
-                        try {
-                            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                            conn.requestMethod = "GET"
-                            // Prohibir seguimiento automático de redirecciones para no filtrar credenciales
-                            conn.instanceFollowRedirects = false
-                            conn.connectTimeout = 8000
-                            conn.readTimeout = 8000
-                            request.requestHeaders?.forEach { (k, v) -> conn.setRequestProperty(k, v) }
-                            // Inyección segura exclusivamente desde la capa nativa Kotlin (cero exposición a JavaScript)
-                            conn.setRequestProperty("x-apk-device-token", token)
-                            conn.connect()
-                            val contentType = conn.contentType ?: "application/json"
-                            val encoding = conn.contentEncoding ?: "UTF-8"
-                            val inputStream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-                            val headers = conn.headerFields.mapValues { it.value?.joinToString(",") ?: "" }
-                            return WebResourceResponse(
-                                contentType,
-                                encoding,
-                                conn.responseCode,
-                                conn.responseMessage ?: "OK",
-                                headers,
-                                inputStream
+                // Inyecta el token de alcance reducido (apk_feed:read) desde EncryptedSharedPreferences
+                // exclusivamente cuando el destino validado es https://sebastiang.app/api/apk/feed
+                if (DomainValidator.isAllowedUrl(url) && request.url.path == "/api/apk/feed") {
+                    val deviceToken = tokenStorage.getDeviceToken()
+                    if (!deviceToken.isNullOrBlank()) {
+                        return try {
+                            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                                requestMethod = request.method
+                                connectTimeout = 10_000
+                                readTimeout = 10_000
+                                setRequestProperty("Accept", "application/json")
+                                setRequestProperty("x-apk-device-token", deviceToken)
+                            }
+                            val status = connection.responseCode
+                            val stream = if (status in 200..299) {
+                                connection.inputStream
+                            } else {
+                                connection.errorStream ?: ByteArrayInputStream(ByteArray(0))
+                            }
+                            WebResourceResponse(
+                                "application/json",
+                                "utf-8",
+                                status,
+                                connection.responseMessage ?: "OK",
+                                mapOf("Cache-Control" to "no-store"),
+                                stream
                             )
                         } catch (_: Exception) {
-                            return null
+                            null
                         }
                     }
                 }
@@ -102,14 +120,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl("https://sebastiang.app/?mode=admin")
+        webView.loadUrl(INITIAL_URL)
     }
 
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
-        }
+    companion object {
+        private const val INITIAL_URL = "https://sebastiang.app/?mode=admin"
+        private val ALLOWED_ORIGIN_RULES = setOf(
+            "https://sebastiang.app",
+            "https://www.sebastiang.app"
+        )
     }
 }

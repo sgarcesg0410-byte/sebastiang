@@ -282,7 +282,7 @@ async function runDrill() {
           }
         }
       ).catch(() => {});
-      // Asegurar que los 11 índices BSON (incluyendo TTL 90d) queden creados en la base principal de producción
+      // Asegurar que los 17 índices BSON (incluyendo TTL 90d, bloqueos y rate limits) queden creados en la base principal de producción
       const prodIndexReport = await ensureMongoIndexes(mainDb);
 
       const totalAtlasRtoMs = Math.round(performance.now() - atlasStart);

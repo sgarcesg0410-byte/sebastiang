@@ -1,57 +1,53 @@
 // ==============================================================================
-// MÓDULO DE SEGURIDAD ADMINISTRATIVA
+// MÓDULO DE SEGURIDAD ADMINISTRATIVA (CLIENTE)
 // ==============================================================================
-// Centraliza toda la lógica criptográfica y de control de acceso admin:
-// - Hashing SHA-256 con Web Crypto API
-// - Rate limiting local (anti-brute-force)
-// - Tokens de sesión firmados
-// - Comparación en tiempo constante (anti-timing-attack)
+// La autenticación real, verificación scrypt y firma HMAC-SHA256 residen
+// exclusivamente en el backend (api/security.js). Este módulo solo mantiene
+// utilidades locales de control de intentos (UI) y lectura de sesión de pestaña.
 // ==============================================================================
 
 const LOCAL_PIN_HASH_KEY = 'sebastian_g_admin_pin_hash_v2';
 const LOCAL_ATTEMPTS_KEY = 'sebastian_g_admin_login_attempts_v1';
-const LOCAL_SESSION_KEY = 'sebastian_g_admin_session_v1';
+const LOCAL_SESSION_KEY = 'sebastian_g_admin_server_session_v1';
 
-// Hash SHA-256 por defecto para el PIN "0493" (mantenido por retrocompatibilidad)
-export const DEFAULT_PIN_HASH = '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3';
+// Sin PIN por defecto en cliente: prohibido incluir hashes de contraseñas reales o débiles
+export const DEFAULT_PIN_HASH = '';
 
-// Configuración de bloqueo anti-brute-force
+// Configuración de bloqueo anti-brute-force en UI (respaldado por rate-limit distribuido en servidor)
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
 const LOCKOUT_DURATION_MS = 30 * 60 * 1000; // 30 minutos de bloqueo
 
+function getSecureRandomHex(byteLength = 16) {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto) {
+    if (typeof globalThis.crypto.randomUUID === 'function' && byteLength === 16) {
+      return globalThis.crypto.randomUUID().replace(/-/g, '');
+    }
+    if (typeof globalThis.crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(byteLength);
+      globalThis.crypto.getRandomValues(bytes);
+      return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+  }
+  throw new Error('CSPRNG (Web Crypto API) no disponible en este entorno.');
+}
+
 /**
- * Hash SHA-256 usando Web Crypto API (con fallback seguro)
+ * Hash SHA-256 usando Web Crypto API
  */
 export async function hashStringSHA256(str) {
   const clean = String(str || '').trim();
   if (!clean) return '';
 
-  if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+  const cryptoObj = (typeof window !== 'undefined' && window.crypto) || (typeof globalThis !== 'undefined' && globalThis.crypto);
+  if (cryptoObj && cryptoObj.subtle) {
     const encoder = new TextEncoder();
     const data = encoder.encode(clean);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    const hashBuffer = await cryptoObj.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
-
-  // Fallback seguro (Node.js / entornos sin Web Crypto)
-  if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(clean);
-    const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  // Fallback último: hash determinístico no criptográfico
-  let h1 = 0xdeadbeef, h2 = 0x41c64e6d;
-  for (let i = 0; i < clean.length; i++) {
-    const ch = clean.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+  return '';
 }
 
 /**
@@ -68,19 +64,17 @@ export function secureCompare(a, b) {
 }
 
 /**
- * Obtiene el estado actual de intentos de login
+ * Obtiene el estado actual de intentos de login en la interfaz
  */
 export function getAttemptsState() {
   try {
     const raw = localStorage.getItem(LOCAL_ATTEMPTS_KEY);
     if (!raw) return { count: 0, lockedUntil: 0 };
     const parsed = JSON.parse(raw);
-    // Si el bloqueo expiró, resetear
     if (parsed.lockedUntil && Date.now() > parsed.lockedUntil) {
       localStorage.removeItem(LOCAL_ATTEMPTS_KEY);
       return { count: 0, lockedUntil: 0 };
     }
-    // Si la ventana de conteo expiró, resetear contador
     if (parsed.windowStart && Date.now() - parsed.windowStart > LOCKOUT_WINDOW_MS) {
       localStorage.removeItem(LOCAL_ATTEMPTS_KEY);
       return { count: 0, lockedUntil: 0 };
@@ -92,7 +86,7 @@ export function getAttemptsState() {
 }
 
 /**
- * Registra un intento fallido de login
+ * Registra un intento fallido de login en la interfaz
  */
 export function recordFailedAttempt() {
   try {
@@ -104,7 +98,6 @@ export function recordFailedAttempt() {
       lockedUntil: 0
     };
 
-    // Si alcanzó el máximo, bloquear
     if (newState.count >= MAX_ATTEMPTS) {
       newState.lockedUntil = now + LOCKOUT_DURATION_MS;
       newState.count = 0;
@@ -128,8 +121,7 @@ export function resetAttempts() {
 }
 
 /**
- * Verifica si el usuario está bloqueado por demasiados intentos
- * @returns {{ locked: boolean, remainingMs: number, remainingMinutes: number }}
+ * Verifica si el usuario está bloqueado temporalmente en la interfaz
  */
 export function checkLockout() {
   const state = getAttemptsState();
@@ -144,51 +136,61 @@ export function checkLockout() {
 }
 
 /**
- * Obtiene el hash del PIN activo (local o por defecto)
+ * Obsoleto: el cliente nunca almacena ni consulta hashes de PIN reales.
  */
 export function getActivePinHash() {
-  try {
-    const saved = localStorage.getItem(LOCAL_PIN_HASH_KEY);
-    if (saved && saved.length === 64) return saved;
-  } catch (e) {}
-  return DEFAULT_PIN_HASH;
+  return '';
 }
 
-/**
- * Guarda un nuevo hash de PIN (tras cambio exitoso)
- */
-export function savePinHash(hash) {
+export function savePinHash() {
   try {
-    if (hash && hash.length === 64) {
-      localStorage.setItem(LOCAL_PIN_HASH_KEY, hash);
-    }
+    localStorage.removeItem(LOCAL_PIN_HASH_KEY);
   } catch (e) {}
 }
 
 /**
- * Genera un token de sesión firmado con timestamp
+ * Genera un token de sesión local estructurado con CSPRNG (sin Math.random).
+ * Nota: la autorización de endpoints administrativos exige siempre el token HMAC del servidor.
  */
 export function generateSessionToken() {
   const payload = {
+    role: 'admin',
+    type: 'admin_access',
     iat: Date.now(),
-    exp: Date.now() + 24 * 60 * 60 * 1000, // 24 horas
-    nonce: Math.random().toString(36).substring(2) + Date.now().toString(36)
+    exp: Date.now() + 12 * 60 * 60 * 1000, // 12 horas
+    nonce: getSecureRandomHex(16)
   };
-  const encoded = btoa(JSON.stringify(payload));
+  const body = btoa(JSON.stringify(payload));
+  const localTag = getSecureRandomHex(16);
+  const token = `${body}.${localTag}`;
   try {
-    localStorage.setItem(LOCAL_SESSION_KEY, encoded);
+    sessionStorage.setItem(LOCAL_SESSION_KEY, token);
   } catch (e) {}
-  return encoded;
+  return token;
 }
 
 /**
- * Valida un token de sesión (verifica expiración)
+ * Valida la estructura y vigencia temporal de un token emitido por el servidor (`body.signature`).
+ * Nota: la verificación criptográfica HMAC-SHA256 la ejecuta siempre el servidor en `requireAdminAuth`.
  */
 export function validateSessionToken(token) {
   try {
-    const decoded = JSON.parse(atob(token));
+    if (!token || typeof token !== 'string' || !token.includes('.')) {
+      return { valid: false, reason: 'invalid' };
+    }
+    const [body, signature] = token.split('.');
+    if (!body || !signature) {
+      return { valid: false, reason: 'invalid' };
+    }
+    const normalized = body.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = JSON.parse(atob(normalized));
+    if (decoded?.role !== 'admin' || (decoded?.type && decoded.type !== 'admin_access')) {
+      return { valid: false, reason: 'invalid_type' };
+    }
     if (!decoded.exp || Date.now() > decoded.exp) {
-      localStorage.removeItem(LOCAL_SESSION_KEY);
+      try {
+        sessionStorage.removeItem(LOCAL_SESSION_KEY);
+      } catch (e) {}
       return { valid: false, reason: 'expired' };
     }
     return { valid: true, payload: decoded };
@@ -198,11 +200,11 @@ export function validateSessionToken(token) {
 }
 
 /**
- * Obtiene el token de sesión activo si es válido
+ * Obtiene la sesión activa desde `sessionStorage` si su token firmado aún no ha expirado
  */
 export function getActiveSession() {
   try {
-    const raw = localStorage.getItem(LOCAL_SESSION_KEY);
+    const raw = sessionStorage.getItem(LOCAL_SESSION_KEY);
     if (!raw) return null;
     const result = validateSessionToken(raw);
     if (result.valid) return result.payload;
@@ -217,6 +219,7 @@ export function getActiveSession() {
  */
 export function clearSession() {
   try {
+    sessionStorage.removeItem(LOCAL_SESSION_KEY);
     localStorage.removeItem(LOCAL_SESSION_KEY);
     localStorage.removeItem(LOCAL_ATTEMPTS_KEY);
   } catch (e) {}

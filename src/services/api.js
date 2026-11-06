@@ -1641,7 +1641,10 @@ export function isTrustedDevice() {
 
 export function saveTrustedDevice() {
   try {
-    const token = 'trust_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const randomPart = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID().replace(/-/g, '')
+      : Date.now().toString(36);
+    const token = 'trust_' + randomPart;
     const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 días
     localStorage.setItem(LOCAL_TRUSTED_DEVICE_KEY, JSON.stringify({ token, expiresAt }));
   } catch (e) {}
@@ -1656,10 +1659,10 @@ export function forgetTrustedDevice() {
 
 const ADMIN_SESSION_TOKEN_KEY = 'sebastian_g_admin_server_session_v1';
 
-/** Token de sesión emitido y firmado por el SERVIDOR. */
+/** Token de sesión de acceso administrativo (12h) almacenado únicamente en sessionStorage. */
 export function getAdminSessionToken() {
   try {
-    return sessionStorage.getItem(ADMIN_SESSION_TOKEN_KEY) || localStorage.getItem(ADMIN_SESSION_TOKEN_KEY) || '';
+    return sessionStorage.getItem(ADMIN_SESSION_TOKEN_KEY) || '';
   } catch (e) {
     return '';
   }
@@ -1669,7 +1672,8 @@ export function setAdminSessionToken(token) {
   try {
     if (token) {
       sessionStorage.setItem(ADMIN_SESSION_TOKEN_KEY, token);
-      localStorage.setItem(ADMIN_SESSION_TOKEN_KEY, token);
+      // Asegurar que el token de acceso activo nunca quede persistido en localStorage
+      localStorage.removeItem(ADMIN_SESSION_TOKEN_KEY);
     } else {
       sessionStorage.removeItem(ADMIN_SESSION_TOKEN_KEY);
       localStorage.removeItem(ADMIN_SESSION_TOKEN_KEY);

@@ -86,8 +86,10 @@ export function resolveBookingPrice({ db = {}, pkg = {}, body = {} } = {}) {
   });
 
   const hasDiscount = effectiveDiscountPercent > 0;
+  const expectedPrice = hasDiscount ? band.minPrice : band.listPrice;
   const priceCheck = validateOrEnforcePrice(body.totalPrice, band, {
-    fallbackPrice: hasDiscount ? band.minPrice : band.listPrice
+    fallbackPrice: expectedPrice,
+    expectedPrice
   });
 
   if (priceCheck.adjusted) {

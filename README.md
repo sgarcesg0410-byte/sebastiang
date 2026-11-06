@@ -34,8 +34,8 @@
 **SebastianG** es un ecosistema completo para estudios y fotógrafos profesionales que automatiza todo el ciclo de vida del cliente:
 - **Atracción**: Exhibición editorial de portafolio con transiciones cinematográficas.
 - **Conversión**: Agendamiento en 3 pasos con cálculo dinámico de fotos extra, retablos e impresiones.
-- **Entrega Segura**: Galería privada con marca de agua en diagonal, lienzo protegido contra clics derechos, capturas e inspección de código.
-- **Cobro & Monetización**: Integración directa con pasarelas colombianas (**Nequi, DaviPlata, Dale!**) y validación de comprobantes.
+- **Entrega con Disuasión Visual**: Galería privada con marca de agua dinámica en diagonal sobre Canvas HTML5 y disuasión frente a descargas casuales (clic derecho y arrastre de imagen). *(Nota técnica: la renderización en Canvas y `SecurityOverlay` disuaden la descarga directa casual y estampan marcas de agua visibles en las muestras, aunque como en toda aplicación web cliente no reemplazan el control de entrega de archivos originales de alta resolución tras el pago).*
+- **Cobro & Monetización**: Integración directa con pasarelas colombianas (**Wompi, Nequi, DaviPlata, Dale!**) y validación de comprobantes.
 - **Control Financiero**: Rastreo en tiempo real de lo que el fotógrafo paga al taller de retablos vs. lo que cobra al cliente vs. la ganancia limpia.
 
 ---
@@ -46,7 +46,7 @@
 |---|---|
 | **Frontend** | React 18, Vite 6, Tailwind CSS v4, Lucide React, Canvas Confetti |
 | **Backend & API** | Node.js, Express, Multer, Nodemailer, Sharp |
-| **Persistencia Cloud** | MongoDB Atlas (Fuente Única de Verdad, 11 índices BSON, TTL nativo 90d) |
+| **Persistencia Cloud** | MongoDB Atlas (Fuente Única de Verdad, 17 índices BSON únicos/compuestos/TTL) |
 | **Persistencia Local / Offline** | IndexedDB, LocalStorage, Runtime JSON DB |
 | **Documentos & Comprobantes** | jsPDF (vectorial), html2canvas, QRCode |
 | **Notificaciones** | OneSignal Web Push SDK, Web Push API, Service Workers, Audio Chimes |
@@ -60,12 +60,12 @@
 foto-reservas/
 ├── api/
 │   ├── db/
-│   │   └── mongo.js                # Conexión persistente y gestión de 11 índices BSON (TTL nativo 90d)
+│   │   └── mongo.js                # Conexión persistente, bloqueos distribuidos y 17 índices BSON (TTL nativo)
 │   ├── payments/
 │   │   └── gateway.js              # Pasarela Wompi con firma SHA-256 e idempotencia
 │   ├── emailService.js             # Envío de notificaciones por correo vía Nodemailer (Zoho SMTP)
 │   ├── passwordReset.js            # Recuperación segura con código OTP efímero y quema por reintento
-│   ├── security.js                 # Autenticación scrypt, tokens APK revocables, cifrado AES-256-GCM con keyId
+│   ├── security.js                 # Autenticación scrypt, separación de tokens, cifrado AES-256-GCM con keyId
 │   └── index.js                    # Servidor Express serverless con rutas API para Vercel
 ├── docs/
 │   ├── OPERATIONS_AND_INCIDENT_RUNBOOK.md # Manual de respuesta a incidentes, RPO/RTO y arquitectura móvil
@@ -97,16 +97,16 @@ foto-reservas/
 │   │   ├── Navbar.jsx              # Barra de navegación principal y accesos rápidos
 │   │   ├── PackagesSection.jsx     # Exhibición de paquetes de fotos, impresiones y retablos
 │   │   ├── PaymentLogos.jsx        # Componentes visuales oficiales de Nequi, DaviPlata y Dale!
-│   │   ├── ProtectedCanvasImage.jsx# Renderizado sobre Canvas con prevención de descargas no autorizadas
+│   │   ├── ProtectedCanvasImage.jsx# Renderizado sobre Canvas con marca de agua y disuasión de descarga casual
 │   │   ├── PublicReceiptView.jsx   # Vista web pública del comprobante de pago con QR
 │   │   ├── PublicReviewView.jsx    # Módulo de calificación y reseñas de clientes
-│   │   ├── SecurityOverlay.jsx     # Protección contra capturas y herramientas de desarrollador
+│   │   ├── SecurityOverlay.jsx     # Capa de disuasión visual frente a clic derecho y atajos casuales
 │   │   ├── SocialIcons.jsx         # Iconografía de redes sociales oficiales
 │   │   └── TestimonialsSection.jsx # Sección de opiniones y testimonios de clientes
 │   ├── services/
 │   │   ├── analytics.js            # Registro de eventos y métricas de navegación
 │   │   ├── api.js                  # Biblioteca central de llamadas API, catálogo, cálculos y utilidades
-│   │   ├── biometrics.js           # Soporte para WebAuthn / Huella dactilar en panel admin
+│   │   ├── biometrics.js           # Soporte para WebAuthn / Huella dactilar con challenge de un solo uso y rotación
 │   │   ├── bookingAvailability.js  # Motor de cálculo de horas y bloqueo de turnos ocupados
 │   │   ├── envelopeCrypto.js       # Cifrado local de credenciales sensibles
 │   │   ├── indexedDb.js            # Almacén estructurado offline para fotos e historial
@@ -128,11 +128,12 @@ foto-reservas/
 ## 💰 Catálogo Oficial de Tarifas y Servicios
 
 ### 1. Paquetes de Sesiones
-- **Paquete Básico**: 8 fotos editadas (+2 gratis) = **\$75.000 COP**
-- **Paquete Familiar / Exterior**: 15 fotos editadas = **\$130.000 COP**
-- **Paquete Premium / Estudio**: 25 fotos editadas = **\$200.000 COP**
-- **Foto Extra Digital Adicional**: **\$8.000 COP** c/u
-- **Recargo por Sesión Fuera de San Antero**: **\$10.000 COP**
+- **4 Fotos Digitales (+2 gratis = 6 fotos)**: **\$45.000 COP**
+- **6 Fotos Digitales (+2 gratis = 8 fotos)**: **\$65.000 COP**
+- **8 Fotos Digitales (+2 gratis = 10 fotos)**: **\$75.000 COP**
+- **10 Fotos Digitales (+2 gratis = 12 fotos)**: **\$85.000 COP**
+- **Foto Extra Digital Adicional**: **\$7.000 COP** c/u
+- **Recargo por Locación Especial / Fuera del Casco Urbano**: **\$10.000 COP**
 
 ### 2. Fotos Impresas en Papel (Laboratorio)
 Copias impresas en papel fotográfico de alta durabilidad:
@@ -202,11 +203,13 @@ Cuadros en retablo de madera con cantos biselados y película protectora UV list
 **MongoDB Atlas es la única fuente de verdad persistente (Single Source of Truth) del sistema.**
 (Los esquemas y scripts históricos de Supabase fueron retirados de producción y archivados como referencia bajo `docs/legacy/`).
 
-El backend administra automáticamente **11 índices BSON de alto rendimiento** (gestionados en [`api/db/mongo.js`](api/db/mongo.js)):
-- **`bookings`**: `id` (único), `dateTime + status` (prevención de solapamiento de horarios), `createdAt`.
-- **`payments`**: `id` (único), `bookingId`, `reference` (detección de pagos duplicados e idempotencia Wompi).
-- **`sessions`**: `id` (único), `token` (único, galerías privadas), `expiresAt`.
-- **`audit_logs`**: `id` (único) e **índice TTL nativo de 90 días** `idx_audit_logs_ttl_90d` (`{ expiresAtDate: 1 }`, `expireAfterSeconds: 0`), garantizando la purga automática de auditorías financieras sin consumo de almacenamiento innecesario.
+El backend administra automáticamente **17 índices BSON de alto rendimiento** (gestionados en [`api/db/mongo.js`](api/db/mongo.js) tras ejecutar deduplicación preventiva):
+- **`bookings`** (3 índices): `id` (`unique: true`), `dateTime + status` (compuesto para detección de cruces de horario), `createdAt` (`-1`).
+- **`payments`** (4 índices): `id` (`unique: true`), `reference` (`unique: true, sparse: true`), `transactionId` (`unique: true, sparse: true`), `bookingId` (`1`).
+- **`sessions`** (3 índices): `id` (`unique: true`), `token` (`unique: true`, galerías privadas), `expiresAt` (`1`).
+- **`audit_logs`** (3 índices): `id` (`unique: true`), `createdAt` (`-1`) e **índice TTL nativo de 90 días** `idx_audit_logs_ttl_90d` (`{ expiresAtDate: 1 }`, `expireAfterSeconds: 0`).
+- **`slot_locks`** (2 índices): `lockKey` (`unique: true`) e índice TTL `idx_slot_locks_ttl` (`{ expiresAtDate: 1 }`, `expireAfterSeconds: 0`) para bloqueos distribuidos de reservas entre instancias serverless.
+- **`rate_limits`** (2 índices): `key` (`unique: true`) e índice TTL `idx_rate_limits_ttl` (`{ expiresAtDate: 1 }`, `expireAfterSeconds: 0`) para límites de intentos distribuidos.
 
 ---
 

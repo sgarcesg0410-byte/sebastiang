@@ -127,11 +127,14 @@ export function createAdminToken(extra = {}) {
   if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir sesión.');
   const payload = {
     role: 'admin',
+    type: 'admin_access',
     iat: Date.now(),
     exp: Date.now() + ADMIN_TOKEN_TTL_MS,
     nonce: crypto.randomBytes(16).toString('hex'),
     pwd: extra.pwd ?? getCachedPasswordVersion(),
-    ...extra
+    ...extra,
+    // Forzar tipo de acceso administrativo: nunca puede emitirse un bio_refresh aquí
+    type: 'admin_access'
   };
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
@@ -143,25 +146,49 @@ const BIO_REFRESH_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 días
 export function createBioRefreshToken(extra = {}) {
   const secret = getAdminAuthSecret();
   if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir sesión biométrica.');
+  const bioSecret = `${secret}:bio_refresh`;
   const payload = {
     role: 'admin',
     type: 'bio_refresh',
+    jti: extra.jti || crypto.randomUUID(),
     iat: Date.now(),
     exp: Date.now() + BIO_REFRESH_TOKEN_TTL_MS,
     nonce: crypto.randomBytes(16).toString('hex'),
     pwd: extra.pwd ?? getCachedPasswordVersion(),
-    ...extra
+    ...extra,
+    type: 'bio_refresh'
   };
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  const signature = crypto.createHmac('sha256', bioSecret).update(body).digest('base64url');
   return `${body}.${signature}`;
 }
 
-export function verifyBioRefreshToken(token) {
-  if (!token || typeof token !== 'string') return null;
-  const payload = verifyAdminToken(token);
-  if (!payload || payload.type !== 'bio_refresh') return null;
-  return payload;
+export function verifyBioRefreshToken(token, { expectedPasswordVersion, revokedJtis } = {}) {
+  const secret = getAdminAuthSecret();
+  if (!secret) return null;
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+
+  const [body, signature] = token.split('.');
+  if (!body || !signature) return null;
+
+  const bioSecret = `${secret}:bio_refresh`;
+  const expected = crypto.createHmac('sha256', bioSecret).update(body).digest('base64url');
+  if (!secureCompare(signature, expected)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (payload?.role !== 'admin' || payload?.type !== 'bio_refresh') return null;
+    if (!payload?.exp || Date.now() > payload.exp) return null;
+    if (expectedPasswordVersion !== undefined && expectedPasswordVersion !== null) {
+      if (payload.pwd !== expectedPasswordVersion) return null;
+    }
+    if (Array.isArray(revokedJtis) && payload.jti && revokedJtis.includes(payload.jti)) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 export function verifyAdminToken(token, { expectedPasswordVersion } = {}) {
@@ -178,6 +205,8 @@ export function verifyAdminToken(token, { expectedPasswordVersion } = {}) {
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     if (payload?.role !== 'admin') return null;
+    // Rechazar terminantemente cualquier token de refresco biométrico o de propósito distinto a admin_access
+    if (payload?.type && payload.type !== 'admin_access') return null;
     if (!payload?.exp || Date.now() > payload.exp) return null;
     if (expectedPasswordVersion !== undefined && expectedPasswordVersion !== null) {
       if (payload.pwd !== expectedPasswordVersion) return null;
@@ -586,7 +615,8 @@ const FORBIDDEN_BACKUP_SETTINGS_KEYS = new Set([
   'adminPinScrypt',
   'adminResetChallenge',
   'adminPasswordVersion',
-  'revokedApkDeviceIds'
+  'revokedApkDeviceIds',
+  'revokedBioRefreshJtis'
 ]);
 
 export function sanitizeBackupSnapshot(rawSnapshot = {}) {

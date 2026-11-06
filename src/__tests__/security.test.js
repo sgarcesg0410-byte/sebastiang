@@ -8,10 +8,10 @@ import {
 } from '../services/auth/adminSecurity';
 
 describe('Seguridad y Criptografía de Administrador', () => {
-  it('debe calcular hash SHA-256 consistente para el PIN por defecto (0493)', async () => {
+  it('debe calcular hash SHA-256 consistente y mantener DEFAULT_PIN_HASH vacío (sin PIN 0493 por defecto)', async () => {
     const hash = await hashStringSHA256('0493');
     expect(hash).toBe('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3');
-    expect(hash).toBe(DEFAULT_PIN_HASH);
+    expect(DEFAULT_PIN_HASH).toBe('');
   });
 
   it('debe generar hashes de 64 caracteres hexadecimales únicos para diferentes entradas', async () => {

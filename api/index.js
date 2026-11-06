@@ -72,28 +72,41 @@ import {
   findMongoDoc,
   deleteMongoDoc,
   deleteMongoDocs,
-  ensureMongoIndexes
+  ensureMongoIndexes,
+  acquireDistributedSlotLock,
+  releaseDistributedSlotLock,
+  checkDistributedRateLimit
 } from './db/mongo.js';
 
-const ALLOWED_ORIGINS = [
+const PRODUCTION_ALLOWED_ORIGINS = [
   'https://sebastiang.app',
   'https://www.sebastiang.app',
+  'capacitor://localhost'
+];
+
+const DEV_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000',
-  'capacitor://localhost'
+  'http://127.0.0.1:3000'
 ];
+
+// Patrón restringido exclusivamente a despliegues preview de este proyecto en Vercel
+const VERCEL_PROJECT_PREVIEW_REGEX = /^https:\/\/(?:foto-reservas|sebastiang)(?:-[a-z0-9-]+)?\.vercel\.app$/i;
+
+export function isAllowedCorsOrigin(origin, isProd = (process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL))) {
+  if (!origin) return true;
+  if (PRODUCTION_ALLOWED_ORIGINS.includes(origin)) return true;
+  if (VERCEL_PROJECT_PREVIEW_REGEX.test(origin)) return true;
+  if (!isProd && DEV_ALLOWED_ORIGINS.includes(origin)) return true;
+  return false;
+}
 
 const app = express();
 app.set('trust proxy', 1);
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (
-      ALLOWED_ORIGINS.includes(origin) ||
-      /^https:\/\/[a-z0-9-]+(\.vercel\.app)$/.test(origin)
-    ) {
+    if (isAllowedCorsOrigin(origin)) {
       return callback(null, true);
     }
     return callback(null, false);
@@ -1138,12 +1151,42 @@ app.post('/api/bookings', async (req, res) => {
   }
 
   const myLockKey = `slot_${requestedSlot.dateKey}_${requestedSlot.startMin}_${Date.now()}`;
+  const distributedLockKey = `slot_${requestedSlot.dateKey}_${requestedSlot.startMin}`;
   global.__activeSlotLocks.set(myLockKey, {
     dateKey: requestedSlot.dateKey,
     startMin: requestedSlot.startMin,
     endMin: requestedSlot.endMin,
     expiresAt: now + 30000
   });
+
+  if (isMongoConfigured()) {
+    const distRate = await checkDistributedRateLimit({
+      key: `bookings:${clientIp}`,
+      maxAttempts: 12,
+      windowMs: PUBLIC_WRITE_WINDOW_MS
+    });
+    if (distRate && distRate.allowed === false) {
+      global.__activeSlotLocks.delete(myLockKey);
+      return res.status(429).json({
+        error: 'Demasiadas solicitudes de reserva desde tu conexión. Intenta nuevamente en unos minutos.'
+      });
+    }
+
+    const distLock = await acquireDistributedSlotLock({
+      lockKey: distributedLockKey,
+      dateKey: requestedSlot.dateKey,
+      startMin: requestedSlot.startMin,
+      endMin: requestedSlot.endMin,
+      ttlMs: 30000
+    });
+    if (distLock && distLock.acquired === false) {
+      global.__activeSlotLocks.delete(myLockKey);
+      return res.status(409).json({
+        error: 'Ese horario ya se encuentra en proceso de reserva por otro usuario. Por favor elige otro horario disponible.',
+        code: 'SLOT_ALREADY_BOOKED'
+      });
+    }
+  }
 
   try {
     let existingBookings = Array.isArray(runtimeDB.bookings) ? [...runtimeDB.bookings] : [];
@@ -1290,6 +1333,9 @@ app.post('/api/bookings', async (req, res) => {
     if (global.__activeSlotLocks) {
       global.__activeSlotLocks.delete(myLockKey);
     }
+    if (isMongoConfigured()) {
+      await releaseDistributedSlotLock(distributedLockKey).catch(() => {});
+    }
   }
 });
 
@@ -1339,6 +1385,48 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
   }
 });
 
+/**
+ * Filtra mediante lista blanca (allowlist DTO) los campos de una sesión de galería privada,
+ * eliminando teléfonos, correos, notas administrativas, hashes o metadatos internos.
+ */
+export function toPublicGallerySession(session = {}, { photos = [], isExpired = false, isSubmitted = false, isDelivered = false, watermarkSettings = {} } = {}) {
+  const safePhotos = Array.isArray(photos)
+    ? photos.map((p) => ({
+        id: p.id,
+        title: p.title || 'Fotografía',
+        url: p.url,
+        selected: Boolean(p.selected),
+        clientComment: p.clientComment || ''
+      }))
+    : [];
+
+  return {
+    id: session.id,
+    token: session.token,
+    bookingId: session.bookingId || undefined,
+    clientName: session.clientName || 'Cliente',
+    packageTitle: session.packageTitle || 'Sesión Fotográfica',
+    eventType: session.eventType || undefined,
+    location: session.location || undefined,
+    maxPhotosAllowed: Number(session.maxPhotosAllowed) || 10,
+    extraPhotoPrice: Number(session.extraPhotoPrice) || 7000,
+    totalPrice: session.totalPrice !== undefined ? Number(session.totalPrice) : undefined,
+    paidAmount: session.paidAmount !== undefined ? Number(session.paidAmount) : undefined,
+    status: session.status || 'pending',
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    submittedAt: session.submittedAt || null,
+    lastSelectionUpdate: session.lastSelectionUpdate || null,
+    selectedCount: session.selectedCount !== undefined ? Number(session.selectedCount) : undefined,
+    allowReSelection: Boolean(session.allowReSelection),
+    photos: safePhotos,
+    isExpired: Boolean(isExpired),
+    isSubmitted: Boolean(isSubmitted),
+    isDelivered: Boolean(isDelivered),
+    watermarkSettings
+  };
+}
+
 app.get('/api/gallery/:token', async (req, res) => {
   if (!checkPublicWriteRateLimit(getClientIp(req), 60, 'gallery-read')) {
     return res.status(429).json({ error: 'Demasiadas consultas de galería. Intenta en unos minutos.' });
@@ -1354,7 +1442,6 @@ app.get('/api/gallery/:token', async (req, res) => {
       id: "sess-demo",
       token: "demo-cliente-2026",
       clientName: "Demostración de Selección",
-      clientWhatsApp: "+573244725167",
       packageTitle: "8 Fotos Digitales (+ 2 Fotos Gratis)",
       maxPhotosAllowed: 10,
       createdAt: new Date().toISOString(),
@@ -1362,12 +1449,12 @@ app.get('/api/gallery/:token', async (req, res) => {
       status: "pending",
       submittedAt: null,
       photos: [
-        { id: "photo-1", title: "Foto 001 - Retrato Primer Plano", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-2", title: "Foto 002 - Mirada al Atardecer", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-3", title: "Foto 003 - Sonrisa en la Orilla", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-4", title: "Foto 004 - Movimiento y Brisa", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-5", title: "Foto 005 - Plano Entero en la Playa", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-6", title: "Foto 006 - Silueta en Contraluz", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
+        { id: "photo-1", title: "Retrato Profesional • Estudio 01", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-2", title: "Boda Civil • Recepción 02", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-3", title: "Quinceañera • Gala 03", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-4", title: "Evento Familiar • Exteriores 04", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-5", title: "Grado Profesional • Toga 05", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
+        { id: "photo-6", title: "Cumpleaños • Celebración 06", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
       ]
     };
   }
@@ -1403,8 +1490,7 @@ app.get('/api/gallery/:token', async (req, res) => {
   // Si la sesión expiró y no ha sido entregada, el servidor NO envía fotos
   const photos = (isExpired && !isDelivered) ? [] : (session.photos || []);
 
-  res.json({
-    ...session,
+  res.json(toPublicGallerySession(session, {
     photos,
     isExpired,
     isSubmitted,
@@ -1414,7 +1500,7 @@ app.get('/api/gallery/:token', async (req, res) => {
       watermarkSubtext: runtimeDB.settings.watermarkSubtext,
       watermarkLogoUrl: runtimeDB.settings.watermarkLogoUrl
     }
-  });
+  }));
 });
 
 app.post('/api/gallery/:token/live-selection', async (req, res) => {
@@ -1723,7 +1809,7 @@ app.post('/api/admin/auth/bio-challenge', async (req, res) => {
   return res.json({ success: true, challenge: nonce, expiresAt: now + 60000 });
 });
 
-// Renovación de sesión rápida mediante huella biométrica con desafío de un solo uso
+// Renovación de sesión rápida mediante huella biométrica con desafío obligatorio de un solo uso y rotación de token
 app.post('/api/admin/auth/bio-refresh', async (req, res) => {
   const ip = getClientIp(req);
   const rateCheck = checkRateLimit(ip);
@@ -1738,30 +1824,71 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
     const rawToken = readAdminToken(req) || req.body?.bioRefreshToken;
     const challenge = req.body?.challenge;
 
-    // Si se envía challenge, verificarlo y consumirlo atómicamente
-    if (challenge) {
-      const stored = global.__activeBioChallenges.get(challenge);
-      if (!stored || stored.expiresAt < Date.now()) {
-        global.__activeBioChallenges.delete(challenge);
-        return res.status(401).json({ error: 'Desafío biométrico inválido o expirado. Solicita un nuevo desafío.' });
-      }
-      global.__activeBioChallenges.delete(challenge);
+    // El desafío efímero de un solo uso es OBLIGATORIO para impedir ataques de repetición
+    if (!challenge || typeof challenge !== 'string') {
+      recordFailedLogin(ip);
+      return res.status(401).json({ error: 'Desafío biométrico inválido o expirado. Solicita un nuevo desafío.' });
     }
 
-    const payload = verifyBioRefreshToken(rawToken);
-    if (!payload) {
+    const stored = global.__activeBioChallenges.get(challenge);
+    if (!stored || stored.expiresAt < Date.now()) {
+      global.__activeBioChallenges.delete(challenge);
       recordFailedLogin(ip);
-      return res.status(401).json({ error: 'Sesión biométrica no válida o expirada. Ingresa con tu PIN.' });
+      return res.status(401).json({ error: 'Desafío biométrico inválido o expirado. Solicita un nuevo desafío.' });
     }
+    global.__activeBioChallenges.delete(challenge);
 
     const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+    runtimeDB.settings = runtimeDB.settings || {};
+    let revokedJtis = Array.isArray(runtimeDB.settings.revokedBioRefreshJtis)
+      ? [...runtimeDB.settings.revokedBioRefreshJtis]
+      : [];
+
+    if (isMongoConfigured()) {
+      try {
+        const settingsDoc = await findMongoDoc('settings', { id: 'app_settings' });
+        if (Array.isArray(settingsDoc?.revokedBioRefreshJtis)) {
+          revokedJtis = Array.from(new Set([...revokedJtis, ...settingsDoc.revokedBioRefreshJtis]));
+        }
+      } catch {}
+    }
+
+    const payload = verifyBioRefreshToken(rawToken, {
+      expectedPasswordVersion: activeVersion,
+      revokedJtis
+    });
+    if (!payload) {
+      recordFailedLogin(ip);
+      return res.status(401).json({ error: 'Sesión biométrica no válida, revocada o expirada. Ingresa con tu PIN.' });
+    }
 
     if (payload.pwd !== activeVersion) {
       return res.status(401).json({ error: 'La contraseña fue cambiada. Ingresa con tu nueva contraseña.' });
     }
 
+    // Rotación y revocación inmediata del jti consumido
+    if (payload.jti) {
+      revokedJtis.push(payload.jti);
+      if (revokedJtis.length > 200) {
+        revokedJtis = revokedJtis.slice(-200);
+      }
+      runtimeDB.settings.revokedBioRefreshJtis = revokedJtis;
+      if (isMongoConfigured()) {
+        await upsertMongoDoc('settings', { id: 'app_settings' }, {
+          id: 'app_settings',
+          revokedBioRefreshJtis: revokedJtis
+        }).catch(() => {});
+      }
+    }
+
     const freshToken = createAdminToken({ pwd: activeVersion });
-    return res.json({ success: true, token: freshToken, expiresInMs: 12 * 60 * 60 * 1000 });
+    const rotatedBioRefreshToken = createBioRefreshToken({ pwd: activeVersion });
+    return res.json({
+      success: true,
+      token: freshToken,
+      bioRefreshToken: rotatedBioRefreshToken,
+      expiresInMs: 12 * 60 * 60 * 1000
+    });
   } catch (err) {
     console.error('[Seguridad] Error en renovación biométrica:', err);
     return res.status(500).json({ error: 'Error procesando renovación biométrica.' });
@@ -1992,10 +2119,23 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
   const adminPayload = verifyAdminToken(readAdminToken(req), { expectedPasswordVersion: activeVersion });
   const isAdminCaller = Boolean(adminPayload && adminPayload.pwd === activeVersion);
 
+  // Si el pago proviene de una galería privada (sessionToken), recuperar internamente el WhatsApp y bookingId
+  // asociados a la sesión sin necesidad de haberlos expuesto en GET /api/gallery/:token
+  let resolvedWhatsApp = (clientWhatsApp || '').trim();
+  let resolvedBookingId = req.body?.bookingId || undefined;
+  if (sessionToken && (!resolvedWhatsApp || !resolvedBookingId)) {
+    const matchedSession = (runtimeDB.sessions || []).find(s => s && s.token === sessionToken);
+    if (matchedSession) {
+      if (!resolvedWhatsApp && matchedSession.clientWhatsApp) resolvedWhatsApp = String(matchedSession.clientWhatsApp).trim();
+      if (!resolvedBookingId && matchedSession.bookingId) resolvedBookingId = matchedSession.bookingId;
+    }
+  }
+
   const newPayment = {
     id: `pay-${Date.now()}`,
+    ...(resolvedBookingId ? { bookingId: resolvedBookingId } : {}),
     clientName: (clientName || 'Cliente').trim(),
-    clientWhatsApp: (clientWhatsApp || '').trim(),
+    clientWhatsApp: resolvedWhatsApp,
     sessionToken: sessionToken || '',
     packageTitle: packageTitle || 'Sesión Fotográfica',
     amount: Number(amount) || 0,
@@ -3434,11 +3574,19 @@ app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
   const exportedAt = new Date().toISOString();
   const dateStamp = exportedAt.slice(0, 10);
   const rawUrl = String(req.originalUrl || req.url || '');
-  const shouldEncrypt =
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const explicitDisableEncrypt =
+    req.query?.encrypt === '0' ||
+    req.query?.encrypt === 'false' ||
+    rawUrl.includes('encrypt=0') ||
+    rawUrl.includes('encrypt=false');
+  const explicitEnableEncrypt =
     req.query?.encrypt === '1' ||
     req.query?.encrypt === 'true' ||
     rawUrl.includes('encrypt=1') ||
     rawUrl.includes('encrypt=true');
+  // En producción, la exportación se cifra por defecto con AES-256-GCM
+  const shouldEncrypt = isProduction ? !explicitDisableEncrypt : explicitEnableEncrypt;
 
   // Sanitizar estrictamente: nunca exportar hashes de PIN, retos de reseteo ni secretos
   const cleanSnapshot = sanitizeBackupSnapshot({
@@ -3520,7 +3668,8 @@ app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAd
       adminPinHash: runtimeDB.settings?.adminPinHash,
       adminPasswordVersion: runtimeDB.settings?.adminPasswordVersion,
       adminResetChallenge: runtimeDB.settings?.adminResetChallenge,
-      revokedApkDeviceIds: runtimeDB.settings?.revokedApkDeviceIds
+      revokedApkDeviceIds: runtimeDB.settings?.revokedApkDeviceIds,
+      revokedBioRefreshJtis: runtimeDB.settings?.revokedBioRefreshJtis
     };
 
     const candidateSettings = {
@@ -3539,11 +3688,66 @@ app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAd
     const candidateSessions = Array.isArray(clean.sessions) ? clean.sessions : [];
     const candidateReviews = Array.isArray(clean.reviews) ? clean.reviews : [];
 
+    // Capturar snapshot previo en memoria para reversión atómica si algo falla
+    const preRestoreMemorySnapshot = {
+      settings: { ...(runtimeDB.settings || {}) },
+      packages: Array.isArray(runtimeDB.packages) ? [...runtimeDB.packages] : [],
+      catalog: Array.isArray(runtimeDB.catalog) ? [...runtimeDB.catalog] : [],
+      bookings: Array.isArray(runtimeDB.bookings) ? [...runtimeDB.bookings] : [],
+      payments: Array.isArray(runtimeDB.payments) ? [...runtimeDB.payments] : [],
+      sessions: Array.isArray(runtimeDB.sessions) ? [...runtimeDB.sessions] : [],
+      reviews: Array.isArray(runtimeDB.reviews) ? [...runtimeDB.reviews] : []
+    };
+
     let mongoPersistMs = 0;
     let indexReport = { verified: false, elapsedMs: 0, indexes: [] };
     if (isMongoConfigured()) {
       const mongoStartMs = performance.now();
+      let preRestoreMongoSnapshot = null;
       try {
+        // Fase 0: Capturar estado actual de las colecciones en MongoDB Atlas antes de modificar nada
+        // para poder ejecutar rollback automático ante cualquier fallo intermedio
+        const [
+          prevSettingsDocs,
+          prevPackagesDocs,
+          prevCatalogDocs,
+          prevSessionsDocs,
+          prevReviewsDocs,
+          prevBookingsDocs,
+          prevPaymentsDocs
+        ] = await Promise.all([
+          findMongoDocs('settings', {}, null, 0, { throwOnError: true }),
+          findMongoDocs('packages', {}, null, 0, { throwOnError: true }),
+          findMongoDocs('catalog', {}, null, 0, { throwOnError: true }),
+          findMongoDocs('sessions', {}, null, 0, { throwOnError: true }),
+          findMongoDocs('reviews', {}, null, 0, { throwOnError: true }),
+          findMongoDocs('bookings', {}, null, 0, { throwOnError: true }),
+          findMongoDocs('payments', {}, null, 0, { throwOnError: true })
+        ]);
+        preRestoreMongoSnapshot = {
+          settings: prevSettingsDocs || [],
+          packages: prevPackagesDocs || [],
+          catalog: prevCatalogDocs || [],
+          sessions: prevSessionsDocs || [],
+          reviews: prevReviewsDocs || [],
+          bookings: prevBookingsDocs || [],
+          payments: prevPaymentsDocs || []
+        };
+
+        // Fase 1 (Staging): Validar salud de escritura en colección temporal antes de tocar colecciones vivas
+        const stageId = `stage_${Date.now()}`;
+        await upsertMongoDoc('staging_restore', { id: stageId }, {
+          id: stageId,
+          createdAt: new Date().toISOString(),
+          counts: {
+            bookings: candidateBookings.length,
+            payments: candidatePayments.length,
+            sessions: candidateSessions.length
+          }
+        }, { throwOnError: true });
+        await deleteMongoDoc('staging_restore', { id: stageId }, { throwOnError: true });
+
+        // Fase 2 (Commit): Aplicar cambios sobre colecciones vivas
         // 1. Persistir configuración restaurada
         await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...candidateSettings }, { throwOnError: true });
 
@@ -3596,15 +3800,38 @@ app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAd
 
         const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
         if (isProduction && indexReport && indexReport.verified === false) {
-          console.error('❌ [Restore] Fallo en la verificación de índices de MongoDB Atlas tras restauración');
-          return res.status(500).json({
-            error: 'Fallo al verificar los índices de seguridad en la base de datos central tras restaurar el respaldo.'
-          });
+          throw new Error('Fallo al verificar los índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
         }
       } catch (eMongo) {
-        console.error('❌ [Restore] Fallo persistiendo respaldo en MongoDB Atlas:', eMongo?.message || eMongo);
+        console.error('❌ [Restore] Fallo persistiendo respaldo en MongoDB Atlas, ejecutando rollback:', eMongo?.message || eMongo);
+        let rolledBack = false;
+        if (preRestoreMongoSnapshot) {
+          try {
+            const restoreCol = async (colName, docs, keyField = 'id') => {
+              const keys = docs.map(d => d?.[keyField]).filter(Boolean);
+              await deleteMongoDocs(colName, keys.length > 0 ? { [keyField]: { $nin: keys } } : {});
+              for (const doc of docs) {
+                if (doc?.[keyField]) {
+                  await upsertMongoDoc(colName, { [keyField]: doc[keyField] }, doc);
+                }
+              }
+            };
+            await restoreCol('settings', preRestoreMongoSnapshot.settings, 'id');
+            await restoreCol('packages', preRestoreMongoSnapshot.packages, 'id');
+            await restoreCol('catalog', preRestoreMongoSnapshot.catalog, 'id');
+            await restoreCol('sessions', preRestoreMongoSnapshot.sessions, 'token');
+            await restoreCol('reviews', preRestoreMongoSnapshot.reviews, 'id');
+            await restoreCol('bookings', preRestoreMongoSnapshot.bookings, 'id');
+            await restoreCol('payments', preRestoreMongoSnapshot.payments, 'id');
+            rolledBack = true;
+          } catch (rollbackErr) {
+            console.error('⚠️ [Restore Rollback] Error durante reversión de emergencia:', rollbackErr?.message || rollbackErr);
+          }
+        }
+        Object.assign(runtimeDB, preRestoreMemorySnapshot);
         return res.status(500).json({
-          error: 'Fallo al restaurar el respaldo en la base de datos central. No se modificó el estado en memoria.'
+          error: 'Fallo al restaurar el respaldo en la base de datos central. Se revirtieron los cambios para proteger la integridad.',
+          rolledBack
         });
       }
     }

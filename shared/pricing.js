@@ -248,10 +248,32 @@ export function calculateBookingPriceBand({
  * Si es válido, lo respeta (permitiendo descuento de fidelidad o redondeos legítimos).
  * Si está fuera de banda (e.g. $1 o manipulado), impone el precio oficial con extras.
  */
-export function validateOrEnforcePrice(clientPrice, band, { fallbackPrice } = {}) {
+export function validateOrEnforcePrice(clientPrice, band, { fallbackPrice, expectedPrice } = {}) {
   const parsedClient = Number(clientPrice);
   const min = band?.minPrice ?? 0;
   const max = band?.listPrice ?? band?.maxPrice ?? 0;
+
+  // Cuando el servidor calcula un precio determinista exacto (expectedPrice),
+  // no se acepta ningún valor intermedio arbitrario enviado por el navegador.
+  if (expectedPrice !== undefined && expectedPrice !== null && Number.isFinite(Number(expectedPrice))) {
+    const exact = Number(expectedPrice);
+    if (Number.isFinite(parsedClient) && parsedClient === exact) {
+      return {
+        accepted: true,
+        adjusted: false,
+        finalPrice: exact,
+        reason: null
+      };
+    }
+    return {
+      accepted: false,
+      adjusted: true,
+      finalPrice: exact,
+      reason: !Number.isFinite(parsedClient) || parsedClient <= 0
+        ? 'invalid'
+        : (parsedClient < exact ? 'below-expected-price' : 'above-expected-price')
+    };
+  }
 
   if (Number.isFinite(parsedClient) && parsedClient > 0 && parsedClient >= min && parsedClient <= max) {
     return {

@@ -16,6 +16,8 @@ import {
   isValidGalleryTokenFormat,
   createAdminToken,
   verifyAdminToken,
+  createBioRefreshToken,
+  verifyBioRefreshToken,
   createApkDeviceToken,
   verifyApkDeviceToken,
   recordFinancialAuditLog,
@@ -26,15 +28,17 @@ import {
 import app, {
   checkPublicWriteRateLimit,
   clearApiRateLimiters,
+  isAllowedCorsOrigin,
   runtimeDB
 } from '../../api/index.js';
+import { resolveBookingPrice } from '../../api/pricingGuard.js';
 import {
   getColombiaTodayIso,
   isDateFullyBooked
 } from '../services/bookingAvailability.js';
 import { resolveRouteFromLocation } from '../App.jsx';
 import { getCachedImage, setCachedImage } from '../components/ProtectedCanvasImage.jsx';
-import { DEMO_DEFAULT_BOOKINGS, REAL_DEFAULT_BOOKINGS } from '../services/api.js';
+import { DEMO_DEFAULT_BOOKINGS, REAL_DEFAULT_BOOKINGS, DEFAULT_PIN_HASH } from '../services/api.js';
 
 // Helper para invocar rutas de Express en memoria sin abrir puertos TCP
 async function invokeApp(method, url, { body = {}, headers = {} } = {}) {
@@ -97,9 +101,15 @@ async function invokeApp(method, url, { body = {}, headers = {} } = {}) {
 
 describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () => {
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    delete process.env.ALLOW_MONGO_IN_TESTS;
+    delete process.env.MONGODB_URI;
     process.env.ADMIN_AUTH_SECRET = 'test-secret-de-al-menos-32-caracteres-seguros-2026';
     process.env.WOMPI_INTEGRITY_SECRET = 'test_integrity_secret_2026';
     process.env.WOMPI_EVENTS_SECRET = 'test_events_secret_2026';
+    if (runtimeDB?.settings) {
+      runtimeDB.settings.adminPasswordVersion = 1;
+    }
     clearApiRateLimiters();
   });
 
@@ -1927,6 +1937,195 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       });
       expect(replayRes.status).toBe(401);
       expect(replayRes.body.error).toContain('Desafío biométrico inválido o expirado');
+    });
+  });
+
+  describe('11. Cierre Integral de Auditoría P1 y P2 (Puente Android, Separación Biométrica, Índices, Precios Deterministas, Galería DTO y Fail-Closed)', () => {
+    it('P1-2.1: Puente Android verifica origen en UI thread, usa WebMessageListener y jamás expone getStoredDeviceToken ni recibe origin por parámetro JS', () => {
+      const rootDir = process.cwd();
+      const bridgeCode = fs.readFileSync(
+        path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/bridge/AndroidNotificationBridge.kt'),
+        'utf8'
+      );
+      const mainActivityCode = fs.readFileSync(
+        path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/MainActivity.kt'),
+        'utf8'
+      );
+
+      // No debe existir getStoredDeviceToken expuesto al JS ni parámetro origin falsificable
+      expect(bridgeCode).not.toContain('fun getStoredDeviceToken');
+      expect(bridgeCode).not.toContain('origin: String');
+      expect(bridgeCode).toContain('Looper.getMainLooper()');
+      expect(bridgeCode).toContain('fun hasStoredDeviceToken(): Boolean');
+      expect(mainActivityCode).toContain('WebViewCompat.addWebMessageListener');
+      expect(mainActivityCode).toContain('ALLOWED_ORIGIN_RULES');
+    });
+
+    it('P1-2.2: bio_refresh usa clave HMAC separada, es rechazado en rutas admin (401), exige challenge obligatorio y rota/revoca el jti tras cada uso', async () => {
+      runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 1, revokedBioRefreshJtis: [] };
+      const bioToken = createBioRefreshToken({ pwd: 1 });
+
+      // 1. bio_refresh jamás es aceptado por verifyAdminToken ni por requireAdminAuth
+      expect(verifyAdminToken(bioToken)).toBeNull();
+      expect(verifyBioRefreshToken(bioToken)?.type).toBe('bio_refresh');
+
+      const directAdminAttempt = await invokeApp('GET', '/api/admin/bookings', {
+        headers: { Authorization: `Bearer ${bioToken}` }
+      });
+      expect(directAdminAttempt.status).toBe(401);
+
+      // 2. Sin challenge, /api/admin/auth/bio-refresh rechaza con 401
+      const noChallengeRes = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
+        body: { bioRefreshToken: bioToken }
+      });
+      expect(noChallengeRes.status).toBe(401);
+
+      // 3. Con challenge válido, emite nuevo access token + bioRefreshToken rotado y revoca el jti anterior
+      const chal1 = (await invokeApp('POST', '/api/admin/auth/bio-challenge')).body.challenge;
+      const refreshOk = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
+        body: { bioRefreshToken: bioToken, challenge: chal1 }
+      });
+      expect(refreshOk.status).toBe(200);
+      expect(refreshOk.body.token).toBeDefined();
+      expect(refreshOk.body.bioRefreshToken).toBeDefined();
+      expect(refreshOk.body.bioRefreshToken).not.toBe(bioToken);
+      expect(verifyAdminToken(refreshOk.body.token)?.type).toBe('admin_access');
+
+      // 4. Intentar reutilizar el bioToken antiguo con un nuevo challenge válido falla con 401 (jti revocado)
+      const chal2 = (await invokeApp('POST', '/api/admin/auth/bio-challenge')).body.challenge;
+      const reuseOldBioToken = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
+        body: { bioRefreshToken: bioToken, challenge: chal2 }
+      });
+      expect(reuseOldBioToken.status).toBe(401);
+    });
+
+    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 17 índices BSON (unicidad, compuesto dateTime+status, expiresAt y TTL)', () => {
+      const rootDir = process.cwd();
+      const mongoJs = fs.readFileSync(path.join(rootDir, 'api/db/mongo.js'), 'utf8');
+      const readmeMd = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
+
+      expect(mongoJs).toContain("name: 'uniq_bookings_id'");
+      expect(mongoJs).toContain("name: 'idx_bookings_datetime_status'");
+      expect(mongoJs).toContain("name: 'uniq_payments_id'");
+      expect(mongoJs).toContain("name: 'uniq_payments_reference'");
+      expect(mongoJs).toContain("name: 'uniq_payments_txid'");
+      expect(mongoJs).toContain("name: 'uniq_sessions_id'");
+      expect(mongoJs).toContain("name: 'uniq_sessions_token'");
+      expect(mongoJs).toContain("name: 'idx_sessions_expires_at'");
+      expect(mongoJs).toContain("name: 'uniq_audit_logs_id'");
+      expect(mongoJs).toContain("name: 'idx_audit_logs_ttl_90d'");
+      expect(mongoJs).toContain("name: 'uniq_slot_locks_key'");
+      expect(mongoJs).toContain("name: 'uniq_rate_limits_key'");
+      expect(readmeMd).toContain('17 índices BSON');
+    });
+
+    it('P1-2.5: GET /api/admin/backup cifra por defecto en producción (AES-256-GCM)', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'production';
+        runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 1 };
+        const adminToken = createAdminToken({ pwd: 1 });
+        const res = await invokeApp('GET', '/api/admin/backup', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(res.status).toBe(200);
+        expect(res.body.encrypted).toBe(true);
+        expect(res.body.encryptedEnvelope).toBeDefined();
+        expect(res.body.snapshot).toBeUndefined();
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+      }
+    });
+
+    it('P2-3.1: resolveBookingPrice impone el precio determinista exacto y corrige montos arbitrarios intermedios dentro de la banda', () => {
+      const db = {
+        settings: { outOfSanAnteroSurcharge: 10000 },
+        bookings: [{ id: 'b-prev', clientWhatsApp: '+573105551234', status: 'completed' }],
+        sessions: []
+      };
+      const pkg = { id: 'pkg-8fotos', price: 75000 };
+      // Cliente recurrente tiene 15% de descuento: 75.000 - 11.250 = 63.750 exactos.
+      // Si el cliente envía un valor arbitrario intermedio (ej. 68.123), el servidor impone exactamente 63.750.
+      const res = resolveBookingPrice({
+        db,
+        pkg,
+        body: {
+          clientWhatsApp: '+573105551234',
+          locationType: 'san_antero',
+          totalPrice: 68123
+        }
+      });
+      expect(res.isLoyal).toBe(true);
+      expect(res.priceCheck.adjusted).toBe(true);
+      expect(res.finalPrice).toBe(63750);
+    });
+
+    it('P2-3.2: GET /api/gallery/:token aplica allowlist DTO y jamás filtra clientWhatsApp, clientEmail ni notas internas', async () => {
+      const token = 'gal-privacy-dto-' + Date.now();
+      runtimeDB.sessions = [{
+        id: 'sess-dto-1',
+        token,
+        clientName: 'Laura Privacidad',
+        clientWhatsApp: '+573119998877',
+        clientEmail: 'laura.privada@example.com',
+        adminNotes: 'Nota interna confidencial del estudio',
+        accessPin: '9988',
+        packageTitle: '8 Fotos Digitales',
+        maxPhotosAllowed: 8,
+        status: 'pending',
+        photos: [{ id: 'p1', title: 'Retrato 01', url: 'https://sebastiang.app/f1.jpg', selected: false, internalPath: '/secret' }]
+      }];
+
+      const res = await invokeApp('GET', `/api/gallery/${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.clientName).toBe('Laura Privacidad');
+      expect(res.body.clientWhatsApp).toBeUndefined();
+      expect(res.body.clientEmail).toBeUndefined();
+      expect(res.body.adminNotes).toBeUndefined();
+      expect(res.body.accessPin).toBeUndefined();
+      expect(res.body.photos[0].internalPath).toBeUndefined();
+    });
+
+    it('P2-3.3: CORS rechaza localhost y subdominios ajenos de vercel.app en producción, y CSP no usa comodín https: en img-src', () => {
+      expect(isAllowedCorsOrigin('https://sebastiang.app', true)).toBe(true);
+      expect(isAllowedCorsOrigin('https://www.sebastiang.app', true)).toBe(true);
+      expect(isAllowedCorsOrigin('https://foto-reservas-git-main.vercel.app', true)).toBe(true);
+      expect(isAllowedCorsOrigin('https://atacante-externo.vercel.app', true)).toBe(false);
+      expect(isAllowedCorsOrigin('http://localhost:5173', true)).toBe(false);
+      expect(isAllowedCorsOrigin('http://localhost:5173', false)).toBe(true);
+
+      const vercelJson = fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8');
+      expect(vercelJson).not.toContain('https:;');
+    });
+
+    it('P2-3.4: requireAdminAuth falla cerrado (401) en producción cuando MongoDB está configurado pero inaccesible al verificar passwordVersion', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevUri = process.env.MONGODB_URI;
+      const prevAllow = process.env.ALLOW_MONGO_IN_TESTS;
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.ALLOW_MONGO_IN_TESTS = 'true';
+        process.env.MONGODB_URI = 'mongodb://127.0.0.1:27099/unreachable_auth_db?serverSelectionTimeoutMS=200';
+        const adminToken = createAdminToken({ pwd: 1 });
+
+        const res = await invokeApp('GET', '/api/admin/bookings', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(res.status).toBe(401);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevAllow) process.env.ALLOW_MONGO_IN_TESTS = prevAllow;
+        else delete process.env.ALLOW_MONGO_IN_TESTS;
+        if (prevUri) process.env.MONGODB_URI = prevUri;
+        else delete process.env.MONGODB_URI;
+      }
+    }, 10000);
+
+    it('P2-3.5: adminSecurity.js erradica DEFAULT_PIN_HASH ("0493") y Math.random()', () => {
+      expect(DEFAULT_PIN_HASH).toBe('');
+      const adminSecCode = fs.readFileSync(path.join(process.cwd(), 'src/services/auth/adminSecurity.js'), 'utf8');
+      expect(adminSecCode).not.toContain('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3');
+      expect(adminSecCode).not.toContain('Math.random()');
     });
   });
 });

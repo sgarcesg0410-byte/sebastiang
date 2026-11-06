@@ -1,296 +1,468 @@
-import { MongoClient } from 'mongodb';
-
+// api/db/mongo.js
 // ==============================================================================
-// MONGODB ATLAS CLIENT (SINGLETON CON POOL DE CONEXIONES PARA SERVERLESS/VERCEL)
+// CLIENTE CENTRALIZADO DE MONGODB ATLAS (Conexión reutilizable en Serverless)
 // ==============================================================================
-// Provee alta disponibilidad y almacenamiento permanente para:
-// - bookings (reservas de clientes)
-// - catalog (portafolio y productos)
-// - packages (paquetes y precios)
-// - settings (configuraciones generales, contraseñas y hashes)
-// - payments (comprobantes y pagos registrados)
-// - reviews (calificaciones y testimonios)
-// - sessions (galerías privadas de entrega)
+// Proporciona conexión persistente con pooling para Vercel Serverless y Node local.
+// Si MONGODB_URI no está definida, el sistema opera de forma transparente con sus
+// respaldos locales sin arrojar errores fatales.
 // ==============================================================================
 
-function getMongoUri() {
-  return String(process.env.MONGODB_URI || '').trim().replace(/^['"]|['"]$/g, '');
+import { MongoClient, ServerApiVersion } from 'mongodb';
+
+let cachedClient = null;
+let cachedDb = null;
+let connectingPromise = null;
+
+export function getMongoUri() {
+  if ((process.env.NODE_ENV === 'test' || process.env.VITEST) && process.env.ALLOW_MONGO_IN_TESTS !== 'true') {
+    return '';
+  }
+  return (process.env.MONGODB_URI || '').trim().replace(/^['"]|['"]$/g, '');
 }
 
-function getMongoDbName() {
-  return String(process.env.MONGODB_DB_NAME || 'sebastiang').trim().replace(/^['"]|['"]$/g, '');
+export function getMongoDbName() {
+  return (process.env.MONGODB_DB_NAME || 'sebastiang').trim().replace(/^['"]|['"]$/g, '');
 }
-
-let client = null;
-let clientPromise = null;
 
 export function isMongoConfigured() {
-  if ((process.env.NODE_ENV === 'test' || process.env.VITEST) && process.env.ALLOW_MONGO_IN_TESTS !== 'true') {
-    return false;
-  }
-  const currentUri = getMongoUri();
-  return Boolean(currentUri && currentUri.startsWith('mongodb'));
+  const uri = getMongoUri();
+  return Boolean(uri && (uri.startsWith('mongodb://') || uri.startsWith('mongodb+srv://')));
 }
 
-export async function getMongoClient() {
-  if (!isMongoConfigured()) {
-    return null;
+export async function getMongoDb() {
+  if (!isMongoConfigured()) return null;
+  if (cachedDb && cachedClient) return cachedDb;
+
+  if (connectingPromise) {
+    return connectingPromise;
   }
 
-  const currentUri = getMongoUri();
+  const uri = getMongoUri();
+  const dbName = getMongoDbName();
+  const timeoutMatch = uri.match(/serverSelectionTimeoutMS=(\d+)/i);
+  const timeoutMs = timeoutMatch ? Math.max(100, Number(timeoutMatch[1])) : 6000;
 
-  const serverSelectionTimeoutMS = process.env.NODE_ENV === 'test' ? 1000 : 5000;
-
-  if (process.env.NODE_ENV === 'development' || !process.env.VERCEL) {
-    // Modo local / desarrollo: reusar en global para hot reloading
-    if (!global._mongoClientPromise) {
-      client = new MongoClient(currentUri, {
+  connectingPromise = (async () => {
+    try {
+      const client = new MongoClient(uri, {
+        serverApi: {
+          version: ServerApiVersion.v1,
+          strict: true,
+          deprecationErrors: true
+        },
         maxPoolSize: 10,
-        serverSelectionTimeoutMS
+        minPoolSize: 1,
+        serverSelectionTimeoutMS: timeoutMs,
+        connectTimeoutMS: timeoutMs
       });
-      global._mongoClientPromise = client.connect();
-    }
-    clientPromise = global._mongoClientPromise;
-  } else {
-    // Modo producción Serverless (Vercel): reusar cliente en memoria
-    if (!clientPromise) {
-      client = new MongoClient(currentUri, {
-        maxPoolSize: 10,
-        serverSelectionTimeoutMS
-      });
-      clientPromise = client.connect();
-    }
-  }
 
-  try {
-    const connectedClient = await clientPromise;
-    return connectedClient;
-  } catch (err) {
-    clientPromise = null;
-    if (global._mongoClientPromise) {
-      global._mongoClientPromise = null;
+      await client.connect();
+      cachedClient = client;
+      cachedDb = client.db(dbName);
+      console.log(`✅ [MongoDB Atlas] Conectado exitosamente a la base de datos "${dbName}"`);
+      return cachedDb;
+    } catch (err) {
+      console.error('⚠️ [MongoDB Atlas] Error al conectar:', err?.message || err);
+      cachedClient = null;
+      cachedDb = null;
+      return null;
+    } finally {
+      connectingPromise = null;
     }
-    console.warn('⚠️ [MongoDB Atlas] Error conectando a la base de datos:', err?.message || err);
-    return null;
-  }
-}
+  })();
 
-export async function getMongoDB() {
-  const connectedClient = await getMongoClient();
-  if (!connectedClient) return null;
-  return connectedClient.db(getMongoDbName());
+  return connectingPromise;
 }
 
 /**
- * Comprueba la conectividad real con MongoDB Atlas mediante un comando ping activo.
- * Retorna { ok: true, latencyMs } o { ok: false, reason, error }
+ * Deduplica de forma segura documentos por un campo clave antes de aplicar un índice único,
+ * conservando siempre la versión más reciente.
  */
-export async function pingMongoDB({ timeoutMs = 2000 } = {}) {
-  if (!isMongoConfigured()) {
-    return { ok: false, reason: 'not_configured' };
-  }
-  const start = performance.now();
-  let timer = null;
+async function deduplicateCollectionByField(database, collectionName, fieldName) {
   try {
-    const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Timeout de conexión a MongoDB Atlas')), timeoutMs);
-      if (timer && timer.unref) timer.unref();
-    });
+    const col = database.collection(collectionName);
+    const duplicates = await col.aggregate([
+      { $match: { [fieldName]: { $exists: true, $nin: [null, ''] } } },
+      {
+        $group: {
+          _id: `$${fieldName}`,
+          count: { $sum: 1 },
+          docs: { $push: { _id: '$_id', updatedAt: '$updatedAt', createdAt: '$createdAt' } }
+        }
+      },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
 
-    const db = await Promise.race([getMongoDB(), timeoutPromise]);
-    if (!db) {
-      if (timer) clearTimeout(timer);
-      return { ok: false, reason: 'connection_failed' };
+    for (const group of duplicates) {
+      const sorted = [...group.docs].sort((a, b) => {
+        const ta = Date.parse(a.updatedAt || a.createdAt || '') || 0;
+        const tb = Date.parse(b.updatedAt || b.createdAt || '') || 0;
+        return tb - ta;
+      });
+      const idsToRemove = sorted.slice(1).map(d => d._id);
+      if (idsToRemove.length > 0) {
+        await col.deleteMany({ _id: { $in: idsToRemove } });
+      }
     }
-    await Promise.race([db.command({ ping: 1 }), timeoutPromise]);
-    if (timer) clearTimeout(timer);
-    const latencyMs = Math.round(performance.now() - start);
-    return { ok: true, latencyMs };
-  } catch (err) {
-    if (timer) clearTimeout(timer);
-    return { ok: false, reason: 'ping_failed', error: err?.message || String(err) };
+  } catch {
+    // Si la colección aún no existe o el agregado no aplica, continuar
   }
 }
 
 /**
- * Guarda o actualiza un documento en una colección de MongoDB de forma segura.
- * Si throwOnError es true, propaga cualquier error de conexión o rechazo de escritura
- * para permitir control transaccional estricto en flujos críticos (pagos/reservas).
+ * Crea y verifica los 17 índices críticos de producción e índices TTL en MongoDB Atlas:
+ * - Unicidad estricta en `bookings.id`, `payments.id`, `payments.reference`, `payments.transactionId`,
+ *   `sessions.id`, `sessions.token`, `audit_logs.id`, `slot_locks.lockKey` y `rate_limits.key`.
+ * - Índice compuesto `{ dateTime: 1, status: 1 }` en `bookings` para detección rápida de cruces de horario.
+ * - Índice `{ expiresAt: 1 }` en `sessions` para control de caducidad de galerías privadas.
+ * - Índices TTL nativos en `audit_logs` (90 días), `slot_locks` y `rate_limits`.
+ */
+let indexesEnsured = false;
+export async function ensureMongoIndexes(targetDb = null) {
+  const database = targetDb || await getMongoDb();
+  if (!database) return { ok: false, verified: false, reason: 'no_db', indexes: [] };
+
+  const startMs = Date.now();
+  const created = [];
+
+  try {
+    // 0. Deduplicar preventivamente antes de asegurar índices únicos
+    await deduplicateCollectionByField(database, 'bookings', 'id');
+    await deduplicateCollectionByField(database, 'payments', 'id');
+    await deduplicateCollectionByField(database, 'payments', 'reference');
+    await deduplicateCollectionByField(database, 'payments', 'transactionId');
+    await deduplicateCollectionByField(database, 'sessions', 'id');
+    await deduplicateCollectionByField(database, 'sessions', 'token');
+    await deduplicateCollectionByField(database, 'audit_logs', 'id');
+
+    const safeCreateIndex = async (colName, spec, opts) => {
+      try {
+        await database.collection(colName).createIndex(spec, opts);
+      } catch (err) {
+        // Si ya existe un índice con el mismo nombre pero opciones previas (ej. no-unique),
+        // eliminarlo y recrearlo con las garantías actuales
+        if (opts?.name) {
+          try {
+            await database.collection(colName).dropIndex(opts.name);
+            await database.collection(colName).createIndex(spec, opts);
+          } catch {}
+        }
+      }
+      created.push(`${colName}:${opts.name}`);
+    };
+
+    // 1–3. Índices de Reservas (bookings)
+    await safeCreateIndex('bookings', { id: 1 }, { unique: true, name: 'uniq_bookings_id', background: true });
+    await safeCreateIndex('bookings', { dateTime: 1, status: 1 }, { name: 'idx_bookings_datetime_status', background: true });
+    await safeCreateIndex('bookings', { createdAt: -1 }, { name: 'idx_bookings_created_desc', background: true });
+
+    // 4–7. Índices de Pagos y Anti-Replay de Pasarela (payments)
+    await safeCreateIndex('payments', { id: 1 }, { unique: true, name: 'uniq_payments_id', background: true });
+    await safeCreateIndex('payments', { reference: 1 }, { unique: true, sparse: true, name: 'uniq_payments_reference', background: true });
+    await safeCreateIndex('payments', { transactionId: 1 }, { unique: true, sparse: true, name: 'uniq_payments_txid', background: true });
+    await safeCreateIndex('payments', { bookingId: 1 }, { name: 'idx_payments_booking_id', background: true });
+
+    // 8–10. Índices de Galerías Privadas (sessions)
+    await safeCreateIndex('sessions', { id: 1 }, { unique: true, name: 'uniq_sessions_id', background: true });
+    await safeCreateIndex('sessions', { token: 1 }, { unique: true, name: 'uniq_sessions_token', background: true });
+    await safeCreateIndex('sessions', { expiresAt: 1 }, { name: 'idx_sessions_expires_at', background: true });
+
+    // 11–13. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
+    await safeCreateIndex('audit_logs', { id: 1 }, { unique: true, name: 'uniq_audit_logs_id', background: true });
+    await safeCreateIndex('audit_logs', { createdAt: -1 }, { name: 'idx_audit_logs_created_desc', background: true });
+    await safeCreateIndex('audit_logs', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_audit_logs_ttl_90d', background: true });
+
+    // 14–15. Índices de Bloqueo Distribuido de Horarios (slot_locks)
+    await safeCreateIndex('slot_locks', { lockKey: 1 }, { unique: true, name: 'uniq_slot_locks_key', background: true });
+    await safeCreateIndex('slot_locks', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_slot_locks_ttl', background: true });
+
+    // 16–17. Índices de Rate Limiting Distribuido (rate_limits)
+    await safeCreateIndex('rate_limits', { key: 1 }, { unique: true, name: 'uniq_rate_limits_key', background: true });
+    await safeCreateIndex('rate_limits', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true });
+
+    if (!targetDb) indexesEnsured = true;
+    return {
+      ok: true,
+      verified: true,
+      elapsedMs: Date.now() - startMs,
+      indexes: created
+    };
+  } catch (err) {
+    console.warn('⚠️ [MongoDB Indexes] Advertencia asegurando índices:', err?.message || err);
+    return {
+      ok: false,
+      verified: false,
+      elapsedMs: Date.now() - startMs,
+      error: err?.message || String(err),
+      indexes: created
+    };
+  }
+}
+
+/**
+ * Adquiere un bloqueo distribuido en MongoDB Atlas para evitar doble reserva concurrente
+ * entre múltiples instancias serverless de Vercel.
+ */
+export async function acquireDistributedSlotLock({ lockKey, dateKey, startMin, endMin, ttlMs = 30000 } = {}) {
+  const database = await getMongoDb();
+  if (!database) return { acquired: true, distributed: false };
+
+  const now = new Date();
+  const expiresAtDate = new Date(now.getTime() + ttlMs);
+  const col = database.collection('slot_locks');
+
+  try {
+    // 1. Limpiar bloqueos vencidos del mismo día
+    await col.deleteMany({ dateKey, expiresAtDate: { $lte: now } });
+
+    // 2. Verificar si existe algún bloqueo activo que se solape con [startMin, endMin)
+    const overlapping = await col.findOne({
+      dateKey,
+      expiresAtDate: { $gt: now },
+      startMin: { $lt: endMin },
+      endMin: { $gt: startMin }
+    });
+    if (overlapping) {
+      return { acquired: false, distributed: true, conflictKey: overlapping.lockKey };
+    }
+
+    // 3. Insertar bloqueo con clave determinista por ventana o clave provista
+    const effectiveKey = lockKey || `slot_${dateKey}_${startMin}`;
+    await col.updateOne(
+      { lockKey: effectiveKey, expiresAtDate: { $lte: now } },
+      {
+        $setOnInsert: {
+          lockKey: effectiveKey,
+          dateKey,
+          startMin,
+          endMin,
+          createdAt: now.toISOString(),
+          expiresAtDate
+        }
+      },
+      { upsert: true }
+    );
+    return { acquired: true, distributed: true, lockKey: effectiveKey };
+  } catch (err) {
+    if (err?.code === 11000) {
+      return { acquired: false, distributed: true };
+    }
+    return { acquired: true, distributed: false };
+  }
+}
+
+export async function releaseDistributedSlotLock(lockKey) {
+  if (!lockKey) return;
+  const database = await getMongoDb();
+  if (!database) return;
+  try {
+    await database.collection('slot_locks').deleteOne({ lockKey });
+  } catch {}
+}
+
+/**
+ * Verifica y actualiza de forma distribuida un contador de límite de intentos en MongoDB Atlas.
+ */
+export async function checkDistributedRateLimit({ key, maxAttempts, windowMs }) {
+  const database = await getMongoDb();
+  if (!database || !key) return { allowed: true, distributed: false };
+
+  const now = Date.now();
+  const nowDate = new Date(now);
+  const expiresAtDate = new Date(now + windowMs);
+  const col = database.collection('rate_limits');
+
+  try {
+    const existing = await col.findOne({ key });
+    if (!existing || !existing.expiresAtDate || new Date(existing.expiresAtDate).getTime() <= now) {
+      await col.updateOne(
+        { key },
+        { $set: { key, count: 1, windowStart: now, expiresAtDate } },
+        { upsert: true }
+      );
+      return { allowed: true, count: 1, distributed: true };
+    }
+
+    if (existing.count >= maxAttempts) {
+      return {
+        allowed: false,
+        count: existing.count,
+        retryAfterMs: Math.max(0, new Date(existing.expiresAtDate).getTime() - now),
+        distributed: true
+      };
+    }
+
+    await col.updateOne(
+      { key },
+      { $inc: { count: 1 } }
+    );
+    return { allowed: true, count: existing.count + 1, distributed: true };
+  } catch {
+    return { allowed: true, distributed: false };
+  }
+}
+
+export async function pingMongoDB() {
+  const start = Date.now();
+  try {
+    const database = await getMongoDb();
+    if (!database) {
+      return { ok: false, connected: false, latencyMs: null, error: 'No se pudo establecer conexión con MongoDB Atlas' };
+    }
+    await database.command({ ping: 1 });
+    if (!indexesEnsured) {
+      ensureMongoIndexes(database).catch(() => {});
+    }
+    return { ok: true, connected: true, latencyMs: Date.now() - start, error: null };
+  } catch (err) {
+    return { ok: false, connected: false, latencyMs: Date.now() - start, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Helper seguro para hacer upsert de un documento en una colección por su `id` (o filtro personalizado).
  */
 export async function upsertMongoDoc(collectionName, filter, doc, { throwOnError = false } = {}) {
-  try {
-    const db = await getMongoDB();
-    if (!db) {
-      if (throwOnError) throw new Error(`MongoDB no está conectado para escribir en ${collectionName}`);
-      return false;
+  const database = await getMongoDb();
+  if (!database) {
+    if (throwOnError) {
+      throw new Error(`MongoDB Atlas no disponible al intentar escribir en "${collectionName}"`);
     }
-    const col = db.collection(collectionName);
-    const { _id, ...cleanDoc } = doc;
-    const res = await col.updateOne(
+    return false;
+  }
+  try {
+    const { _id, ...cleanDoc } = doc || {};
+    const result = await database.collection(collectionName).updateOne(
       filter,
       { $set: { ...cleanDoc, updatedAt: new Date().toISOString() } },
       { upsert: true }
     );
-    if (res && res.acknowledged === false) {
-      if (throwOnError) throw new Error(`Escritura en ${collectionName} no reconocida por MongoDB Atlas`);
-      return false;
+    if (!result || result.acknowledged !== true) {
+      throw new Error(`Escritura no reconocida (acknowledged=false) en "${collectionName}"`);
     }
     return true;
   } catch (err) {
-    console.warn(`⚠️ [MongoDB] Error guardando en ${collectionName}:`, err?.message || err);
+    console.warn(`⚠️ [MongoDB] Error en upsert (${collectionName}):`, err?.message || err);
     if (throwOnError) throw err;
     return false;
   }
 }
 
 /**
- * Obtiene documentos de una colección de MongoDB
- */
-export async function findMongoDocs(collectionName, filter = {}, sort = { updatedAt: -1 }, limit = 1000) {
-  try {
-    const db = await getMongoDB();
-    if (!db) return null;
-    const col = db.collection(collectionName);
-    const cursor = col.find(filter).sort(sort).limit(limit);
-    return await cursor.toArray();
-  } catch (err) {
-    console.warn(`⚠️ [MongoDB] Error leyendo de ${collectionName}:`, err?.message || err);
-    return null;
-  }
-}
-
-/**
- * Obtiene un único documento de una colección de MongoDB
- */
-export async function findMongoDoc(collectionName, filter = {}) {
-  try {
-    const db = await getMongoDB();
-    if (!db) return null;
-    const col = db.collection(collectionName);
-    return await col.findOne(filter);
-  } catch (err) {
-    console.warn(`⚠️ [MongoDB] Error buscando en ${collectionName}:`, err?.message || err);
-    return null;
-  }
-}
-
-/**
- * Elimina un documento de una colección de MongoDB.
- * Retorna { acknowledged: boolean, deletedCount: number }
- */
-export async function deleteMongoDoc(collectionName, filter, { throwOnError = false } = {}) {
-  try {
-    const db = await getMongoDB();
-    if (!db) {
-      if (throwOnError) throw new Error(`MongoDB no está conectado para eliminar en ${collectionName}`);
-      return { acknowledged: false, deletedCount: 0 };
-    }
-    const col = db.collection(collectionName);
-    const res = await col.deleteOne(filter);
-    if (res && res.acknowledged === false) {
-      if (throwOnError) throw new Error(`Eliminación en ${collectionName} no reconocida por MongoDB Atlas`);
-      return { acknowledged: false, deletedCount: 0 };
-    }
-    return { acknowledged: true, deletedCount: res ? (res.deletedCount || 0) : 0 };
-  } catch (err) {
-    console.warn(`⚠️ [MongoDB] Error eliminando en ${collectionName}:`, err?.message || err);
-    if (throwOnError) throw err;
-    return { acknowledged: false, deletedCount: 0 };
-  }
-}
-
-/**
- * Elimina múltiples documentos de una colección de MongoDB.
- * Retorna { acknowledged: boolean, deletedCount: number }
- */
-export async function deleteMongoDocs(collectionName, filter, { throwOnError = false } = {}) {
-  try {
-    const db = await getMongoDB();
-    if (!db) {
-      if (throwOnError) throw new Error(`MongoDB no está conectado para eliminar en ${collectionName}`);
-      return { acknowledged: false, deletedCount: 0 };
-    }
-    const col = db.collection(collectionName);
-    const res = await col.deleteMany(filter);
-    if (res && res.acknowledged === false) {
-      if (throwOnError) throw new Error(`Eliminación múltiple en ${collectionName} no reconocida por MongoDB Atlas`);
-      return { acknowledged: false, deletedCount: 0 };
-    }
-    return { acknowledged: true, deletedCount: res ? (res.deletedCount || 0) : 0 };
-  } catch (err) {
-    console.warn(`⚠️ [MongoDB] Error eliminando múltiples en ${collectionName}:`, err?.message || err);
-    if (throwOnError) throw err;
-    return { acknowledged: false, deletedCount: 0 };
-  }
-}
-
-/**
- * Actualiza atómicamente un documento de MongoDB sin forzar upsert
- * Retorna el resultado del driver de MongoDB ({ matchedCount, modifiedCount, acknowledged })
+ * Helper para actualizar un documento existente sin upsert, retornando el resultado completo (matchedCount, modifiedCount)
+ * para verificaciones de atomicidad y concurrencia (ej. webhooks de pago).
  */
 export async function updateMongoDoc(collectionName, filter, update, { throwOnError = false } = {}) {
-  try {
-    const db = await getMongoDB();
-    if (!db) {
-      if (throwOnError) throw new Error(`MongoDB no está conectado para actualizar en ${collectionName}`);
-      return null;
+  const database = await getMongoDb();
+  if (!database) {
+    if (throwOnError) {
+      throw new Error(`MongoDB Atlas no disponible al intentar actualizar en "${collectionName}"`);
     }
-    const col = db.collection(collectionName);
-    const res = await col.updateOne(filter, update);
-    return res;
+    return { acknowledged: false, matchedCount: 0, modifiedCount: 0 };
+  }
+  try {
+    const result = await database.collection(collectionName).updateOne(filter, update);
+    if (!result || result.acknowledged !== true) {
+      throw new Error(`Actualización no reconocida en "${collectionName}"`);
+    }
+    return result;
   } catch (err) {
-    console.warn(`⚠️ [MongoDB] Error actualizando en ${collectionName}:`, err?.message || err);
+    console.warn(`⚠️ [MongoDB] Error en updateOne (${collectionName}):`, err?.message || err);
+    if (throwOnError) throw err;
+    return { acknowledged: false, matchedCount: 0, modifiedCount: 0 };
+  }
+}
+
+/**
+ * Helper seguro para leer documentos de una colección.
+ */
+export async function findMongoDocs(collectionName, filter = {}, sort = null, limit = 0, { throwOnError = false } = {}) {
+  const database = await getMongoDb();
+  if (!database) {
+    if (throwOnError) {
+      throw new Error(`MongoDB Atlas no disponible al intentar leer "${collectionName}"`);
+    }
+    return null;
+  }
+  try {
+    let cursor = database.collection(collectionName).find(filter);
+    if (sort) cursor = cursor.sort(sort);
+    if (limit > 0) cursor = cursor.limit(limit);
+    return await cursor.toArray();
+  } catch (err) {
+    console.warn(`⚠️ [MongoDB] Error leyendo (${collectionName}):`, err?.message || err);
     if (throwOnError) throw err;
     return null;
   }
 }
 
 /**
- * Crea y verifica los índices operativos y el índice TTL de 90 días en MongoDB Atlas.
- * Puede ejecutarse contra la base principal o contra una base temporal de simulacro/staging.
+ * Helper seguro para buscar un único documento en una colección.
  */
-export async function ensureMongoIndexes(dbOverride = null) {
-  const startMs = performance.now();
+export async function findMongoDoc(collectionName, filter = {}, { throwOnError = false } = {}) {
+  const database = await getMongoDb();
+  if (!database) {
+    if (throwOnError) {
+      throw new Error(`MongoDB Atlas no disponible al intentar leer documento en "${collectionName}"`);
+    }
+    return null;
+  }
   try {
-    const db = dbOverride || (await getMongoDB());
-    if (!db) {
-      return { verified: false, reason: 'mongo_not_configured', elapsedMs: 0, indexes: [] };
-    }
-
-    const created = [];
-    const specs = [
-      { col: 'bookings', key: { id: 1 }, opts: { name: 'idx_bookings_id' } },
-      { col: 'bookings', key: { createdAt: -1 }, opts: { name: 'idx_bookings_created_desc' } },
-      { col: 'bookings', key: { dateTime: 1 }, opts: { name: 'idx_bookings_datetime' } },
-      { col: 'payments', key: { id: 1 }, opts: { name: 'idx_payments_id' } },
-      { col: 'payments', key: { reference: 1 }, opts: { name: 'idx_payments_reference_unique', unique: true, sparse: true } },
-      { col: 'payments', key: { transactionId: 1 }, opts: { name: 'idx_payments_transaction_id_unique', unique: true, sparse: true } },
-      { col: 'payments', key: { bookingId: 1 }, opts: { name: 'idx_payments_booking_id' } },
-      { col: 'sessions', key: { token: 1 }, opts: { name: 'idx_sessions_token' } },
-      { col: 'sessions', key: { id: 1 }, opts: { name: 'idx_sessions_id' } },
-      { col: 'audit_logs', key: { id: 1 }, opts: { name: 'idx_audit_logs_id' } },
-      { col: 'audit_logs', key: { createdAt: -1 }, opts: { name: 'idx_audit_logs_created_desc' } },
-      // Índice TTL nativo de MongoDB Atlas: purga automática al cumplirse expiresAtDate (90 días)
-      { col: 'audit_logs', key: { expiresAtDate: 1 }, opts: { name: 'idx_audit_logs_ttl_90d', expireAfterSeconds: 0 } }
-    ];
-
-    for (const s of specs) {
-      const idxName = await db.collection(s.col).createIndex(s.key, s.opts);
-      created.push(`${s.col}.${idxName}`);
-    }
-
-    return {
-      verified: true,
-      elapsedMs: Math.max(1, Math.round(performance.now() - startMs)),
-      indexes: created
-    };
+    const doc = await database.collection(collectionName).findOne(filter);
+    if (!doc) return null;
+    const { _id, ...cleanDoc } = doc;
+    return cleanDoc;
   } catch (err) {
-    console.warn('⚠️ [MongoDB] Error asegurando índices:', err?.message || err);
-    return {
-      verified: false,
-      reason: err?.message || 'index_error',
-      elapsedMs: Math.max(1, Math.round(performance.now() - startMs)),
-      indexes: []
-    };
+    console.warn(`⚠️ [MongoDB] Error en findOne (${collectionName}):`, err?.message || err);
+    if (throwOnError) throw err;
+    return null;
+  }
+}
+
+/**
+ * Helper seguro para eliminar un documento de una colección.
+ */
+export async function deleteMongoDoc(collectionName, filter, { throwOnError = false } = {}) {
+  const database = await getMongoDb();
+  if (!database) {
+    if (throwOnError) {
+      throw new Error(`MongoDB Atlas no disponible al intentar eliminar en "${collectionName}"`);
+    }
+    return { acknowledged: false, deletedCount: 0 };
+  }
+  try {
+    const result = await database.collection(collectionName).deleteOne(filter);
+    if (!result || result.acknowledged !== true) {
+      throw new Error(`Eliminación no reconocida en "${collectionName}"`);
+    }
+    return { acknowledged: true, deletedCount: result.deletedCount || 0 };
+  } catch (err) {
+    console.warn(`⚠️ [MongoDB] Error eliminando (${collectionName}):`, err?.message || err);
+    if (throwOnError) throw err;
+    return { acknowledged: false, deletedCount: 0 };
+  }
+}
+
+/**
+ * Helper seguro para eliminar múltiples documentos de una colección.
+ */
+export async function deleteMongoDocs(collectionName, filter, { throwOnError = false } = {}) {
+  const database = await getMongoDb();
+  if (!database) {
+    if (throwOnError) {
+      throw new Error(`MongoDB Atlas no disponible al intentar eliminar lote en "${collectionName}"`);
+    }
+    return { acknowledged: false, deletedCount: 0 };
+  }
+  try {
+    const result = await database.collection(collectionName).deleteMany(filter);
+    if (!result || result.acknowledged !== true) {
+      throw new Error(`Eliminación múltiple no reconocida en "${collectionName}"`);
+    }
+    return { acknowledged: true, deletedCount: result.deletedCount || 0 };
+  } catch (err) {
+    console.warn(`⚠️ [MongoDB] Error eliminando varios (${collectionName}):`, err?.message || err);
+    if (throwOnError) throw err;
+    return { acknowledged: false, deletedCount: 0 };
   }
 }

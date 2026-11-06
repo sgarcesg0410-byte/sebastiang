@@ -36,13 +36,13 @@
 ---
 
 ### Escenario C: Caída de MongoDB Atlas / Restauración desde Backup Cifrado y Rotación de Llaves (`keyId`)
-1. **Objetivos de Recuperación (RPO y RTO definidos):**
+1. **Objetivos de Recuperación (RPO y RTO definidos y condiciones operativas):**
    - **RPO (Recovery Point Objective):**
-     - **0 transacciones/reservas confirmadas perdidas** mediante escritura con `w=majority` y Point-in-Time Recovery (PITR / oplog continuo) en MongoDB Atlas.
-     - **Máximo 24 horas** para snapshots fríos externos descargados vía `GET /api/admin/backup?encrypt=1`.
+     - **0 transacciones/reservas confirmadas perdidas** para operaciones ya aceptadas por MongoDB Atlas con `w=majority`, siempre que el clúster cuente con réplicas saludables y Point-in-Time Recovery (PITR / oplog continuo) habilitado en Atlas.
+     - **Máximo 24 horas** para recuperación desde snapshots externos cifrados descargados vía `GET /api/admin/backup` (cifrado `AES-256-GCM` activo por defecto en producción).
    - **RTO (Recovery Time Objective):**
-     - **< 2 segundos** para restauración caliente en memoria/API (`decryptAndSanitizeMs` + `memoryRestoreMs`).
-     - **< 5 minutos** para restauración completa en un clúster MongoDB Atlas limpio (conexión TLS + recreación de 11 índices BSON incluyendo TTL `idx_audit_logs_ttl_90d` + inserción por lotes + verificación de conteos).
+     - **< 2 segundos** para restauración caliente en memoria/API (`decryptAndSanitizeMs` + `memoryRestoreMs`) sobre volúmenes operativos del estudio.
+     - **< 5 minutos** para restauración completa en un clúster MongoDB Atlas limpio (conexión TLS + validación en colección de staging + restauración con rollback automático ante fallos + recreación de los **17 índices BSON** incluyendo TTL `idx_audit_logs_ttl_90d` + verificación de conteos).
 2. **Custodia y Rotación Versionada de Llaves (`AES-256-GCM` con `keyId` y AAD):**
    - Cada sobre cifrado incluye `keyId` (ej. `v1`, `v2`) autenticado mediante `cipher.setAAD(Buffer.from("keyId:" + keyId))`.
    - Para rotar la llave en producción sin perder capacidad de descifrar backups históricos:
@@ -135,5 +135,5 @@ class SecureTokenStorage(context: Context) {
 
 ### Checklist de Auditoría del Proyecto Android (`AndroidManifest.xml` y `WebView`)
 1. `android:usesCleartextTraffic="false"` y `android:allowBackup="false"` en `<application>` dentro de `AndroidManifest.xml`.
-2. Desactivar depuración de WebView en producción (`WebView.setWebContentsDebuggingEnabled(false)` cuando `!BuildConfig.DEBUG`).
-3. Restringir `@JavascriptInterface` (`AndroidNotificationBridge`) únicamente a orígenes verificados (`https://sebastiang.app` y `https://www.sebastiang.app`), bloqueando `file://` (`settings.allowFileAccess = false`, `settings.allowContentAccess = false`).
+2. Desactivar depuración de WebView en producción (`WebView.setWebContentsDebuggingEnabled(false)`).
+3. Canal nativo `WebViewCompat.addWebMessageListener` restringido a `ALLOWED_ORIGIN_RULES = setOf("https://sebastiang.app", "https://www.sebastiang.app")` verificando `isMainFrame`, complementado por `AndroidNotificationBridge` que comprueba la URL activa del WebView directamente en el UI thread (`Looper.getMainLooper()`) y **jamás expone el `deviceToken` en claro a JavaScript** (exponiendo únicamente `hasStoredDeviceToken(): Boolean`).

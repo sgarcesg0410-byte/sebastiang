@@ -170,11 +170,16 @@ export async function updateAdminPasswordInStore({ runtimeDB, newScryptHash, new
  * Obtiene la versión actual de la contraseña (por defecto 1)
  */
 export async function getActivePasswordVersionFromStore({ runtimeDB }) {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
   if (isMongoConfigured()) {
     try {
-      const docs = await findMongoDocs('security', {
-        $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }]
-      });
+      const docs = await findMongoDocs(
+        'security',
+        { $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }] },
+        null,
+        0,
+        { throwOnError: isProduction }
+      );
       if (docs && docs[0]?.passwordVersion) {
         const v = Number(docs[0].passwordVersion);
         if (Number.isFinite(v) && v >= 1) {
@@ -182,7 +187,11 @@ export async function getActivePasswordVersionFromStore({ runtimeDB }) {
           return v;
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      if (isProduction) {
+        throw new Error(`Almacén de versión de contraseña en MongoDB Atlas no disponible: ${e?.message || e}`);
+      }
+    }
   }
 
   const inMem = runtimeDB?.settings?.adminPasswordVersion;
