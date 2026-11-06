@@ -116,6 +116,8 @@ import {
   formatDateTime12Hour,
   formatPhotoUrl,
   getReviews,
+  getAdminReviews,
+  updateAdminReviewStatus,
   deleteReview,
   createAdminReview,
   getWalletBaseBalances,
@@ -1433,7 +1435,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           getPackages(),
           getCatalog(),
           getAdminPayments(),
-          getReviews(),
+          getAdminReviews(),
           fetchCloudWalletBaseBalances()
         ]);
       }
@@ -6728,49 +6730,78 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           </div>
 
-          {/* TARJETAS RESUMEN DE SATISFACCIÓN */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
-              <span className="text-xs text-stone-400 font-semibold block mb-1">Calificación Promedio</span>
-              <div className="flex items-center gap-2">
-                <span className="text-3xl font-black text-white font-mono">
-                  {reviewsList.length > 0 ? '5.0' : '0.0'}
-                </span>
-                <div className="flex items-center gap-0.5 text-amber-400">
-                  {[...Array(5)].map((_, i) => (
-                    <Star key={i} className={`w-4 h-4 ${reviewsList.length > 0 ? 'fill-amber-400' : 'text-stone-700'}`} />
-                  ))}
+          {/* TARJETAS RESUMEN DE SATISFACCIÓN (CALCULADAS EN TIEMPO REAL Y TRANSPARENTES) */}
+          {(() => {
+            const verifiedReviewsList = reviewsList.filter(
+              r => r && r.verified === true && r.status !== 'pending' && r.status !== 'rejected'
+            );
+            const pendingReviewsCount = reviewsList.filter(
+              r => r && (r.status === 'pending' || (!r.verified && r.status !== 'rejected'))
+            ).length;
+            const totalVer = verifiedReviewsList.length;
+            const avgRatingVal = totalVer > 0
+              ? (verifiedReviewsList.reduce((acc, r) => acc + Math.max(1, Math.min(5, Number(r.rating) || 5)), 0) / totalVer).toFixed(1)
+              : null;
+            const recommendedCount = verifiedReviewsList.filter(r => r.recommend !== false).length;
+            const recPercentVal = totalVer > 0
+              ? Math.round((recommendedCount / totalVer) * 100)
+              : null;
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
+                  <span className="text-xs text-stone-400 font-semibold block mb-1">Calificación Promedio</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl sm:text-3xl font-black text-white font-mono">
+                      {totalVer > 0 ? avgRatingVal : 'Sin calificaciones'}
+                    </span>
+                    {totalVer > 0 && (
+                      <div className="flex items-center gap-0.5 text-amber-400">
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`w-4 h-4 ${i < Math.round(Number(avgRatingVal)) ? 'fill-amber-400' : 'text-stone-700'}`}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-emerald-400 font-bold block mt-1">
+                    {totalVer > 0 ? `${totalVer} ${totalVer === 1 ? 'opinión verificada' : 'opiniones verificadas'}` : '0 opiniones'}
+                  </span>
+                </div>
+
+                <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
+                  <span className="text-xs text-stone-400 font-semibold block mb-1">Recomendación</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl sm:text-3xl font-black text-white font-mono">
+                      {totalVer > 0 ? `${recPercentVal}%` : 'Sin datos'}
+                    </span>
+                    <CheckCircle2 className={`w-5 h-5 ${totalVer > 0 ? 'text-emerald-400' : 'text-stone-600'}`} />
+                  </div>
+                  <span className="text-[10px] text-stone-400 block mt-1">
+                    {totalVer > 0 ? `${recommendedCount} de ${totalVer} clientes recomiendan el servicio` : 'Pendiente de evaluaciones'}
+                  </span>
+                </div>
+
+                <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
+                  <span className="text-xs text-stone-400 font-semibold block mb-1">Estado de Moderación</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl sm:text-3xl font-black text-white font-mono">{totalVer}</span>
+                    <Users className="w-5 h-5 text-amber-400" />
+                    {pendingReviewsCount > 0 && (
+                      <span className="text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full">
+                        {pendingReviewsCount} pendiente{pendingReviewsCount === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-amber-400 block mt-1">
+                    {totalVer > 0 ? 'Verificadas y visibles en portada (máx. 3 iniciales)' : '0 opiniones verificadas en portada'}
+                  </span>
                 </div>
               </div>
-              <span className="text-[10px] text-emerald-400 font-bold block mt-1">
-                {reviewsList.length > 0 ? '100% Calificaciones 5 estrellas' : 'Sin calificaciones aún'}
-              </span>
-            </div>
-
-            <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
-              <span className="text-xs text-stone-400 font-semibold block mb-1">Recomendación</span>
-              <div className="flex items-center gap-2">
-                <span className="text-3xl font-black text-white font-mono">
-                  {reviewsList.length > 0 ? '100%' : '0%'}
-                </span>
-                <CheckCircle2 className={`w-5 h-5 ${reviewsList.length > 0 ? 'text-emerald-400' : 'text-stone-600'}`} />
-              </div>
-              <span className="text-[10px] text-stone-400 block mt-1">
-                {reviewsList.length > 0 ? 'Todos los clientes recomiendan tu trabajo' : 'Pendiente de opiniones reales'}
-              </span>
-            </div>
-
-            <div className="bg-stone-900/80 border border-stone-800 p-4 rounded-2xl">
-              <span className="text-xs text-stone-400 font-semibold block mb-1">Total de Reseñas</span>
-              <div className="flex items-center gap-2">
-                <span className="text-3xl font-black text-white font-mono">{reviewsList.length}</span>
-                <Users className="w-5 h-5 text-amber-400" />
-              </div>
-              <span className="text-[10px] text-amber-400 block mt-1">
-                {reviewsList.length > 0 ? 'Visibles en la página central' : 'Se mostrarán en la portada al recibirlas'}
-              </span>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* ENLACE DIRECTO PARA SOLICITAR OPINIONES A CLIENTES */}
           <div className="bg-gradient-to-br from-amber-950/40 via-stone-900 to-stone-900 border border-amber-500/40 rounded-3xl p-5 sm:p-7 shadow-2xl space-y-5">
@@ -6902,19 +6933,42 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {reviewsList.map((review, idx) => (
+              {reviewsList.map((review, idx) => {
+                const isVerifiedRev = review.verified === true && review.status !== 'pending' && review.status !== 'rejected';
+                const isRejectedRev = review.status === 'rejected';
+                return (
                 <div
                   key={review.id || idx}
-                  className="bg-stone-900/90 border border-stone-800 hover:border-amber-500/40 rounded-3xl p-5 flex flex-col justify-between shadow-xl transition-all space-y-4 relative group"
+                  className={`bg-stone-900/90 border rounded-3xl p-5 flex flex-col justify-between shadow-xl transition-all space-y-4 relative group ${
+                    isVerifiedRev
+                      ? 'border-stone-800 hover:border-amber-500/40'
+                      : isRejectedRev
+                        ? 'border-red-900/40 opacity-75'
+                        : 'border-amber-500/40 bg-amber-950/10'
+                  }`}
                 >
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-1">
                         {[...Array(review.rating || 5)].map((_, i) => (
                           <Star key={i} className="w-4 h-4 text-amber-400 fill-amber-400" />
                         ))}
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {isVerifiedRev ? (
+                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <ShieldCheck className="w-3 h-3" />
+                            <span>Verificada</span>
+                          </span>
+                        ) : isRejectedRev ? (
+                          <span className="text-[10px] font-bold text-red-400 bg-red-950/60 border border-red-500/30 px-2 py-0.5 rounded-full">
+                            ✕ Rechazada
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 rounded-full">
+                            ⏳ Pendiente
+                          </span>
+                        )}
                         {review.recommend !== false && review.recommends !== false && (
                           <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
@@ -6949,20 +7003,61 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     </p>
                   </div>
 
-                  <div className="pt-3 border-t border-stone-800 flex items-center justify-between">
-                    <div>
-                      <h5 className="text-xs font-bold text-white">
-                        {review.clientName || 'Cliente Satisfecho'}
-                      </h5>
+                  <div className="pt-3 border-t border-stone-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h5 className="text-xs font-bold text-white">
+                          {review.clientName || 'Cliente Satisfecho'}
+                        </h5>
+                      </div>
+                      {review.date && (
+                        <span className="text-[10px] text-stone-400 font-mono">
+                          {review.date}
+                        </span>
+                      )}
                     </div>
-                    {review.date && (
-                      <span className="text-[10px] text-stone-400 font-mono">
-                        {review.date}
-                      </span>
-                    )}
+
+                    {/* CONTROLES DE MODERACIÓN (APROBAR / RECHAZAR) */}
+                    <div className="flex items-center gap-2 pt-1">
+                      {!isVerifiedRev && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await updateAdminReviewStatus(review.id, { status: 'verified', verified: true });
+                              setReviewsList(prev => prev.map(r => r.id === review.id ? (res.review || { ...r, status: 'verified', verified: true }) : r));
+                            } catch (err) {
+                              alert('Error al verificar reseña: ' + (err.message || 'Intenta de nuevo'));
+                            }
+                          }}
+                          className="flex-1 py-1.5 px-2.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Aprobar y Publicar</span>
+                        </button>
+                      )}
+                      {!isRejectedRev && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await updateAdminReviewStatus(review.id, { status: 'rejected', verified: false });
+                              setReviewsList(prev => prev.map(r => r.id === review.id ? (res.review || { ...r, status: 'rejected', verified: false }) : r));
+                            } catch (err) {
+                              alert('Error al rechazar reseña: ' + (err.message || 'Intenta de nuevo'));
+                            }
+                          }}
+                          className="py-1.5 px-2.5 rounded-xl bg-stone-800 hover:bg-red-950/50 border border-stone-700 hover:border-red-500/40 text-stone-400 hover:text-red-300 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>{isVerifiedRev ? 'Ocultar' : 'Rechazar'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

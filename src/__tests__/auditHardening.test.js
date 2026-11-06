@@ -2128,4 +2128,171 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(adminSecCode).not.toContain('Math.random()');
     });
   });
+
+  describe('12. Auditoría del Módulo de Opiniones y Reseñas (Moderación, Unicidad por Galería, Recomendación Real y Estadísticas Transparentes)', () => {
+    it('POST /api/reviews guarda reseñas públicas como pending/no verificadas, GET /api/reviews las oculta y PATCH /api/admin/reviews/:id permite aprobarlas o rechazarlas', async () => {
+      runtimeDB.reviews = [];
+      runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 1 };
+      const adminToken = createAdminToken({ pwd: 1 });
+
+      // 1. Envío público sin sesión verificada
+      const postRes = await invokeApp('POST', '/api/reviews', {
+        body: {
+          clientName: 'Visitante Público',
+          rating: 5,
+          recommend: true,
+          comment: 'Me gustaron mucho las fotos del portafolio'
+        }
+      });
+      expect(postRes.status).toBe(201);
+      expect(postRes.body.review.verified).toBe(false);
+      expect(postRes.body.review.status).toBe('pending');
+      const revId = postRes.body.review.id;
+
+      // 2. GET /api/reviews (público) NO debe incluir reseñas no verificadas
+      const publicBefore = await invokeApp('GET', '/api/reviews');
+      expect(publicBefore.status).toBe(200);
+      expect(publicBefore.body.some(r => r.id === revId)).toBe(false);
+
+      // 3. GET /api/admin/reviews SÍ devuelve la reseña pendiente para moderación
+      const adminListRes = await invokeApp('GET', '/api/admin/reviews', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(adminListRes.status).toBe(200);
+      expect(adminListRes.body.some(r => r.id === revId && r.status === 'pending')).toBe(true);
+
+      // 4. El administrador aprueba la reseña -> pasa a verified: true, status: 'verified'
+      const approveRes = await invokeApp('PATCH', `/api/admin/reviews/${revId}`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: { status: 'verified' }
+      });
+      expect(approveRes.status).toBe(200);
+      expect(approveRes.body.review.verified).toBe(true);
+      expect(approveRes.body.review.status).toBe('verified');
+
+      // 5. Ahora sí aparece en GET /api/reviews público
+      const publicAfterApprove = await invokeApp('GET', '/api/reviews');
+      expect(publicAfterApprove.body.some(r => r.id === revId)).toBe(true);
+
+      // 6. El administrador rechaza la reseña -> desaparece inmediatamente del listado público
+      const rejectRes = await invokeApp('PATCH', `/api/admin/reviews/${revId}`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: { status: 'rejected' }
+      });
+      expect(rejectRes.status).toBe(200);
+      expect(rejectRes.body.review.verified).toBe(false);
+      expect(rejectRes.body.review.status).toBe('rejected');
+
+      const publicAfterReject = await invokeApp('GET', '/api/reviews');
+      expect(publicAfterReject.body.some(r => r.id === revId)).toBe(false);
+    });
+
+    it('POST /api/reviews valida estrictamente longitud de nombre, comentario y rango entero de calificación (1 a 5)', async () => {
+      const badName = await invokeApp('POST', '/api/reviews', {
+        body: { clientName: 'A', rating: 5, comment: 'Comentario válido' }
+      });
+      expect(badName.status).toBe(400);
+
+      const badComment = await invokeApp('POST', '/api/reviews', {
+        body: { clientName: 'Cliente Real', rating: 5, comment: 'ok' }
+      });
+      expect(badComment.status).toBe(400);
+
+      const badRating = await invokeApp('POST', '/api/reviews', {
+        body: { clientName: 'Cliente Real', rating: 9, comment: 'Excelente sesión fotográfica' }
+      });
+      expect(badRating.status).toBe(400);
+    });
+
+    it('POST /api/gallery/:token/review exige sesión finalizada, unifica galleryToken/token e impide reseñas duplicadas por galería (409)', async () => {
+      runtimeDB.reviews = [];
+      runtimeDB.sessions = [];
+
+      const pendingToken = 'gal-pending-rev-' + Date.now();
+      runtimeDB.sessions.push({
+        id: 'sess-pend-1',
+        token: pendingToken,
+        clientName: 'Cliente Pendiente',
+        status: 'pending'
+      });
+
+      // 1. Sesión aún no finalizada ni enviada -> 400 SESSION_NOT_FINALIZED
+      const unfinalizedRes = await invokeApp('POST', `/api/gallery/${pendingToken}/review`, {
+        body: {
+          clientName: 'Cliente Pendiente',
+          rating: 5,
+          recommend: true,
+          comment: 'Intento calificar antes de finalizar'
+        }
+      });
+      expect(unfinalizedRes.status).toBe(400);
+      expect(unfinalizedRes.body.code).toBe('SESSION_NOT_FINALIZED');
+
+      // 2. Sesión entregada -> primera reseña se guarda como verificada con galleryToken y token unificados
+      const deliveredToken = 'gal-deliv-rev-' + Date.now();
+      runtimeDB.sessions.push({
+        id: 'sess-deliv-1',
+        token: deliveredToken,
+        clientName: 'Cliente Entregado',
+        status: 'delivered'
+      });
+
+      const firstRevRes = await invokeApp('POST', `/api/gallery/${deliveredToken}/review`, {
+        body: {
+          clientName: 'Cliente Entregado',
+          rating: 5,
+          recommend: true,
+          comment: 'Increíble trabajo y entrega puntual en Full HD'
+        }
+      });
+      expect(firstRevRes.status).toBe(201);
+      expect(firstRevRes.body.review.verified).toBe(true);
+      expect(firstRevRes.body.review.status).toBe('verified');
+      expect(firstRevRes.body.review.galleryToken).toBe(deliveredToken);
+      expect(firstRevRes.body.review.token).toBe(deliveredToken);
+
+      // 3. Segundo intento con el mismo token de galería -> 409 DUPLICATE_GALLERY_REVIEW
+      const dupRevRes = await invokeApp('POST', `/api/gallery/${deliveredToken}/review`, {
+        body: {
+          clientName: 'Cliente Entregado',
+          rating: 4,
+          recommend: true,
+          comment: 'Segunda reseña duplicada para la misma galería'
+        }
+      });
+      expect(dupRevRes.status).toBe(409);
+      expect(dupRevRes.body.code).toBe('DUPLICATE_GALLERY_REVIEW');
+    });
+
+    it('TestimonialsSection.jsx filtra por verified === true, calcula recommendPercent desde r.recommend, muestra estados vacíos transparentes y limita a 3 reseñas iniciales', () => {
+      const rootDir = process.cwd();
+      const testimonialsCode = fs.readFileSync(
+        path.join(rootDir, 'src/components/TestimonialsSection.jsx'),
+        'utf8'
+      );
+      const mongoCode = fs.readFileSync(path.join(rootDir, 'api/db/mongo.js'), 'utf8');
+
+      // 1. Filtra únicamente reseñas verificadas
+      expect(testimonialsCode).toContain('r.verified === true');
+      expect(testimonialsCode).toContain('rev.verified === true');
+
+      // 2. Calcula porcentaje de recomendación desde el campo booleano recommend (no desde r >= 4)
+      expect(testimonialsCode).toContain('validReviews.filter(r => r.recommend !== false).length');
+      expect(testimonialsCode).not.toContain('ratings.filter(r => r >= 4)');
+
+      // 3. Estados vacíos transparentes cuando no hay reseñas verificadas
+      expect(testimonialsCode).toContain('Sin calificaciones');
+      expect(testimonialsCode).toContain('0 opiniones');
+      expect(testimonialsCode).toContain('Sin datos');
+      expect(testimonialsCode).toContain('Pendiente de evaluaciones');
+
+      // 4. Límite de 3 opiniones más recientes por defecto
+      expect(testimonialsCode).toContain('const INITIAL_VISIBLE_REVIEWS = 3;');
+      expect(testimonialsCode).toContain('validReviews.slice(0, INITIAL_VISIBLE_REVIEWS)');
+
+      // 5. Índice único por galleryToken en MongoDB
+      expect(mongoCode).toContain("name: 'uniq_reviews_gallery_token'");
+      expect(mongoCode).toContain("name: 'uniq_reviews_id'");
+    });
+  });
 });

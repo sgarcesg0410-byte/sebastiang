@@ -1,25 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote, Camera } from 'lucide-react';
+import { Star, ShieldCheck, Heart, Sparkles, MessageCircle, Quote, Camera, ChevronDown, ChevronUp } from 'lucide-react';
 import { getReviews, REAL_DEFAULT_REVIEWS } from '../services/api';
+
+const INITIAL_VISIBLE_REVIEWS = 3;
 
 export default function TestimonialsSection({ onOpenBooking }) {
   const [reviews, setReviews] = useState(REAL_DEFAULT_REVIEWS);
+  const [showAllReviews, setShowAllReviews] = useState(false);
 
   useEffect(() => {
     getReviews().then(data => {
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setReviews(data);
       }
     });
 
-    // Escuchar nuevas reseñas en tiempo real
+    // Escuchar nuevas reseñas verificadas o moderaciones en tiempo real
     let bc;
     try {
       if (typeof window !== 'undefined' && window.BroadcastChannel) {
         bc = new BroadcastChannel('reviews_realtime_sync');
         bc.onmessage = (e) => {
+          if (e.data?.type === 'DELETE_REVIEW' && e.data?.id) {
+            setReviews(prev => prev.filter(r => r.id !== e.data.id));
+            return;
+          }
           if (e.data?.review) {
-            setReviews(prev => [e.data.review, ...prev.filter(r => r.id !== e.data.review.id)]);
+            const incoming = e.data.review;
+            if (incoming.verified === true && incoming.status !== 'pending' && incoming.status !== 'rejected') {
+              setReviews(prev => [incoming, ...prev.filter(r => r.id !== incoming.id)]);
+            } else {
+              setReviews(prev => prev.filter(r => r.id !== incoming.id));
+            }
           }
         };
       }
@@ -28,7 +40,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
     const handleStorage = (e) => {
       if (e.key === 'sebastian_g_reviews_last_sync' || e.key === 'sebastian_g_reviews_v1') {
         getReviews().then(data => {
-          if (Array.isArray(data) && data.length > 0) setReviews(data);
+          if (Array.isArray(data)) setReviews(data);
         });
       }
     };
@@ -40,16 +52,33 @@ export default function TestimonialsSection({ onOpenBooking }) {
     };
   }, []);
 
-  // Garantizar que la sección de recomendaciones reales siempre esté presente
+  // Filtrar estrictamente reseñas verificadas y aprobadas, ordenadas de más reciente a más antigua
   const sourceReviews = Array.isArray(reviews) && reviews.length > 0 ? reviews : REAL_DEFAULT_REVIEWS;
-  const validReviews = sourceReviews.filter(r => r && (r.comment?.trim() || r.rating));
+  const validReviews = sourceReviews
+    .filter(
+      r =>
+        r &&
+        r.verified === true &&
+        r.status !== 'pending' &&
+        r.status !== 'rejected' &&
+        (r.comment?.trim() || r.rating)
+    )
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
 
-  // Métricas reales y honestas calculadas estrictamente desde reseñas verificadas
+  const visibleReviews = showAllReviews
+    ? validReviews
+    : validReviews.slice(0, INITIAL_VISIBLE_REVIEWS);
+
+  // Métricas transparentes calculadas exclusivamente desde reseñas verificadas
   const totalReviews = validReviews.length;
   const ratings = validReviews.map(r => Math.max(1, Math.min(5, Number(r.rating) || 5)));
-  const avgRating = totalReviews > 0 ? (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1) : '5.0';
-  const satisfiedReviews = ratings.filter(r => r >= 4).length;
-  const recommendPercent = totalReviews > 0 ? Math.round((satisfiedReviews / totalReviews) * 100) : 100;
+  const avgRating = totalReviews > 0
+    ? (ratings.reduce((acc, curr) => acc + curr, 0) / totalReviews).toFixed(1)
+    : null;
+  const recommendedCount = validReviews.filter(r => r.recommend !== false).length;
+  const recommendPercent = totalReviews > 0
+    ? Math.round((recommendedCount / totalReviews) * 100)
+    : null;
 
   return (
     <section id="testimonials-section" className="py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-stone-800/60">
@@ -58,7 +87,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
       <div className="text-center max-w-3xl mx-auto mb-14">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-extrabold uppercase tracking-widest mb-4 shadow-sm">
           <Star className="w-3.5 h-3.5 fill-amber-400" />
-          <span>Experiencias & Calificaciones Reales</span>
+          <span>Opiniones Recientes & Calificaciones Verificadas</span>
         </div>
         
         <h2 className="text-3xl sm:text-4xl lg:text-5xl font-serif font-bold text-white tracking-tight">
@@ -69,21 +98,25 @@ export default function TestimonialsSection({ onOpenBooking }) {
           La confianza de quienes ya vivieron su sesión con Sebastian G. Cada fotografía es un recuerdo capturado con amor, técnica y entrega en máxima resolución original.
         </p>
 
-        {/* INSIGNIAS DE CONFIANZA CALCULADAS EN VIVO */}
+        {/* INSIGNIAS DE CONFIANZA CALCULADAS EN VIVO CON TRANSPARENCIA TOTAL */}
         <div className="grid grid-cols-3 gap-3 sm:gap-6 mt-8 max-w-xl mx-auto">
           <div className="bg-stone-900/80 border border-stone-800/80 p-3.5 rounded-2xl text-center shadow-lg">
-            <div className="flex items-center justify-center gap-1 text-amber-400 text-base sm:text-lg font-black font-mono">
-              <span>{totalReviews > 0 ? avgRating : '5.0'}</span>
-              <Star className="w-4 h-4 fill-amber-400" />
+            <div className="flex items-center justify-center gap-1 text-amber-400 text-sm sm:text-lg font-black font-mono">
+              <span>{totalReviews > 0 ? avgRating : 'Sin calificaciones'}</span>
+              {totalReviews > 0 && <Star className="w-4 h-4 fill-amber-400" />}
             </div>
             <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">
-              {totalReviews > 0 ? `${totalReviews} ${totalReviews === 1 ? 'Opinión Verificada' : 'Opiniones Reales'}` : 'Opiniones 100% Reales'}
+              {totalReviews > 0 ? `${totalReviews} ${totalReviews === 1 ? 'opinión verificada' : 'opiniones verificadas'}` : '0 opiniones'}
             </span>
           </div>
 
           <div className="bg-stone-900/80 border border-stone-800/80 p-3.5 rounded-2xl text-center shadow-lg">
-            <span className="text-base sm:text-lg font-black text-emerald-400 font-mono">{totalReviews > 0 ? `${recommendPercent}%` : '100%'}</span>
-            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">{totalReviews > 0 ? 'Recomendación Real' : 'Satisfacción Garantizada'}</span>
+            <span className="text-sm sm:text-lg font-black text-emerald-400 font-mono block">
+              {totalReviews > 0 ? `${recommendPercent}%` : 'Sin datos'}
+            </span>
+            <span className="text-[10px] sm:text-xs text-stone-400 block mt-0.5">
+              {totalReviews > 0 ? 'Recomendación Real' : 'Pendiente de evaluaciones'}
+            </span>
           </div>
 
           <div className="bg-stone-900/80 border border-stone-800/80 p-3.5 rounded-2xl text-center shadow-lg">
@@ -147,7 +180,7 @@ export default function TestimonialsSection({ onOpenBooking }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-5 border-t border-stone-800/80 text-stone-400 text-xs">
             <div className="flex items-center justify-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>100% Opiniones Reales</span>
+              <span>Solo Opiniones Verificadas</span>
             </div>
             <div className="flex items-center justify-center gap-1.5">
               <Heart className="w-4 h-4 text-red-400 shrink-0" />
@@ -155,71 +188,97 @@ export default function TestimonialsSection({ onOpenBooking }) {
             </div>
             <div className="flex items-center justify-center gap-1.5">
               <Camera className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Clientes Verificados</span>
+              <span>Clientes Reales</span>
             </div>
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {validReviews.map((rev) => (
-            <div
-              key={rev.id}
-              className="relative bg-gradient-to-b from-stone-900/90 to-stone-950 border border-stone-800/90 hover:border-amber-500/40 rounded-3xl p-6 sm:p-7 flex flex-col justify-between transition-all duration-300 shadow-xl hover:shadow-2xl hover:shadow-amber-500/5 group"
-            >
-              {/* Comilla sutil en el fondo */}
-              <div className="absolute top-6 right-6 text-stone-800 group-hover:text-amber-500/10 transition-colors pointer-events-none">
-                <Quote className="w-10 h-10" />
-              </div>
-
-              <div>
-                {/* Estrellas Doradas */}
-                <div className="flex items-center gap-1 mb-3">
-                  {[...Array(5)].map((_, i) => (
-                    <Star
-                      key={i}
-                      className={`w-4 h-4 ${
-                        i < (rev.rating || 5)
-                          ? 'text-amber-400 fill-amber-400'
-                          : 'text-stone-700'
-                      }`}
-                    />
-                  ))}
-                  <span className="text-xs font-bold text-amber-300 ml-1.5 font-mono">
-                    {rev.rating ? `${rev.rating}.0` : '5.0'}
-                  </span>
+        <div className="space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {visibleReviews.map((rev) => (
+              <div
+                key={rev.id}
+                className="relative bg-gradient-to-b from-stone-900/90 to-stone-950 border border-stone-800/90 hover:border-amber-500/40 rounded-3xl p-6 sm:p-7 flex flex-col justify-between transition-all duration-300 shadow-xl hover:shadow-2xl hover:shadow-amber-500/5 group"
+              >
+                {/* Comilla sutil en el fondo */}
+                <div className="absolute top-6 right-6 text-stone-800 group-hover:text-amber-500/10 transition-colors pointer-events-none">
+                  <Quote className="w-10 h-10" />
                 </div>
 
-                {/* Texto de la Reseña */}
-                <p className="text-stone-300 text-xs sm:text-sm leading-relaxed italic relative z-10 mb-6">
-                  "{rev.comment}"
-                </p>
-              </div>
-
-              {/* Datos del Cliente y Validación */}
-              <div className="pt-4 border-t border-stone-800/80 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 border border-amber-400/50 flex items-center justify-center text-stone-950 font-black text-sm shadow-md shrink-0">
-                    {rev.clientName ? rev.clientName.charAt(0).toUpperCase() : 'C'}
+                <div>
+                  {/* Estrellas Doradas */}
+                  <div className="flex items-center gap-1 mb-3">
+                    {[...Array(5)].map((_, i) => (
+                      <Star
+                        key={i}
+                        className={`w-4 h-4 ${
+                          i < (rev.rating || 5)
+                            ? 'text-amber-400 fill-amber-400'
+                            : 'text-stone-700'
+                        }`}
+                      />
+                    ))}
+                    <span className="text-xs font-bold text-amber-300 ml-1.5 font-mono">
+                      {rev.rating ? `${rev.rating}.0` : '5.0'}
+                    </span>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-serif font-bold text-white leading-tight">
-                      {rev.clientName}
-                    </h4>
-                  </div>
+
+                  {/* Texto de la Reseña */}
+                  <p className="text-stone-300 text-xs sm:text-sm leading-relaxed italic relative z-10 mb-6">
+                    "{rev.comment}"
+                  </p>
                 </div>
 
-                <div className="text-right shrink-0">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                    <ShieldCheck className="w-3 h-3" />
-                    <span>Verificado</span>
-                  </span>
-                  <span className="text-[10px] text-stone-500 block mt-0.5">
-                    {rev.date || 'Reciente'}
-                  </span>
+                {/* Datos del Cliente y Validación */}
+                <div className="pt-4 border-t border-stone-800/80 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 border border-amber-400/50 flex items-center justify-center text-stone-950 font-black text-sm shadow-md shrink-0">
+                      {rev.clientName ? rev.clientName.charAt(0).toUpperCase() : 'C'}
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-serif font-bold text-white leading-tight">
+                        {rev.clientName}
+                      </h4>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    {rev.verified === true && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        <ShieldCheck className="w-3 h-3" />
+                        <span>Verificado</span>
+                      </span>
+                    )}
+                    <span className="text-[10px] text-stone-500 block mt-0.5">
+                      {rev.date || 'Reciente'}
+                    </span>
+                  </div>
                 </div>
               </div>
+            ))}
+          </div>
+
+          {validReviews.length > INITIAL_VISIBLE_REVIEWS && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => setShowAllReviews(prev => !prev)}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-stone-900 hover:bg-stone-800 border border-stone-700 hover:border-amber-500/40 text-amber-300 hover:text-white text-xs font-bold transition-all cursor-pointer shadow-lg"
+              >
+                {showAllReviews ? (
+                  <>
+                    <ChevronUp className="w-4 h-4 text-amber-400" />
+                    <span>Mostrar solo las 3 opiniones más recientes</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-4 h-4 text-amber-400" />
+                    <span>Ver todas las opiniones verificadas ({validReviews.length})</span>
+                  </>
+                )}
+              </button>
             </div>
-          ))}
+          )}
         </div>
       )}
 

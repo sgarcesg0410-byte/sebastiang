@@ -110,9 +110,9 @@ async function deduplicateCollectionByField(database, collectionName, fieldName)
 }
 
 /**
- * Crea y verifica los 17 índices críticos de producción e índices TTL en MongoDB Atlas:
+ * Crea y verifica los 19 índices críticos de producción e índices TTL en MongoDB Atlas:
  * - Unicidad estricta en `bookings.id`, `payments.id`, `payments.reference`, `payments.transactionId`,
- *   `sessions.id`, `sessions.token`, `audit_logs.id`, `slot_locks.lockKey` y `rate_limits.key`.
+ *   `sessions.id`, `sessions.token`, `reviews.id`, `reviews.galleryToken`, `audit_logs.id`, `slot_locks.lockKey` y `rate_limits.key`.
  * - Índice compuesto `{ dateTime: 1, status: 1 }` en `bookings` para detección rápida de cruces de horario.
  * - Índice `{ expiresAt: 1 }` en `sessions` para control de caducidad de galerías privadas.
  * - Índices TTL nativos en `audit_logs` (90 días), `slot_locks` y `rate_limits`.
@@ -133,6 +133,8 @@ export async function ensureMongoIndexes(targetDb = null) {
     await deduplicateCollectionByField(database, 'payments', 'transactionId');
     await deduplicateCollectionByField(database, 'sessions', 'id');
     await deduplicateCollectionByField(database, 'sessions', 'token');
+    await deduplicateCollectionByField(database, 'reviews', 'id');
+    await deduplicateCollectionByField(database, 'reviews', 'galleryToken');
     await deduplicateCollectionByField(database, 'audit_logs', 'id');
 
     const safeCreateIndex = async (colName, spec, opts) => {
@@ -167,16 +169,20 @@ export async function ensureMongoIndexes(targetDb = null) {
     await safeCreateIndex('sessions', { token: 1 }, { unique: true, name: 'uniq_sessions_token', background: true });
     await safeCreateIndex('sessions', { expiresAt: 1 }, { name: 'idx_sessions_expires_at', background: true });
 
-    // 11–13. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
+    // 11–12. Índices de Reseñas Verificadas y Unicidad por Galería (reviews)
+    await safeCreateIndex('reviews', { id: 1 }, { unique: true, name: 'uniq_reviews_id', background: true });
+    await safeCreateIndex('reviews', { galleryToken: 1 }, { unique: true, sparse: true, name: 'uniq_reviews_gallery_token', background: true });
+
+    // 13–15. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
     await safeCreateIndex('audit_logs', { id: 1 }, { unique: true, name: 'uniq_audit_logs_id', background: true });
     await safeCreateIndex('audit_logs', { createdAt: -1 }, { name: 'idx_audit_logs_created_desc', background: true });
     await safeCreateIndex('audit_logs', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_audit_logs_ttl_90d', background: true });
 
-    // 14–15. Índices de Bloqueo Distribuido de Horarios (slot_locks)
+    // 16–17. Índices de Bloqueo Distribuido de Horarios (slot_locks)
     await safeCreateIndex('slot_locks', { lockKey: 1 }, { unique: true, name: 'uniq_slot_locks_key', background: true });
     await safeCreateIndex('slot_locks', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_slot_locks_ttl', background: true });
 
-    // 16–17. Índices de Rate Limiting Distribuido (rate_limits)
+    // 18–19. Índices de Rate Limiting Distribuido (rate_limits)
     await safeCreateIndex('rate_limits', { key: 1 }, { unique: true, name: 'uniq_rate_limits_key', background: true });
     await safeCreateIndex('rate_limits', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true });
 

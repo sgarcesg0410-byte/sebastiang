@@ -2293,9 +2293,32 @@ export async function updatePaymentStatus(id, status) {
 }
 
 // --- CALIFICACIONES & RESEÑAS DE SATISFACCIÓN (TESTIMONIOS) ---
+function normalizeClientReview(r) {
+  if (!r || typeof r !== 'object') return null;
+  const clean = { ...r };
+  delete clean.sessionTitle;
+  delete clean.sessionType;
+  delete clean.packageTitle;
+  const unifiedToken = clean.galleryToken || clean.token || null;
+  if (unifiedToken) {
+    clean.galleryToken = unifiedToken;
+    clean.token = unifiedToken;
+  }
+  if (!clean.status) {
+    clean.status = clean.verified === true ? 'verified' : 'pending';
+  }
+  return clean;
+}
+
 export async function deleteReview(id) {
   try {
-    await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const token = getAdminSessionToken();
+    await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      }
+    });
   } catch (e) {}
 
   try {
@@ -2317,12 +2340,14 @@ export async function deleteReview(id) {
 
 export async function getReviews() {
   let serverReviews = [];
+  let fetchedFromServer = false;
   try {
     const res = await fetch(`${API_BASE}/reviews`);
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
         serverReviews = data;
+        fetchedFromServer = true;
       }
     }
   } catch (err) {
@@ -2331,28 +2356,117 @@ export async function getReviews() {
 
   const localReviews = getLocalReviews();
   const map = new Map();
-  // Server reviews first (newest real reviews from clients), then local
+  // Server reviews first, then local
   [...serverReviews, ...localReviews].forEach(r => {
     if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
       if (!map.has(r.id)) {
-        map.set(r.id, r);
+        map.set(r.id, normalizeClientReview(r));
       }
     }
   });
-  const combined = Array.from(map.values()).map(r => {
-    if (!r) return r;
-    const clean = { ...r };
-    delete clean.sessionTitle;
-    delete clean.sessionType;
-    delete clean.packageTitle;
-    return clean;
+  const combinedAll = Array.from(map.values()).filter(Boolean);
+  if (fetchedFromServer && serverReviews.length > 0) {
+    try {
+      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combinedAll));
+    } catch (e) {}
+  }
+
+  // Público: devolver únicamente reseñas verificadas y aprobadas, ordenadas de más reciente a más antigua
+  return combinedAll
+    .filter(r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected')
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
+}
+
+export async function getAdminReviews() {
+  let serverReviews = [];
+  try {
+    const token = getAdminSessionToken();
+    const res = await fetch(`${API_BASE}/admin/reviews`, {
+      headers: {
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        serverReviews = data;
+      }
+    }
+  } catch (err) {
+    console.warn('Consultando reseñas de administración:', err);
+  }
+
+  const localReviews = getLocalReviews();
+  const map = new Map();
+  [...serverReviews, ...localReviews].forEach(r => {
+    if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
+      if (!map.has(r.id)) {
+        map.set(r.id, normalizeClientReview(r));
+      }
+    }
   });
+  const combined = Array.from(map.values())
+    .filter(Boolean)
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
+
   if (serverReviews.length > 0) {
     try {
       localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
     } catch (e) {}
   }
   return combined;
+}
+
+export async function updateAdminReviewStatus(id, { status, verified } = {}) {
+  const nextStatus = status || (verified ? 'verified' : 'pending');
+  let updatedServerReview = null;
+  try {
+    const token = getAdminSessionToken();
+    const res = await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ status: nextStatus, verified: nextStatus === 'verified' })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      updatedServerReview = data?.review || null;
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'No se pudo actualizar el estado de la reseña.');
+    }
+  } catch (err) {
+    console.warn('Moderación local de reseña:', err);
+  }
+
+  const list = getLocalReviews().map(r => {
+    if (r && r.id === id) {
+      return normalizeClientReview(updatedServerReview || {
+        ...r,
+        status: nextStatus,
+        verified: nextStatus === 'verified',
+        moderatedAt: new Date().toISOString()
+      });
+    }
+    return r;
+  });
+  try {
+    localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(list));
+    if (typeof window !== 'undefined' && window.BroadcastChannel) {
+      const bc = new BroadcastChannel('reviews_realtime_sync');
+      const targetReview = list.find(r => r && r.id === id) || updatedServerReview;
+      bc.postMessage({ type: 'UPDATE_REVIEW', review: targetReview, timestamp: Date.now() });
+      setTimeout(() => bc.close(), 300);
+    }
+    localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
+  } catch (e) {}
+
+  return {
+    success: true,
+    review: updatedServerReview || list.find(r => r && r.id === id)
+  };
 }
 
 export async function submitPublicReview(reviewData) {
@@ -2366,20 +2480,28 @@ export async function submitPublicReview(reviewData) {
     if (res.ok) {
       const data = await res.json();
       serverReview = data.review;
+    } else if (res.status >= 400 && res.status < 500) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Datos de reseña inválidos.');
     }
   } catch (err) {
+    if (err.message && (err.message.includes('obligatorio') || err.message.includes('caracteres') || err.message.includes('calificación') || err.message.includes('inválido'))) {
+      throw err;
+    }
     console.warn('Error al guardar reseña pública en servidor, guardando local:', err);
   }
 
-  const newReview = serverReview || {
+  const newReview = normalizeClientReview(serverReview || {
     id: `rev-${Date.now()}`,
     clientName: (reviewData.clientName || 'Cliente').trim(),
     rating: Number(reviewData.rating) || 5,
     recommend: reviewData.recommend !== false,
     comment: (reviewData.comment || '').trim(),
     date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: false
-  };
+    verified: false,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  });
 
   saveLocalReview(newReview);
 
@@ -2399,7 +2521,7 @@ export async function submitPublicReview(reviewData) {
     `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tus fotos:*\n\n` +
     `👤 *Cliente:* ${newReview.clientName}\n` +
     `⭐ *Calificación:* ${starsText} (${newReview.rating}/5 Estrellas)\n` +
-    `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
+    `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Con sugerencias'}\n` +
     `💬 *Comentario:* "${newReview.comment}"\n\n` +
     `_¡Muchísimas gracias por tu gran trabajo y profesionalismo!_`
   );
@@ -2432,15 +2554,18 @@ export async function createAdminReview(reviewData) {
     console.warn('Error al guardar reseña administrativa en servidor:', err);
   }
 
-  const newReview = serverReview || {
+  const isVerified = reviewData.verified !== false;
+  const newReview = normalizeClientReview(serverReview || {
     id: `rev-${Date.now()}`,
     clientName: (reviewData.clientName || 'Cliente').trim(),
     rating: Number(reviewData.rating) || 5,
     recommend: reviewData.recommend !== false,
     comment: (reviewData.comment || '').trim(),
     date: reviewData.date || new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: reviewData.verified !== false
-  };
+    verified: isVerified,
+    status: isVerified ? 'verified' : 'pending',
+    createdAt: new Date().toISOString()
+  });
 
   saveLocalReview(newReview);
 
@@ -2470,20 +2595,30 @@ export async function submitGalleryReview(token, reviewData) {
     if (res.ok) {
       const data = await res.json();
       serverReview = data.review;
+    } else if (res.status >= 400 && res.status < 500) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'No fue posible registrar la reseña de la galería.');
     }
   } catch (err) {
+    if (err.message && (err.message.includes('Ya se registró') || err.message.includes('finalizado') || err.message.includes('demostración') || err.message.includes('caracteres') || err.message.includes('calificación'))) {
+      throw err;
+    }
     console.warn('Error al guardar reseña en servidor, guardando local:', err);
   }
 
-  const newReview = serverReview || {
+  const newReview = normalizeClientReview(serverReview || {
     id: `rev-${Date.now()}`,
     clientName: (reviewData.clientName || 'Cliente').trim(),
     rating: Number(reviewData.rating) || 5,
     recommend: reviewData.recommend !== false,
     comment: (reviewData.comment || '').trim(),
     date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: true
-  };
+    verified: true,
+    status: 'verified',
+    galleryToken: token,
+    token,
+    createdAt: new Date().toISOString()
+  });
 
   saveLocalReview(newReview);
 
@@ -2503,7 +2638,7 @@ export async function submitGalleryReview(token, reviewData) {
     `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tus fotos:*\n\n` +
     `👤 *Cliente:* ${newReview.clientName}\n` +
     `⭐ *Calificación:* ${starsText} (${newReview.rating}/5 Estrellas)\n` +
-    `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
+    `👍 *¿Nos recomienda?:* ${newReview.recommend ? '¡Sí, 100% recomendado!' : 'Con sugerencias'}\n` +
     `💬 *Comentario:* "${newReview.comment}"\n\n` +
     `_¡Muchísimas gracias por tu gran trabajo y profesionalismo!_`
   );

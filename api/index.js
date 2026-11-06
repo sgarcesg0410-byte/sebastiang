@@ -3962,12 +3962,28 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
 });
 
 // ==============================================================================
-// RESEÑAS
+// RESEÑAS (CON FLUJO DE MODERACIÓN: pending | verified | rejected)
 // ==============================================================================
-app.get('/api/reviews', async (req, res) => {
+function normalizeReviewRecord(r) {
+  if (!r || typeof r !== 'object') return null;
+  const clean = { ...r };
+  delete clean.sessionTitle;
+  delete clean.sessionType;
+  delete clean.packageTitle;
+  const unifiedToken = clean.galleryToken || clean.token || null;
+  if (unifiedToken) {
+    clean.galleryToken = unifiedToken;
+    clean.token = unifiedToken;
+  }
+  if (!clean.status) {
+    clean.status = clean.verified === true ? 'verified' : 'pending';
+  }
+  return clean;
+}
+
+async function loadAllReviewsFromStore() {
   let reviews = Array.isArray(runtimeDB.reviews) ? [...runtimeDB.reviews] : [];
 
-  // MongoDB Atlas (fuente única de verdad)
   if (isMongoConfigured()) {
     try {
       const mongoReviews = await findMongoDocs('reviews', {}, { createdAt: -1 });
@@ -3984,17 +4000,80 @@ app.get('/api/reviews', async (req, res) => {
     }
   }
 
-  // Filtrar cualquier muestra anterior si existiera
-  reviews = reviews.filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'));
+  return reviews
+    .filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'))
+    .map(normalizeReviewRecord)
+    .filter(Boolean)
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
+}
 
-  const cleanList = reviews.map(r => {
-    const clean = { ...r };
-    delete clean.sessionTitle;
-    delete clean.sessionType;
-    delete clean.packageTitle;
-    return clean;
+app.get('/api/reviews', async (req, res) => {
+  const allReviews = await loadAllReviewsFromStore();
+  // El endpoint público devuelve ÚNICAMENTE reseñas verificadas y aprobadas
+  const verifiedList = allReviews.filter(
+    r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected'
+  );
+  res.json(verifiedList);
+});
+
+app.get('/api/admin/reviews', requireAdminAuth, async (req, res) => {
+  const allReviews = await loadAllReviewsFromStore();
+  res.json(allReviews);
+});
+
+app.patch('/api/admin/reviews/:id', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+  const { id } = req.params;
+  const { status, verified } = req.body || {};
+
+  let nextStatus = status;
+  if (!nextStatus && typeof verified === 'boolean') {
+    nextStatus = verified ? 'verified' : 'pending';
+  }
+  if (!['verified', 'pending', 'rejected'].includes(nextStatus)) {
+    return res.status(400).json({ error: 'Estado de reseña inválido. Usa verified, pending o rejected.' });
+  }
+
+  let existing = (runtimeDB.reviews || []).find(r => r && r.id === id);
+  if (!existing && isMongoConfigured()) {
+    try {
+      const doc = await findMongoDoc('reviews', { id });
+      if (doc) {
+        const { _id, ...cleanDoc } = doc;
+        existing = cleanDoc;
+      }
+    } catch {}
+  }
+  if (!existing) {
+    return res.status(404).json({ error: 'Reseña no encontrada.' });
+  }
+
+  const updatedReview = normalizeReviewRecord({
+    ...existing,
+    status: nextStatus,
+    verified: nextStatus === 'verified',
+    moderatedAt: new Date().toISOString()
   });
-  res.json(cleanList);
+
+  if (isMongoConfigured()) {
+    try {
+      const ok = await upsertMongoDoc('reviews', { id: updatedReview.id }, updatedReview, { throwOnError: true });
+      if (!ok) throw new Error('Fallo al actualizar reseña en MongoDB Atlas');
+    } catch (eMongo) {
+      console.error('❌ [MongoDB] Error moderando reseña:', eMongo?.message || eMongo);
+      return res.status(500).json({ error: 'Error actualizando el estado de la reseña en la base de datos central.' });
+    }
+  }
+
+  if (!Array.isArray(runtimeDB.reviews)) runtimeDB.reviews = [];
+  const idx = runtimeDB.reviews.findIndex(r => r && r.id === id);
+  if (idx >= 0) {
+    runtimeDB.reviews[idx] = updatedReview;
+  } else {
+    runtimeDB.reviews.unshift(updatedReview);
+  }
+
+  return res.json({ success: true, review: updatedReview });
 });
 
 app.post('/api/reviews', async (req, res) => {
@@ -4009,14 +4088,31 @@ app.post('/api/reviews', async (req, res) => {
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan nombre del cliente o comentario.' });
   }
+
+  const cleanName = sanitizeText(String(clientName)).slice(0, 80);
+  if (cleanName.length < 2) {
+    return res.status(400).json({ error: 'El nombre del cliente debe contener al menos 2 caracteres válidos.' });
+  }
+
+  const cleanComment = sanitizeText(String(comment)).slice(0, 500);
+  if (cleanComment.length < 3) {
+    return res.status(400).json({ error: 'El comentario de la reseña debe contener al menos 3 caracteres.' });
+  }
+
+  const rawRating = rating === undefined || rating === null || rating === '' ? 5 : Number(rating);
+  if (!Number.isInteger(rawRating) || rawRating < 1 || rawRating > 5) {
+    return res.status(400).json({ error: 'La calificación debe ser un número entero entre 1 y 5 estrellas.' });
+  }
+
   const newReview = {
-    id: `rev-${Date.now()}`,
-    clientName: String(clientName).trim(),
-    rating: Number(rating) || 5,
+    id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    clientName: cleanName,
+    rating: rawRating,
     recommend: recommend !== false,
-    comment: String(comment).trim(),
+    comment: cleanComment,
     date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
     verified: false,
+    status: 'pending',
     createdAt: new Date().toISOString()
   };
 
@@ -4035,7 +4131,7 @@ app.post('/api/reviews', async (req, res) => {
   runtimeDB.reviews.unshift(newReview);
 
   await sendOneSignalPush({
-    title: `⭐ ¡Nueva Calificación de ${newReview.clientName}!`,
+    title: `⭐ ¡Nueva Calificación (Pendiente) de ${newReview.clientName}!`,
     message: `${'⭐'.repeat(newReview.rating)} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
     url: 'https://sebastiang.app/?mode=admin',
     data: { type: 'review', reviewId: newReview.id }
@@ -4083,6 +4179,40 @@ app.post('/api/gallery/:token/review', async (req, res) => {
     return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
   }
 
+  // Exigir que la sesión haya finalizado o tenga selección enviada antes de admitir una reseña verificada
+  const sessionStatus = String(session.status || '').toLowerCase();
+  const isSessionFinalized =
+    sessionStatus === 'submitted' ||
+    sessionStatus === 'delivered' ||
+    sessionStatus === 'completed' ||
+    Boolean(session.isDelivered) ||
+    Boolean(session.isSubmitted) ||
+    Boolean(session.finalDeliveryUrl);
+  if (!isSessionFinalized) {
+    return res.status(400).json({
+      error: 'Solo puedes registrar una calificación verificada cuando la sesión haya finalizado o hayas enviado tu selección de fotos.',
+      code: 'SESSION_NOT_FINALIZED'
+    });
+  }
+
+  // Impedir múltiples reseñas para una misma galería (unicidad por galleryToken / token)
+  let existingReview = (runtimeDB.reviews || []).find(
+    r => r && (r.galleryToken === token || r.token === token)
+  );
+  if (!existingReview && isMongoConfigured()) {
+    try {
+      existingReview = await findMongoDoc('reviews', {
+        $or: [{ galleryToken: token }, { token }]
+      });
+    } catch {}
+  }
+  if (existingReview) {
+    return res.status(409).json({
+      error: 'Ya se registró una calificación para esta galería.',
+      code: 'DUPLICATE_GALLERY_REVIEW'
+    });
+  }
+
   const { clientName, rating, recommend, comment } = req.body || {};
   const ratingInt = parseInt(rating, 10);
   if (!Number.isInteger(ratingInt) || ratingInt < 1 || ratingInt > 5) {
@@ -4094,16 +4224,21 @@ app.post('/api/gallery/:token/review', async (req, res) => {
     return res.status(400).json({ error: 'El comentario de la reseña debe contener al menos 3 caracteres.' });
   }
   const cleanName = sanitizeText(clientName || session.clientName || 'Cliente').slice(0, 80) || 'Cliente';
+  if (cleanName.length < 2) {
+    return res.status(400).json({ error: 'El nombre del cliente debe contener al menos 2 caracteres.' });
+  }
 
   const newReview = {
-    id: `rev-${Date.now()}`,
+    id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     clientName: cleanName,
     rating: ratingInt,
     recommend: recommend !== false,
     comment: cleanComment,
     date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
     verified: true,
+    status: 'verified',
     galleryToken: token,
+    token,
     createdAt: new Date().toISOString()
   };
 
@@ -4113,6 +4248,12 @@ app.post('/api/gallery/:token/review', async (req, res) => {
       const ok = await upsertMongoDoc('reviews', { id: newReview.id }, newReview, { throwOnError: true });
       if (!ok) throw new Error('Fallo al guardar reseña desde galería en MongoDB Atlas');
     } catch (eMongo) {
+      if (eMongo?.code === 11000) {
+        return res.status(409).json({
+          error: 'Ya se registró una calificación para esta galería.',
+          code: 'DUPLICATE_GALLERY_REVIEW'
+        });
+      }
       console.error('❌ [MongoDB] Error guardando reseña desde galería:', eMongo?.message || eMongo);
       return res.status(500).json({ error: 'Error guardando reseña en la base de datos central.' });
     }
@@ -4122,7 +4263,7 @@ app.post('/api/gallery/:token/review', async (req, res) => {
   runtimeDB.reviews.unshift(newReview);
 
   await sendOneSignalPush({
-    title: `⭐ ¡Nueva Reseña de ${newReview.clientName}!`,
+    title: `⭐ ¡Nueva Reseña Verificada de ${newReview.clientName}!`,
     message: `${'⭐'.repeat(Math.max(1, Math.min(5, newReview.rating)))} (${newReview.rating}/5) - "${newReview.comment.slice(0, 80)}"`,
     url: 'https://sebastiang.app/?mode=admin',
     data: { type: 'review', reviewId: newReview.id }
@@ -4137,15 +4278,22 @@ app.post('/api/admin/reviews', requireAdminAuth, async (req, res) => {
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan el nombre del cliente o el comentario.' });
   }
+  const cleanName = sanitizeText(String(clientName)).slice(0, 80);
+  const cleanComment = sanitizeText(String(comment)).slice(0, 500);
+  if (cleanName.length < 2 || cleanComment.length < 3) {
+    return res.status(400).json({ error: 'Nombre (mín. 2 caracteres) y comentario (mín. 3 caracteres) obligatorios.' });
+  }
   const ratingInt = Math.max(1, Math.min(5, parseInt(rating, 10) || 5));
+  const isVerified = verified !== false;
   const newReview = {
     id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    clientName: sanitizeText(String(clientName)).slice(0, 80),
+    clientName: cleanName,
     rating: ratingInt,
     recommend: recommend !== false,
-    comment: sanitizeText(String(comment)).slice(0, 500),
+    comment: cleanComment,
     date: date ? String(date).slice(0, 20) : new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: verified !== false,
+    verified: isVerified,
+    status: isVerified ? 'verified' : 'pending',
     createdAt: new Date().toISOString()
   };
 

@@ -90,9 +90,11 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
       });
       setSelections(initialMap);
 
-      // Comprobar si ya tiene una reseña previa enviada
+      // Comprobar si ya tiene una reseña previa enviada para esta galería específica
       getReviews().then(reviews => {
-        const found = (reviews || []).find(r => r.token === token || (r.clientName && data.clientName && r.clientName.toLowerCase().trim() === data.clientName.toLowerCase().trim()));
+        const found = (reviews || []).find(
+          r => r && (r.galleryToken === token || r.token === token)
+        );
         if (found) setSubmittedReview(found);
       });
 

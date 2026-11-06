@@ -104,7 +104,7 @@ export default function PublicReviewView({ onBackToHome }) {
     `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tu servicio de fotografía:*\n\n` +
     `👤 *Cliente:* ${clientName}\n` +
     `⭐ *Calificación:* ${starsString} (${rating}/5 Estrellas)\n` +
-    `👍 *¿Nos recomienda?:* ${recommend ? '¡Sí, 100% recomendado!' : 'Sí'}\n` +
+    `👍 *¿Nos recomienda?:* ${recommend ? '¡Sí, 100% recomendado!' : 'Con sugerencias'}\n` +
     `💬 *Opinión:* "${comment}"\n\n` +
     `_¡Muchas gracias por las fotos y la atención!_ ✨`
   );
@@ -276,13 +276,13 @@ export default function PublicReviewView({ onBackToHome }) {
 
             <div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
-                <span>✓ Publicada en Tiempo Real</span>
+                <span>{submittedReview.verified ? '✓ Publicada y Verificada' : '✓ Recibida para Moderación'}</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white">
                 ¡Muchísimas Gracias, {submittedReview.clientName}!
               </h2>
               <p className="text-xs sm:text-sm text-stone-400 mt-2 max-w-md mx-auto leading-relaxed">
-                Tu opinión y calificación de <strong className="text-amber-400">{submittedReview.rating} estrellas</strong> ya están publicadas en nuestra página web oficial para que futuros clientes conozcan tu experiencia.
+                Tu opinión y calificación de <strong className="text-amber-400">{submittedReview.rating} estrellas</strong> han sido registradas. {submittedReview.verified ? 'Ya están visibles en nuestra página web oficial.' : 'Se publicarán en la portada tras verificar tu sesión de cliente real.'}
               </p>
             </div>
 
@@ -313,7 +313,9 @@ export default function PublicReviewView({ onBackToHome }) {
 
               <div className="pt-2 border-t border-stone-800 flex items-center justify-between text-[11px] text-stone-400">
                 <span className="font-semibold text-white">{submittedReview.clientName}</span>
-                <span className="text-emerald-400 font-medium">✓ Opinión Verificada</span>
+                <span className={submittedReview.verified ? 'text-emerald-400 font-medium' : 'text-amber-400 font-medium'}>
+                  {submittedReview.verified ? '✓ Opinión Verificada' : '⏳ Pendiente de Verificación'}
+                </span>
               </div>
             </div>
 
