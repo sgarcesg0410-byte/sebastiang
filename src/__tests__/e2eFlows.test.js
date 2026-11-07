@@ -161,7 +161,7 @@ describe('Suite E2E de Operación Segura y Producción Definitiva', () => {
     const txId = 'tx-e2e-wompi-9901';
     const txStatus = 'APPROVED';
     const amountInCents = 2000000;
-    const timestamp = 1793000000;
+    const timestamp = Math.floor(Date.now() / 1000);
     const rawChecksum = `${txId}${txStatus}${amountInCents}${timestamp}${process.env.WOMPI_EVENTS_SECRET}`;
     const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
 

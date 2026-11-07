@@ -64,3 +64,7 @@ SebastianG_Codigo_Fuente_Completo.md
 
 # Scratch
 scratch/
+
+# Datos locales y respaldos históricos excluidos del repositorio (Hallazgo B5)
+server/data/db.json
+docs/legacy/

@@ -8,6 +8,10 @@ import {
   verifyBioRefreshToken,
   requireAdminAuth,
   verifyAdminPin,
+  verifyAdminPinAsync,
+  hashPinScryptAsync,
+  buildAdminSessionCookieHeader,
+  revokeAdminAccessTokenJti,
   isWeakConfiguredPin,
   createReceiptToken,
   readAdminToken,
@@ -38,7 +42,10 @@ import {
   validateImagePayload,
   validateSessionPhotosBatch,
   DEFAULT_MAX_IMAGE_BYTES,
-  DEFAULT_MAX_VOUCHER_BYTES
+  DEFAULT_MAX_VOUCHER_BYTES,
+  generateWatermarkedPreviewDataUrl,
+  compressServerImageIfNeeded,
+  buildServerWatermarkSvg
 } from './uploadValidator.js';
 import { registerPublicRoutes } from './publicRoutes.js';
 import { resolveBookingPrice } from './pricingGuard.js';
@@ -77,29 +84,44 @@ import {
   ensureMongoIndexes,
   acquireDistributedSlotLock,
   releaseDistributedSlotLock,
-  checkDistributedRateLimit
+  checkDistributedRateLimit,
+  resetDistributedRateLimit,
+  saveDistributedBioChallenge,
+  consumeDistributedBioChallenge
 } from './db/mongo.js';
 
+// Orígenes permitidos estrictamente acotados (Hallazgo M1: sin comodín sebastiang-*.vercel.app ni credentials innecesarias)
 const PRODUCTION_ALLOWED_ORIGINS = [
   'https://sebastiang.app',
   'https://www.sebastiang.app',
+  'https://foto-reservas.vercel.app',
+  'https://foto-reservas-git-main.vercel.app',
   'capacitor://localhost'
 ];
 
 const DEV_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'http://localhost:3001',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000'
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001'
 ];
 
-// Patrón restringido exclusivamente a despliegues preview de este proyecto en Vercel
-const VERCEL_PROJECT_PREVIEW_REGEX = /^https:\/\/(?:foto-reservas|sebastiang)(?:-[a-z0-9-]+)?\.vercel\.app$/i;
+function getConfiguredPreviewOrigins() {
+  const raw = String(process.env.ALLOWED_PREVIEW_ORIGINS || '').trim();
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.startsWith('https://'));
+}
 
 export function isAllowedCorsOrigin(origin, isProd = (process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL))) {
   if (!origin) return true;
   if (PRODUCTION_ALLOWED_ORIGINS.includes(origin)) return true;
-  if (VERCEL_PROJECT_PREVIEW_REGEX.test(origin)) return true;
+  const configuredPreviews = getConfiguredPreviewOrigins();
+  if (configuredPreviews.includes(origin)) return true;
   if (!isProd && DEV_ALLOWED_ORIGINS.includes(origin)) return true;
   return false;
 }
@@ -123,20 +145,21 @@ app.use(cors({
     }
     return callback(null, false);
   },
-  credentials: true,
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-apk-device-token', 'x-apk-key']
 }));
-// Parser de JSON dinámico y sensible a la ruta para evitar que el límite global de 2MB
-// bloquee rutas con payloads legítimamente mayores (catálogo 50MB, sesiones 50MB, backups 50MB, pagos 15MB)
+// Parser de JSON dinámico y sensible a la ruta (Hallazgo M3: /api/gallery limitado estrictamente a 100 KB;
+// solo rutas administrativas de subida de fotos o backups habilitan 50 MB).
 app.use((req, res, next) => {
   const url = req.originalUrl || req.url || '';
   let limit = '2mb';
-  if (
+  if (url.startsWith('/api/gallery')) {
+    limit = '100kb';
+  } else if (
     url.startsWith('/api/admin/catalog') ||
     url.startsWith('/api/admin/sessions') ||
-    url.startsWith('/api/admin/backup/restore') ||
-    url.startsWith('/api/gallery')
+    url.startsWith('/api/admin/backup/restore')
   ) {
     limit = '50mb';
   } else if (url.startsWith('/api/payments')) {
@@ -468,9 +491,58 @@ function recordFailedLogin(ip) {
 
 function resetLoginAttempts(ip) {
   loginAttempts.delete(ip);
+  loginAttempts.delete('__global_admin_account__');
+  if (isMongoConfigured()) {
+    resetDistributedRateLimit(`admin_login_${ip}`).catch(() => {});
+    resetDistributedRateLimit('admin_login_global_account').catch(() => {});
+  }
 }
 
-// Rate Limiter para Checkout de Pagos (máximo 15 checkouts por 10 min por IP)
+async function checkAdminLoginDistributedLimits(ip) {
+  const localIpCheck = checkRateLimit(ip);
+  if (!localIpCheck.allowed) return localIpCheck;
+
+  // Límite global por cuenta para impedir fuerza bruta distribuida multi-IP contra un PIN corto (Hallazgo A2)
+  const localGlobalCheck = checkRateLimit('__global_admin_account__');
+  if (!localGlobalCheck.allowed) return localGlobalCheck;
+
+  if (isMongoConfigured()) {
+    const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+    const [ipDist, globalDist] = await Promise.all([
+      checkDistributedRateLimit({
+        key: `admin_login_${ip}`,
+        maxAttempts: MAX_LOGIN_ATTEMPTS,
+        windowMs: LOGIN_LOCKOUT_MS,
+        failClosed: isProd
+      }),
+      checkDistributedRateLimit({
+        key: 'admin_login_global_account',
+        maxAttempts: MAX_LOGIN_ATTEMPTS * 3,
+        windowMs: LOGIN_LOCKOUT_MS,
+        failClosed: isProd
+      })
+    ]);
+    if (!ipDist.allowed) {
+      const retryAfterMs = ipDist.retryAfterMs || LOGIN_LOCKOUT_MS;
+      return {
+        allowed: false,
+        retryAfterMs,
+        retryAfterMin: Math.max(1, Math.ceil(retryAfterMs / 60000))
+      };
+    }
+    if (!globalDist.allowed) {
+      const retryAfterMs = globalDist.retryAfterMs || LOGIN_LOCKOUT_MS;
+      return {
+        allowed: false,
+        retryAfterMs,
+        retryAfterMin: Math.max(1, Math.ceil(retryAfterMs / 60000))
+      };
+    }
+  }
+  return { allowed: true };
+}
+
+// Rate Limiter para Checkout de Pagos (máximo 15 checkouts por 10 min por IP + persistencia MongoDB - Hallazgo A2)
 const checkoutAttempts = new Map(); // IP -> { count, windowStart }
 const CHECKOUT_MAX_ATTEMPTS = 15;
 const CHECKOUT_WINDOW_MS = 10 * 60 * 1000;
@@ -489,7 +561,22 @@ function checkCheckoutRateLimit(ip) {
   return true;
 }
 
-// Rate limit por ámbito (scope) para endpoints públicos y sensibles
+async function checkCheckoutDistributedRateLimit(ip) {
+  if (!checkCheckoutRateLimit(ip)) return false;
+  if (isMongoConfigured()) {
+    const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+    const dist = await checkDistributedRateLimit({
+      key: `checkout_${ip || 'unknown'}`,
+      maxAttempts: CHECKOUT_MAX_ATTEMPTS,
+      windowMs: CHECKOUT_WINDOW_MS,
+      failClosed: isProd
+    });
+    if (!dist.allowed) return false;
+  }
+  return true;
+}
+
+// Rate limit por ámbito (scope) para endpoints públicos y sensibles (respaldado en MongoDB Atlas - Hallazgo A2)
 const publicWriteAttempts = new Map(); // `${scope}:${ip}` -> { count, windowStart }
 const PUBLIC_WRITE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -499,12 +586,20 @@ export function checkPublicWriteRateLimit(ip, maxAttempts, scope = 'default') {
   const record = publicWriteAttempts.get(key);
   if (!record || (now - record.windowStart > PUBLIC_WRITE_WINDOW_MS)) {
     publicWriteAttempts.set(key, { count: 1, windowStart: now });
-    return true;
-  }
-  if (record.count >= maxAttempts) {
+  } else if (record.count >= maxAttempts) {
     return false;
+  } else {
+    record.count += 1;
   }
-  record.count += 1;
+
+  if (isMongoConfigured()) {
+    checkDistributedRateLimit({
+      key: `pub_${scope}_${ip || 'unknown'}`,
+      maxAttempts,
+      windowMs: PUBLIC_WRITE_WINDOW_MS,
+      failClosed: false
+    }).catch(() => {});
+  }
   return true;
 }
 
@@ -1405,14 +1500,32 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
  * eliminando teléfonos, correos, notas administrativas, hashes o metadatos internos.
  */
 export function toPublicGallerySession(session = {}, { photos = [], isExpired = false, isSubmitted = false, isDelivered = false, watermarkSettings = {} } = {}) {
+  const token = session.token || '';
+  const isUnlockedForOriginal = Boolean(isDelivered || session.status === 'delivered');
+
   const safePhotos = Array.isArray(photos)
-    ? photos.map((p) => ({
-        id: p.id,
-        title: p.title || 'Fotografía',
-        url: p.url,
-        selected: Boolean(p.selected),
-        clientComment: p.clientComment || ''
-      }))
+    ? photos.map((p, idx) => {
+        const photoId = p.id || `photo-${idx + 1}`;
+        // Hallazgo A1: Mientras la sesión no esté entregada/pagada, JAMÁS se expone `originalUrl` ni el archivo sin marca de agua.
+        // Se entrega únicamente `previewUrl` generada en el servidor con marca de agua (`sharp`) o el endpoint protegido `/photo/:photoId`.
+        let publicPhotoUrl = p.url;
+        if (isUnlockedForOriginal) {
+          publicPhotoUrl = p.originalUrl || p.url;
+        } else if (p.previewUrl) {
+          publicPhotoUrl = p.previewUrl;
+        } else if (token) {
+          publicPhotoUrl = `/api/gallery/${encodeURIComponent(token)}/photo/${encodeURIComponent(photoId)}?wm=1`;
+        }
+
+        return {
+          id: photoId,
+          title: p.title || 'Fotografía',
+          url: publicPhotoUrl,
+          watermarkedInServer: !isUnlockedForOriginal,
+          selected: Boolean(p.selected),
+          clientComment: p.clientComment || ''
+        };
+      })
     : [];
 
   return {
@@ -1503,7 +1616,37 @@ app.get('/api/gallery/:token', async (req, res) => {
   const isDelivered = session.status === 'delivered';
 
   // Si la sesión expiró y no ha sido entregada, el servidor NO envía fotos
-  const photos = (isExpired && !isDelivered) ? [] : (session.photos || []);
+  let photos = (isExpired && !isDelivered) ? [] : (session.photos || []);
+
+  // Hallazgo A1: Generar previewUrl con marca de agua en servidor (`sharp`) para fotos en Base64 que aún no la tengan,
+  // de modo que el navegador nunca reciba la imagen original antes de la entrega final.
+  if (!isDelivered && Array.isArray(photos) && photos.length > 0) {
+    photos = await Promise.all(
+      photos.map(async (p, idx) => {
+        if (!p) return p;
+        const photoId = p.id || `photo-${idx + 1}`;
+        const rawSource = p.originalUrl || p.url || '';
+        if (p.previewUrl) return { ...p, id: photoId };
+        if (String(rawSource).toLowerCase().startsWith('data:')) {
+          const previewUrl = await generateWatermarkedPreviewDataUrl(rawSource, {
+            watermarkText: runtimeDB.settings?.watermarkText || 'SEBASTIAN G',
+            watermarkSubtext: runtimeDB.settings?.watermarkSubtext || 'MUESTRA PROTEGIDA • PROHIBIDA SU DESCARGA',
+            token,
+            photoId
+          });
+          p.originalUrl = rawSource;
+          p.previewUrl = previewUrl;
+          return { ...p, id: photoId, previewUrl };
+        }
+        return {
+          ...p,
+          id: photoId,
+          originalUrl: rawSource,
+          previewUrl: `/api/gallery/${encodeURIComponent(token)}/photo/${encodeURIComponent(photoId)}?wm=1`
+        };
+      })
+    );
+  }
 
   res.json(toPublicGallerySession(session, {
     photos,
@@ -1516,6 +1659,42 @@ app.get('/api/gallery/:token', async (req, res) => {
       watermarkLogoUrl: runtimeDB.settings.watermarkLogoUrl
     }
   }));
+});
+
+// Endpoint de previsualización protegida con marca de agua generada en el servidor con `sharp` (Hallazgo A1)
+app.get('/api/gallery/:token/photo/:photoId', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 120, 'gallery-photo-preview')) {
+    return res.status(429).json({ error: 'Demasiadas solicitudes de imagen.' });
+  }
+  const { token, photoId } = req.params;
+  if (!isValidGalleryTokenFormat(token)) {
+    return res.status(404).json({ error: 'Galería no encontrada.' });
+  }
+  let session = (runtimeDB.sessions || []).find(s => s && s.token === token);
+  if (!session && isMongoConfigured()) {
+    try {
+      session = await findMongoDoc('sessions', { token });
+    } catch {}
+  }
+  if (!session || session.revoked || session.status === 'revoked') {
+    return res.status(404).json({ error: 'Imagen no disponible.' });
+  }
+  const photo = (session.photos || []).find((p, idx) => (p.id || `photo-${idx + 1}`) === photoId);
+  if (!photo) {
+    return res.status(404).json({ error: 'Fotografía no encontrada en la sesión.' });
+  }
+  const previewDataUrl = await generateWatermarkedPreviewDataUrl(photo.originalUrl || photo.url || 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/', {
+    watermarkText: runtimeDB.settings?.watermarkText || 'SEBASTIAN G',
+    watermarkSubtext: runtimeDB.settings?.watermarkSubtext || 'MUESTRA PROTEGIDA • PROHIBIDA SU DESCARGA'
+  });
+  const b64Match = String(previewDataUrl).match(/^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/);
+  if (b64Match) {
+    const imgBuf = Buffer.from(b64Match[2], 'base64');
+    res.setHeader('Content-Type', b64Match[1]);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.status(200).send(imgBuf);
+  }
+  return res.status(200).json({ previewUrl: previewDataUrl, watermarkedInServer: true });
 });
 
 app.post('/api/gallery/:token/live-selection', async (req, res) => {
@@ -1746,7 +1925,7 @@ async function getActiveAdminScryptHash() {
 
 app.post('/api/admin/auth', async (req, res) => {
   const ip = getClientIp(req);
-  const rateCheck = checkRateLimit(ip);
+  const rateCheck = await checkAdminLoginDistributedLimits(ip);
 
   if (!rateCheck.allowed) {
     return res.status(429).json({
@@ -1760,7 +1939,7 @@ app.post('/api/admin/auth', async (req, res) => {
     return res.status(400).json({ error: 'PIN requerido.' });
   }
 
-  // Verificación del PIN en el SERVIDOR (el navegador ya no conoce el hash).
+  // Verificación asíncrona del PIN en el SERVIDOR (sin bloquear el event loop - Hallazgo B2).
   const activeScrypt = await getActiveAdminScryptHash();
   const hasConfiguredPin = Boolean(activeScrypt || process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash);
   const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || (!hasConfiguredPin ? KNOWN_WEAK_PIN_HASH : '');
@@ -1769,7 +1948,7 @@ app.post('/api/admin/auth', async (req, res) => {
     console.warn('⚠️ [Seguridad] No se ha configurado un PIN robusto aún. Usa ADMIN_PIN_SCRYPT o cámbialo en el Dashboard.');
   }
 
-  const pinOk = verifyAdminPin(pin, {
+  const pinOk = await verifyAdminPinAsync(pin, {
     scryptHash: activeScrypt,
     sha256Hash: effectiveSha
   });
@@ -1777,6 +1956,7 @@ app.post('/api/admin/auth', async (req, res) => {
   if (!pinOk) {
     recordOperationalEvent('failedAdminLogins', `PIN incorrecto desde IP ${ip}`, 'warning');
     const newRecord = recordFailedLogin(ip);
+    recordFailedLogin('__global_admin_account__');
     const remaining = MAX_LOGIN_ATTEMPTS - newRecord.count;
 
     if (newRecord.lockedUntil) {
@@ -1792,12 +1972,13 @@ app.post('/api/admin/auth', async (req, res) => {
     });
   }
 
-  // Login exitoso: token firmado (HMAC-SHA256) con passwordVersion activa
+  // Login exitoso: token firmado (HMAC-SHA256) con passwordVersion activa + cookie HttpOnly (Hallazgo B4)
   resetLoginAttempts(ip);
   try {
     const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
     const token = createAdminToken({ pwd: activeVersion });
     const bioRefreshToken = createBioRefreshToken({ pwd: activeVersion });
+    res.setHeader('Set-Cookie', buildAdminSessionCookieHeader(token));
     return res.json({ success: true, token, bioRefreshToken, expiresInMs: 12 * 60 * 60 * 1000 });
   } catch (e) {
     console.error('[Seguridad] No se pudo emitir la sesión:', e?.message || e);
@@ -1805,23 +1986,62 @@ app.post('/api/admin/auth', async (req, res) => {
   }
 });
 
-// Desafío biométrico de un solo uso para prevenir ataques de reproducción (Replay Attacks)
+// Cierre de sesión administrativo en servidor: revoca el jti del token activo y limpia la cookie HttpOnly (Hallazgo B4)
+app.post('/api/admin/auth/logout', async (req, res) => {
+  const token = readAdminToken(req);
+  const payload = verifyAdminToken(token);
+  if (payload?.jti) {
+    revokeAdminAccessTokenJti(payload.jti);
+  }
+  res.setHeader('Set-Cookie', buildAdminSessionCookieHeader('', { clear: true }));
+  return res.json({ success: true, revoked: Boolean(payload?.jti) });
+});
+
+// Desafío biométrico de un solo uso con límite de capacidad en memoria y persistencia distribuida en MongoDB (Hallazgos A2 y B1)
+export const MAX_ACTIVE_BIO_CHALLENGES = 200;
 if (!global.__activeBioChallenges) global.__activeBioChallenges = new Map();
+
+async function consumeBioChallengeServer(challenge) {
+  if (!challenge || typeof challenge !== 'string') return null;
+  const now = Date.now();
+  const inMem = global.__activeBioChallenges.get(challenge);
+  global.__activeBioChallenges.delete(challenge);
+
+  if (isMongoConfigured()) {
+    const distDoc = await consumeDistributedBioChallenge(challenge);
+    if (distDoc && distDoc.expiresAt >= now) {
+      return distDoc;
+    }
+  }
+  if (inMem && inMem.expiresAt >= now) {
+    return inMem;
+  }
+  return null;
+}
 
 app.post('/api/admin/auth/bio-challenge', async (req, res) => {
   const ip = getClientIp(req);
   const rateCheck = checkRateLimit(ip);
-  if (!rateCheck.allowed) {
+  if (!rateCheck.allowed || !checkPublicWriteRateLimit(ip, 20, 'bio-challenge')) {
     return res.status(429).json({ error: 'Demasiadas solicitudes. Intenta en unos minutos.' });
   }
   const nonce = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
-  // Limpiar desafíos expirados
+  const expiresAt = now + 60000;
+  // Limpiar desafíos expirados y aplicar tope estricto MAX_ACTIVE_BIO_CHALLENGES (Hallazgo B1)
   for (const [k, c] of global.__activeBioChallenges.entries()) {
     if (c.expiresAt < now) global.__activeBioChallenges.delete(k);
   }
-  global.__activeBioChallenges.set(nonce, { ip, expiresAt: now + 60000 }); // 60 segundos
-  return res.json({ success: true, challenge: nonce, expiresAt: now + 60000 });
+  while (global.__activeBioChallenges.size >= MAX_ACTIVE_BIO_CHALLENGES) {
+    const oldestKey = global.__activeBioChallenges.keys().next().value;
+    if (!oldestKey) break;
+    global.__activeBioChallenges.delete(oldestKey);
+  }
+  global.__activeBioChallenges.set(nonce, { ip, expiresAt });
+  if (isMongoConfigured()) {
+    await saveDistributedBioChallenge(nonce, { ip, ttlMs: 60000 });
+  }
+  return res.json({ success: true, challenge: nonce, expiresAt });
 });
 
 // Registro de clave pública biométrica del dispositivo (ECDSA P-256 / WebAuthn / Android Keystore)
@@ -1848,12 +2068,10 @@ app.post('/api/admin/auth/bio-enroll', requireAdminAuth, async (req, res) => {
       });
     }
 
-    const storedChallenge = global.__activeBioChallenges.get(challenge);
-    if (!storedChallenge || storedChallenge.expiresAt < Date.now()) {
-      global.__activeBioChallenges.delete(challenge);
+    const storedChallenge = await consumeBioChallengeServer(challenge);
+    if (!storedChallenge) {
       return res.status(401).json({ error: 'Desafío de enrolamiento biométrico inválido o expirado.' });
     }
-    global.__activeBioChallenges.delete(challenge);
 
     const verification = verifyBiometricAssertion({
       credentialId: String(credentialId).trim(),
@@ -1966,13 +2184,11 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
       return res.status(401).json({ error: 'Desafío biométrico inválido o expirado. Solicita un nuevo desafío.' });
     }
 
-    const stored = global.__activeBioChallenges.get(challenge);
-    if (!stored || stored.expiresAt < Date.now()) {
-      global.__activeBioChallenges.delete(challenge);
+    const stored = await consumeBioChallengeServer(challenge);
+    if (!stored) {
       recordFailedLogin(ip);
       return res.status(401).json({ error: 'Desafío biométrico inválido o expirado. Solicita un nuevo desafío.' });
     }
-    global.__activeBioChallenges.delete(challenge);
 
     const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
     runtimeDB.settings = runtimeDB.settings || {};
@@ -2313,7 +2529,15 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
   } = req.body;
 
   if (voucherUrl) {
-    const voucherCheck = validateImagePayload(voucherUrl, { maxBytes: DEFAULT_MAX_VOUCHER_BYTES });
+    const rawVoucher = String(voucherUrl).trim();
+    const isInternalOriginUrl =
+      rawVoucher.startsWith('https://sebastiang.app/') ||
+      rawVoucher.startsWith('https://www.sebastiang.app/');
+    // Hallazgo M4: Prohibir URLs HTTP/HTTPS hacia dominios externos en comprobantes para evitar filtración de IP del admin
+    const voucherCheck = validateImagePayload(rawVoucher, {
+      maxBytes: DEFAULT_MAX_VOUCHER_BYTES,
+      allowRemoteHttps: isInternalOriginUrl
+    });
     if (!voucherCheck.valid) {
       return res.status(400).json({ error: `Comprobante inválido: ${voucherCheck.error}` });
     }
@@ -2325,25 +2549,51 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
   const adminPayload = verifyAdminToken(readAdminToken(req), { expectedPasswordVersion: activeVersion });
   const isAdminCaller = Boolean(adminPayload && adminPayload.pwd === activeVersion);
 
-  // Si el pago proviene de una galería privada (sessionToken), recuperar internamente el WhatsApp y bookingId
-  // asociados a la sesión sin necesidad de haberlos expuesto en GET /api/gallery/:token
+  // Hallazgo M4: Validar existencia de reserva/sesión cuando se provee bookingId o sessionToken,
+  // y tomar clientName / packageTitle de la entidad real verificada en servidor.
   let resolvedWhatsApp = (clientWhatsApp || '').trim();
-  let resolvedBookingId = req.body?.bookingId || undefined;
-  if (sessionToken && (!resolvedWhatsApp || !resolvedBookingId)) {
-    const matchedSession = (runtimeDB.sessions || []).find(s => s && s.token === sessionToken);
+  let resolvedBookingId = req.body?.bookingId ? String(req.body.bookingId).trim() : undefined;
+  let verifiedClientName = sanitizeText(String(clientName || 'Cliente')).slice(0, 80) || 'Cliente';
+  let verifiedPackageTitle = sanitizeText(String(packageTitle || 'Sesión Fotográfica')).slice(0, 100) || 'Sesión Fotográfica';
+
+  if (sessionToken) {
+    let matchedSession = (runtimeDB.sessions || []).find(s => s && s.token === sessionToken);
+    if (!matchedSession && isMongoConfigured()) {
+      try {
+        matchedSession = await findMongoDoc('sessions', { token: String(sessionToken).trim() });
+      } catch {}
+    }
+    if (!matchedSession && !isAdminCaller) {
+      return res.status(404).json({ error: 'La galería privada asociada al pago no existe.' });
+    }
     if (matchedSession) {
       if (!resolvedWhatsApp && matchedSession.clientWhatsApp) resolvedWhatsApp = String(matchedSession.clientWhatsApp).trim();
       if (!resolvedBookingId && matchedSession.bookingId) resolvedBookingId = matchedSession.bookingId;
+      if (matchedSession.clientName) verifiedClientName = sanitizeText(String(matchedSession.clientName)).slice(0, 80);
+      if (matchedSession.packageTitle) verifiedPackageTitle = sanitizeText(String(matchedSession.packageTitle)).slice(0, 100);
+    }
+  }
+
+  if (resolvedBookingId) {
+    const matchedBooking = await findBookingById(resolvedBookingId);
+    if (!matchedBooking && !isAdminCaller) {
+      return res.status(404).json({ error: 'La reserva asociada al pago no existe.' });
+    }
+    if (matchedBooking) {
+      resolvedBookingId = matchedBooking.id;
+      if (!resolvedWhatsApp && matchedBooking.clientWhatsApp) resolvedWhatsApp = String(matchedBooking.clientWhatsApp).trim();
+      if (matchedBooking.clientName) verifiedClientName = sanitizeText(String(matchedBooking.clientName)).slice(0, 80);
+      if (matchedBooking.packageName) verifiedPackageTitle = sanitizeText(String(matchedBooking.packageName)).slice(0, 100);
     }
   }
 
   const newPayment = {
-    id: `pay-${Date.now()}`,
+    id: `pay-${crypto.randomUUID()}`,
     ...(resolvedBookingId ? { bookingId: resolvedBookingId } : {}),
-    clientName: (clientName || 'Cliente').trim(),
+    clientName: verifiedClientName,
     clientWhatsApp: resolvedWhatsApp,
     sessionToken: sessionToken || '',
-    packageTitle: packageTitle || 'Sesión Fotográfica',
+    packageTitle: verifiedPackageTitle,
     amount: Number(amount) || 0,
     method: method || 'nequi',
     reference: (reference || '').trim(),
@@ -2446,7 +2696,7 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
 
 app.post('/api/payments/checkout', async (req, res) => {
   const ip = getClientIp(req);
-  if (!checkCheckoutRateLimit(ip)) {
+  if (!(await checkCheckoutDistributedRateLimit(ip))) {
     return res.status(429).json({ error: 'Demasiadas solicitudes de checkout. Intenta de nuevo en unos minutos.' });
   }
 
@@ -3412,8 +3662,33 @@ app.post('/api/admin/sessions', express.json({ limit: '50mb' }), async (req, res
   const token = generateGalleryToken();
   const finalPrice = Number(totalPrice || packagePrice || sessionBasePrice || 0);
 
+  // Hallazgos A1, M3 y B6: Comprimir originales Base64 pesados (`compressServerImageIfNeeded`) para no exceder 16 MB BSON,
+  // pre-generar `previewUrl` con marca de agua en servidor (`sharp`) y asignar IDs con `crypto.randomUUID()`.
+  const processedPhotos = await Promise.all(
+    photos.map(async (p, idx) => {
+      const photoId = `photo-${crypto.randomUUID()}`;
+      const compressedOriginal = await compressServerImageIfNeeded(p.url);
+      const previewUrl = await generateWatermarkedPreviewDataUrl(compressedOriginal, {
+        watermarkText: runtimeDB.settings?.watermarkText || 'SEBASTIAN G',
+        watermarkSubtext: runtimeDB.settings?.watermarkSubtext || 'MUESTRA PROTEGIDA • PROHIBIDA SU DESCARGA',
+        token,
+        photoId
+      });
+      return {
+        id: photoId,
+        title: p.title || `Foto #${idx + 1}`,
+        url: compressedOriginal,
+        originalUrl: compressedOriginal,
+        previewUrl,
+        watermarkedInServer: true,
+        selected: false,
+        clientComment: ''
+      };
+    })
+  );
+
   const newSession = {
-    id: `sess-${Date.now()}`,
+    id: `sess-${crypto.randomUUID()}`,
     token,
     clientName: clientName.trim(),
     clientWhatsApp: clientWhatsApp.trim(),
@@ -3428,13 +3703,7 @@ app.post('/api/admin/sessions', express.json({ limit: '50mb' }), async (req, res
     expiresAt: expiresAt.toISOString(),
     status: 'pending',
     submittedAt: null,
-    photos: photos.map((p, idx) => ({
-      id: `photo-${Date.now()}-${idx + 1}`,
-      title: p.title || `Foto #${idx + 1}`,
-      url: p.url,
-      selected: false,
-      clientComment: ''
-    }))
+    photos: processedPhotos
   };
 
   // Guardar en MongoDB Atlas antes de mutar la memoria
@@ -3644,11 +3913,12 @@ app.post('/api/admin/catalog', express.json({ limit: '50mb' }), async (req, res)
   if (!imgCheck.valid) {
     return res.status(400).json({ error: imgCheck.error });
   }
+  const compressedCatalogUrl = await compressServerImageIfNeeded(url.trim());
   const newItem = {
     id: id || `cat-${Date.now()}`,
     title: title.trim(),
     category: (category || 'Retratos').trim(),
-    url: url.trim(),
+    url: compressedCatalogUrl,
     location: (location || 'Colombia').trim(),
     createdAt: new Date().toISOString()
   };
@@ -3762,7 +4032,7 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   const activeScrypt = await getActiveAdminScryptHash();
   const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || (!activeScrypt ? KNOWN_WEAK_PIN_HASH : '');
 
-  const currentOk = verifyAdminPin(cleanCurrent, {
+  const currentOk = await verifyAdminPinAsync(cleanCurrent, {
     scryptHash: activeScrypt,
     sha256Hash: effectiveSha
   });
@@ -3771,10 +4041,8 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
     return res.status(401).json({ error: 'La contraseña actual no es correcta.' });
   }
 
-  // Generar derivación scrypt bancaria de la nueva contraseña
-  const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(cleanNew, salt, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-  const newScryptHash = 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
+  // Generar derivación scrypt bancaria de la nueva contraseña de forma asíncrona sin bloquear el event loop (Hallazgo B2)
+  const newScryptHash = await hashPinScryptAsync(cleanNew);
 
   // Incrementar passwordVersion y persistir hash
   const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });
@@ -4516,7 +4784,7 @@ app.post('/api/reviews', async (req, res) => {
   }
 
   const newReview = {
-    id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `rev-${crypto.randomUUID()}`,
     clientName: cleanName,
     rating: rawRating,
     recommend: recommend !== false,
@@ -4642,7 +4910,7 @@ app.post('/api/gallery/:token/review', async (req, res) => {
   }
 
   const newReview = {
-    id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `rev-${crypto.randomUUID()}`,
     clientName: sessionAuthorName,
     ...(submittedAlias && submittedAlias !== sessionAuthorName ? { submittedAlias } : {}),
     rating: ratingInt,
@@ -4700,7 +4968,7 @@ app.post('/api/admin/reviews', requireAdminAuth, async (req, res) => {
   const ratingInt = Math.max(1, Math.min(5, parseInt(rating, 10) || 5));
   const isVerified = verified !== false;
   const newReview = {
-    id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `rev-${crypto.randomUUID()}`,
     clientName: cleanName,
     rating: ratingInt,
     recommend: recommend !== false,
@@ -4818,8 +5086,63 @@ app.all('/api/bot-webhook', async (req, res) => {
 // ==============================================================================
 // PROXY DE BASE DE DATOS AUTENTICADO (MongoDB Atlas — Fuente Única de Verdad)
 // ==============================================================================
-const DB_ALLOWED_TABLES = ['catalog', 'bookings', 'sessions', 'payments', 'reviews', 'system_config', 'settings', 'packages', 'vip_clients'];
+// Hallazgo M2: Se retiran `system_config` y `settings` de la lista blanca para que las claves,
+// versiones de contraseña y credenciales biométricas solo puedan gestionarse por sus endpoints dedicados.
+// Además, `sanitizeDbMatchFilter` rechaza cualquier operador MongoDB (`$ne`, `$gt`, `$where`, `$regex`, etc.)
+// o valores anidados, permitiendo únicamente igualdad escalar sobre campos permitidos.
+export const DB_ALLOWED_TABLES = ['catalog', 'bookings', 'sessions', 'payments', 'reviews', 'packages', 'vip_clients'];
 const DB_ALLOWED_OPS = ['upsert', 'insert', 'update', 'delete', 'select'];
+const DB_ALLOWED_MATCH_FIELDS = new Set([
+  'id',
+  'token',
+  'galleryToken',
+  'reference',
+  'bookingId',
+  'sessionToken',
+  'category',
+  'status',
+  'phone',
+  'clientWhatsApp'
+]);
+
+export function sanitizeDbMatchFilter(rawMatch, { requireNonEmpty = false } = {}) {
+  if (rawMatch === undefined || rawMatch === null) {
+    if (requireNonEmpty) {
+      return { valid: false, error: 'Se requiere un filtro "match" explícito con campos escalares permitidos.' };
+    }
+    return { valid: true, filter: {} };
+  }
+  if (typeof rawMatch !== 'object' || Array.isArray(rawMatch)) {
+    return { valid: false, error: 'El filtro "match" debe ser un objeto plano.' };
+  }
+  const entries = Object.entries(rawMatch);
+  if (requireNonEmpty && entries.length === 0) {
+    return { valid: false, error: 'Actualizar o borrar exige "match" no vacío para no afectar a toda la colección.' };
+  }
+  const cleanFilter = {};
+  for (const [key, val] of entries) {
+    if (!key || key.startsWith('$') || key.includes('.')) {
+      return {
+        valid: false,
+        error: `Operador o clave no permitida en filtro match (${key}). Prohibidos operadores MongoDB ($).`
+      };
+    }
+    if (!DB_ALLOWED_MATCH_FIELDS.has(key)) {
+      return {
+        valid: false,
+        error: `Campo de filtro no permitido en /api/admin/db: "${key}".`
+      };
+    }
+    if (val === null || (typeof val !== 'string' && typeof val !== 'number' && typeof val !== 'boolean')) {
+      return {
+        valid: false,
+        error: `El valor del campo "${key}" en match debe ser escalar (string, number o boolean).`
+      };
+    }
+    cleanFilter[key] = val;
+  }
+  return { valid: true, filter: cleanFilter };
+}
 
 app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
   const { table, op, payload, match } = req.body || {};
@@ -4830,9 +5153,13 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
   if (!DB_ALLOWED_OPS.includes(String(op))) {
     return res.status(400).json({ error: `Operacion no permitida: ${op}` });
   }
-  if ((op === 'update' || op === 'delete') && (!match || !Object.keys(match).length)) {
-    return res.status(400).json({ error: 'Actualizar o borrar exige "match" para no afectar a toda la colección.' });
+
+  const requireNonEmptyMatch = op === 'update' || op === 'delete';
+  const matchCheck = sanitizeDbMatchFilter(match, { requireNonEmpty: requireNonEmptyMatch });
+  if (!matchCheck.valid) {
+    return res.status(400).json({ error: matchCheck.error, code: 'INVALID_DB_MATCH_FILTER' });
   }
+  const safeMatch = matchCheck.filter;
 
   if (!isMongoConfigured()) {
     return res.status(503).json({ error: 'El servidor no tiene configurada MONGODB_URI para la base de datos en la nube.' });
@@ -4840,25 +5167,64 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
 
   try {
     const colName = table;
+    const clientIp = getClientIp(req);
     if (op === 'select') {
-      const docs = await findMongoDocs(colName, match || {});
+      const docs = await findMongoDocs(colName, safeMatch);
       return res.json({ success: true, data: (docs || []).map(({ _id, ...d }) => d) });
     } else if (op === 'upsert' || op === 'insert') {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para insertar/actualizar.' });
+      }
       const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
-      const filter = (docToSave && docToSave.id) ? { id: docToSave.id } : (match || {});
+      const filter = (docToSave && typeof docToSave.id === 'string' && docToSave.id.trim())
+        ? { id: docToSave.id.trim() }
+        : safeMatch;
+      if (!Object.keys(filter).length) {
+        return res.status(400).json({ error: 'Se requiere "payload.id" o "match" escalar para upsert/insert.' });
+      }
       const ok = await upsertMongoDoc(colName, filter, docToSave, { throwOnError: true });
       if (!ok) throw new Error(`Fallo de escritura en ${colName} (MongoDB no reconoció la operación)`);
+      await recordFinancialAuditLog({
+        action: `admin_db_${op}`,
+        actor: 'admin',
+        entityType: colName,
+        entityId: String(docToSave?.id || filter.id || filter.token || 'record'),
+        status: 'committed',
+        ip: clientIp,
+        metadata: { table: colName, op, filter }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
       return res.json({ success: true, data: [docToSave] });
     } else if (op === 'update') {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para actualizar.' });
+      }
       const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
-      const ok = await upsertMongoDoc(colName, match || {}, docToSave, { throwOnError: true });
+      const ok = await upsertMongoDoc(colName, safeMatch, docToSave, { throwOnError: true });
       if (!ok) throw new Error(`Fallo de actualización en ${colName} (MongoDB no reconoció la operación)`);
+      await recordFinancialAuditLog({
+        action: 'admin_db_update',
+        actor: 'admin',
+        entityType: colName,
+        entityId: String(docToSave?.id || safeMatch.id || safeMatch.token || 'record'),
+        status: 'committed',
+        ip: clientIp,
+        metadata: { table: colName, op, match: safeMatch }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
       return res.json({ success: true, data: [docToSave] });
     } else if (op === 'delete') {
-      const deleteResult = await deleteMongoDocs(colName, match || {}, { throwOnError: true });
+      const deleteResult = await deleteMongoDocs(colName, safeMatch, { throwOnError: true });
       if (deleteResult && deleteResult.acknowledged === false) {
         throw new Error(`Fallo al eliminar en ${colName} (MongoDB no reconoció la operación)`);
       }
+      await recordFinancialAuditLog({
+        action: 'admin_db_delete',
+        actor: 'admin',
+        entityType: colName,
+        entityId: String(safeMatch.id || safeMatch.token || 'batch'),
+        status: 'deleted',
+        ip: clientIp,
+        metadata: { table: colName, op, match: safeMatch, deletedCount: deleteResult.deletedCount || 0 }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
       return res.json({ success: true, data: [], deletedCount: deleteResult.deletedCount || 0 });
     }
   } catch (eMongo) {

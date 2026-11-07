@@ -9,10 +9,10 @@ const includedExtensions = new Set([
   '.kt', '.kts', '.xml', '.md', '.yml', '.yaml'
 ]);
 const excludedDirectories = new Set([
-  'node_modules', 'dist', 'release', '.git', 'scratch_photos', '.gemini', 'coverage', '.system_generated'
+  'node_modules', 'dist', 'release', '.git', 'scratch_photos', '.gemini', 'coverage', '.system_generated', 'legacy'
 ]);
 const excludedFiles = new Set([
-  'package-lock.json', 'PROJECT_SOURCE_CODE.md', '.env', '.env.local', '.env.production'
+  'package-lock.json', 'PROJECT_SOURCE_CODE.md', '.env', '.env.local', '.env.production', 'db.json'
 ]);
 
 function getFiles(dir) {

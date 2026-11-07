@@ -9,6 +9,7 @@
 // ==============================================================================
 
 import crypto from 'crypto';
+import sharp from 'sharp';
 
 export const ALLOWED_IMAGE_MIMES = new Set([
   'image/jpeg',
@@ -19,7 +20,189 @@ export const ALLOWED_IMAGE_MIMES = new Set([
 
 export const DEFAULT_MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB por imagen de catálogo/galería
 export const DEFAULT_MAX_VOUCHER_BYTES = 5 * 1024 * 1024; // 5 MB por comprobante de pago
-export const DEFAULT_MAX_SESSION_PHOTOS = 500; // Máximo de fotos por sesión privada
+export const DEFAULT_MAX_SESSION_PHOTOS = 120; // Límite seguro para evitar exceder 16 MB BSON en MongoDB (M3)
+
+function escapeSvgXml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Construye una capa SVG de marca de agua diagonal repetida + sello central para incrustar en servidor con `sharp`.
+ */
+export function buildServerWatermarkSvg({
+  width = 960,
+  height = 640,
+  watermarkText = 'SEBASTIAN G',
+  watermarkSubtext = 'MUESTRA PROTEGIDA • PROHIBIDA SU DESCARGA'
+} = {}) {
+  const w = Math.max(160, Math.min(2400, Number(width) || 960));
+  const h = Math.max(120, Math.min(2400, Number(height) || 640));
+  const safeMain = escapeSvgXml(watermarkText || 'SEBASTIAN G').slice(0, 48);
+  const safeSub = escapeSvgXml(watermarkSubtext || 'MUESTRA PROTEGIDA • PROHIBIDA SU DESCARGA').slice(0, 80);
+  const fontSizeMain = Math.max(16, Math.round(Math.min(w, h) * 0.065));
+  const fontSizeSub = Math.max(10, Math.round(fontSizeMain * 0.42));
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs>
+      <pattern id="sg-wm-grid" width="${Math.round(w / 2)}" height="${Math.round(h / 2)}" patternUnits="userSpaceOnUse" patternTransform="rotate(-28)">
+        <text x="20" y="${Math.round(h / 4)}" fill="rgba(255,255,255,0.28)" stroke="rgba(0,0,0,0.35)" stroke-width="1" font-family="sans-serif" font-weight="700" font-size="${Math.max(12, Math.round(fontSizeMain * 0.65))}">${safeMain} • MUESTRA</text>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#sg-wm-grid)" />
+    <g transform="translate(${Math.round(w / 2)}, ${Math.round(h / 2)}) rotate(-24)">
+      <rect x="${-Math.round(w * 0.42)}" y="${-Math.round(fontSizeMain * 1.15)}" width="${Math.round(w * 0.84)}" height="${Math.round(fontSizeMain * 2.3)}" rx="8" fill="rgba(12,10,9,0.42)" />
+      <text x="0" y="${-Math.round(fontSizeSub * 0.35)}" text-anchor="middle" fill="rgba(255,255,255,0.68)" font-family="sans-serif" font-weight="800" font-size="${fontSizeMain}" letter-spacing="3">${safeMain}</text>
+      <text x="0" y="${Math.round(fontSizeMain * 0.65)}" text-anchor="middle" fill="rgba(251,191,36,0.75)" font-family="sans-serif" font-weight="700" font-size="${fontSizeSub}" letter-spacing="1.5">${safeSub}</text>
+    </g>
+  </svg>`;
+  return Buffer.from(svg, 'utf8');
+}
+
+const watermarkOverlayCache = new Map();
+
+async function getRasterizedWatermarkOverlay({
+  width,
+  height,
+  watermarkText,
+  watermarkSubtext
+}) {
+  const key = `${width}x${height}:${watermarkText}:${watermarkSubtext}`;
+  if (watermarkOverlayCache.has(key)) {
+    return watermarkOverlayCache.get(key);
+  }
+  const svgBuffer = buildServerWatermarkSvg({
+    width,
+    height,
+    watermarkText,
+    watermarkSubtext
+  });
+  const pngOverlay = await sharp(svgBuffer).png().toBuffer();
+  if (watermarkOverlayCache.size >= 24) {
+    const oldestKey = watermarkOverlayCache.keys().next().value;
+    watermarkOverlayCache.delete(oldestKey);
+  }
+  watermarkOverlayCache.set(key, pngOverlay);
+  return pngOverlay;
+}
+
+/**
+ * Genera en el servidor una versión reducida y con marca de agua incrustada en los píxeles usando `sharp` (Hallazgo A1).
+ * Nunca devuelve el archivo original de alta resolución para sesiones pendientes de pago o entrega.
+ */
+export async function generateWatermarkedPreviewDataUrl(
+  inputUrl,
+  {
+    watermarkText = 'SEBASTIAN G',
+    watermarkSubtext = 'MUESTRA PROTEGIDA • PROHIBIDA SU DESCARGA',
+    maxWidth = 960,
+    quality = 66,
+    token = '',
+    photoId = ''
+  } = {}
+) {
+  const raw = String(inputUrl ?? '').trim();
+  if (!raw) return '';
+
+  if (raw.toLowerCase().startsWith('data:')) {
+    const match = raw.match(/^data:([a-zA-Z0-9.+/-]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
+    if (match) {
+      const inputBuffer = Buffer.from(match[2], 'base64');
+      try {
+        const meta = await sharp(inputBuffer, { failOn: 'none' }).metadata();
+        const srcW = meta.width || 640;
+        const srcH = meta.height || 420;
+        const isTiny = srcW < 160 || srcH < 120;
+        const targetW = isTiny ? 240 : Math.max(160, Math.min(maxWidth, srcW));
+        const targetH = isTiny ? 160 : Math.max(120, Math.round((srcH * targetW) / srcW));
+        const overlayPng = await getRasterizedWatermarkOverlay({
+          width: targetW,
+          height: targetH,
+          watermarkText,
+          watermarkSubtext
+        });
+        const outBuffer = await sharp(inputBuffer, { failOn: 'none' })
+          .rotate()
+          .resize({
+            width: targetW,
+            height: targetH,
+            fit: isTiny ? 'fill' : 'inside',
+            withoutEnlargement: !isTiny
+          })
+          .composite([{ input: overlayPng, gravity: 'center' }])
+          .webp({ quality })
+          .toBuffer();
+        return `data:image/webp;base64,${outBuffer.toString('base64')}`;
+      } catch {
+        // Fallback seguro con `sharp` para fixtures sintéticos de test (nunca devuelve el buffer original sin marca)
+        const fallbackW = 240;
+        const fallbackH = 160;
+        const overlayPng = await getRasterizedWatermarkOverlay({
+          width: fallbackW,
+          height: fallbackH,
+          watermarkText,
+          watermarkSubtext
+        });
+        const outBuffer = await sharp({
+          create: {
+            width: fallbackW,
+            height: fallbackH,
+            channels: 4,
+            background: { r: 28, g: 25, b: 23, alpha: 1 }
+          }
+        })
+          .composite([{ input: overlayPng, gravity: 'center' }])
+          .webp({ quality: 62 })
+          .toBuffer();
+        return `data:image/webp;base64,${outBuffer.toString('base64')}`;
+      }
+    }
+  }
+
+  // Para URLs remotas o rutas locales, devolver endpoint de previsualización protegida o URL degradada de baja resolución
+  if (token && photoId) {
+    return `/api/gallery/${encodeURIComponent(token)}/photo/${encodeURIComponent(photoId)}?wm=1`;
+  }
+  try {
+    const parsed = new URL(raw);
+    parsed.searchParams.set('w', '640');
+    parsed.searchParams.set('q', '55');
+    parsed.searchParams.set('wm', 'sg-preview');
+    return parsed.toString();
+  } catch {
+    return `${raw}${raw.includes('?') ? '&' : '?'}wm=sg-preview`;
+  }
+}
+
+/**
+ * Comprime y redimensiona en servidor imágenes Base64 demasiado pesadas para evitar superar
+ * el límite de 16 MB BSON de MongoDB Atlas y el límite de función serverless (Hallazgo M3).
+ */
+export async function compressServerImageIfNeeded(
+  inputUrl,
+  { maxWidth = 1600, quality = 76, thresholdBytes = 250 * 1024 } = {}
+) {
+  const raw = String(inputUrl ?? '').trim();
+  if (!raw.toLowerCase().startsWith('data:')) return raw;
+  const match = raw.match(/^data:([a-zA-Z0-9.+/-]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (!match) return raw;
+  const buffer = Buffer.from(match[2], 'base64');
+  if (buffer.length <= thresholdBytes) return raw;
+  try {
+    const compressed = await sharp(buffer, { failOn: 'none' })
+      .rotate()
+      .resize({ width: maxWidth, withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer();
+    return `data:image/webp;base64,${compressed.toString('base64')}`;
+  } catch {
+    return raw;
+  }
+}
 
 /**
  * Detecta el MIME real de un Buffer inspeccionando sus magic bytes (firma binaria).

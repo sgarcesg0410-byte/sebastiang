@@ -62,7 +62,16 @@ export function resolvePropertyPath(obj, path) {
  * @param {string} params.eventsSecret Secreto de eventos configurado en Wompi (WOMPI_EVENTS_SECRET)
  * @returns {boolean} True si la firma es válida y auténtica; false en caso contrario
  */
-export function verifyWompiChecksum({ eventPayload, eventsSecret }) {
+export const DEFAULT_WEBHOOK_MAX_AGE_SECONDS = 300; // 5 minutos (Hallazgo B3)
+export const DEFAULT_WEBHOOK_MAX_FUTURE_DRIFT_SECONDS = 60; // 1 minuto de tolerancia de reloj
+
+export function verifyWompiChecksum({
+  eventPayload,
+  eventsSecret,
+  maxAgeSeconds = DEFAULT_WEBHOOK_MAX_AGE_SECONDS,
+  maxFutureDriftSeconds = DEFAULT_WEBHOOK_MAX_FUTURE_DRIFT_SECONDS,
+  nowSeconds = null
+}) {
   if (!eventsSecret || typeof eventsSecret !== 'string') {
     return false;
   }
@@ -73,6 +82,22 @@ export function verifyWompiChecksum({ eventPayload, eventsSecret }) {
   const { signature, timestamp, data } = eventPayload;
   if (!signature || !Array.isArray(signature.properties) || !signature.checksum || timestamp === undefined || timestamp === null) {
     return false;
+  }
+
+  // Validación de ventana temporal anti-replay (Hallazgo B3: máx. 5 minutos de antigüedad)
+  const rawTs = Number(timestamp);
+  if (!Number.isFinite(rawTs) || rawTs <= 0) {
+    return false;
+  }
+  const eventTsSeconds = rawTs > 1e12 ? Math.floor(rawTs / 1000) : Math.floor(rawTs);
+  if (Number.isFinite(maxAgeSeconds) && maxAgeSeconds > 0) {
+    const referenceNowSec = Number.isFinite(nowSeconds)
+      ? Math.floor(nowSeconds)
+      : Math.floor(Date.now() / 1000);
+    const ageSeconds = referenceNowSec - eventTsSeconds;
+    if (ageSeconds > maxAgeSeconds || ageSeconds < -Math.abs(maxFutureDriftSeconds)) {
+      return false;
+    }
   }
 
   // Extraer valores en el orden exacto especificado en signature.properties

@@ -587,6 +587,79 @@ export async function checkDistributedRateLimit({
   }
 }
 
+/**
+ * Limpia un contador de límite de intentos distribuido en MongoDB Atlas (por ejemplo, tras un login exitoso).
+ */
+export async function resetDistributedRateLimit(key, { targetDb = null } = {}) {
+  if (!key) return;
+  try {
+    const database = targetDb || await getMongoDb();
+    if (!database) return;
+    await database.collection('rate_limits').deleteOne({ key });
+  } catch {}
+}
+
+/**
+ * Persiste un desafío biométrico de un solo uso con TTL en MongoDB Atlas (Hallazgo A2 / B1),
+ * permitiendo que `/api/admin/auth/bio-challenge` y `/api/admin/auth/bio-refresh` funcionen
+ * incluso cuando caen en distintas instancias serverless de Vercel.
+ */
+export async function saveDistributedBioChallenge(challenge, { ip = 'unknown', ttlMs = 60000, targetDb = null } = {}) {
+  if (!challenge) return false;
+  const database = targetDb || await getMongoDb();
+  if (!database) return false;
+  const now = new Date();
+  const expiresAtDate = new Date(now.getTime() + Math.max(5000, Number(ttlMs) || 60000));
+  const lockKey = `bio_chal_${String(challenge).trim()}`;
+  try {
+    await database.collection('slot_locks').updateOne(
+      { lockKey },
+      {
+        $set: {
+          lockKey,
+          kind: 'bio_challenge',
+          challenge: String(challenge).trim(),
+          ip: String(ip || 'unknown'),
+          createdAt: now.toISOString(),
+          expiresAt: expiresAtDate.getTime(),
+          expiresAtDate
+        }
+      },
+      { upsert: true }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Consume de forma atómica (`findOneAndDelete`) un desafío biométrico en MongoDB Atlas.
+ * Garantiza un único uso real entre múltiples instancias serverless.
+ */
+export async function consumeDistributedBioChallenge(challenge, { targetDb = null } = {}) {
+  if (!challenge || typeof challenge !== 'string') return null;
+  const database = targetDb || await getMongoDb();
+  if (!database) return null;
+  const lockKey = `bio_chal_${String(challenge).trim()}`;
+  const now = new Date();
+  try {
+    const removed = await database.collection('slot_locks').findOneAndDelete({
+      lockKey,
+      expiresAtDate: { $gt: now }
+    });
+    const doc = removed && typeof removed === 'object' && 'value' in removed ? removed.value : removed;
+    if (!doc) return null;
+    return {
+      challenge: doc.challenge || challenge,
+      ip: doc.ip || 'unknown',
+      expiresAt: Number(doc.expiresAt) || new Date(doc.expiresAtDate).getTime()
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function pingMongoDB() {
   const start = Date.now();
   try {

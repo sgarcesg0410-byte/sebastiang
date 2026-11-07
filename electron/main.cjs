@@ -120,8 +120,20 @@ function createWindow() {
   });
 }
 
+// Valida que el emisor de un mensaje IPC sea el marco principal de un origen interno autorizado (Hallazgo B7)
+function isTrustedIpcSender(event) {
+  const senderFrame = event && event.senderFrame;
+  if (!senderFrame) return false;
+  if (senderFrame.parent) return false; // Rechazar iframes secundarios
+  return isInternalUrl(senderFrame.url);
+}
+
 // Handlers IPC para funciones nativas de escritorio
 ipcMain.handle('app:print', async (event, options = {}) => {
+  if (!isTrustedIpcSender(event)) {
+    console.warn('[Electron] IPC app:print rechazado desde origen no confiable:', event?.senderFrame?.url);
+    return false;
+  }
   if (!mainWindow) return false;
   return new Promise((resolve) => {
     mainWindow.webContents.print(options, (success, failureReason) => {
@@ -131,6 +143,10 @@ ipcMain.handle('app:print', async (event, options = {}) => {
 });
 
 ipcMain.handle('app:open-external', async (event, url) => {
+  if (!isTrustedIpcSender(event)) {
+    console.warn('[Electron] IPC app:open-external rechazado desde origen no confiable:', event?.senderFrame?.url);
+    return false;
+  }
   // El renderer puede cargar contenido remoto: nunca se abre una URL sin validar.
   if (!isSafeExternalUrl(url)) {
     console.warn('[Electron] URL externa bloqueada por seguridad:', url);
@@ -140,11 +156,15 @@ ipcMain.handle('app:open-external', async (event, url) => {
   return true;
 });
 
-ipcMain.handle('app:notification', (event, { title, body }) => {
+ipcMain.handle('app:notification', (event, { title, body } = {}) => {
+  if (!isTrustedIpcSender(event)) {
+    console.warn('[Electron] IPC app:notification rechazado desde origen no confiable:', event?.senderFrame?.url);
+    return false;
+  }
   if (Notification.isSupported()) {
     new Notification({
-      title: title || 'Sebastian G • Estudio',
-      body: body || '',
+      title: String(title || 'Sebastian G • Estudio').slice(0, 80),
+      body: String(body || '').slice(0, 240),
       icon: path.join(__dirname, '..', 'public', 'app-icon.png')
     }).show();
   }

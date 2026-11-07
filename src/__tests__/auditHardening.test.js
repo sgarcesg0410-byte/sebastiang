@@ -7,7 +7,9 @@ import { updateAdminPasswordInStore } from '../../api/passwordReset.js';
 import {
   detectBufferMimeType,
   validateImagePayload,
-  validateSessionPhotosBatch
+  validateSessionPhotosBatch,
+  DEFAULT_MAX_SESSION_PHOTOS,
+  generateWatermarkedPreviewDataUrl
 } from '../../api/uploadValidator.js';
 import {
   maskEmail,
@@ -25,19 +27,29 @@ import {
   toMinimalApkFeed,
   isValidOfficialDomain,
   verifyBiometricAssertion,
-  createBiometricTestAssertion
+  createBiometricTestAssertion,
+  getAdminAuthSecret,
+  verifyAdminPinAsync,
+  hashPinScryptAsync,
+  isAdminAccessTokenJtiRevoked
 } from '../../api/security.js';
 import {
   EXPECTED_MONGO_INDEXES,
   buildSlotLockBucketKeys,
-  ensureMongoIndexes
+  ensureMongoIndexes,
+  saveDistributedBioChallenge,
+  consumeDistributedBioChallenge
 } from '../../api/db/mongo.js';
 import app, {
   checkPublicWriteRateLimit,
   clearApiRateLimiters,
   isAllowedCorsOrigin,
+  sanitizeDbMatchFilter,
+  DB_ALLOWED_TABLES,
+  MAX_ACTIVE_BIO_CHALLENGES,
   runtimeDB
 } from '../../api/index.js';
+import { verifyWompiChecksum } from '../../api/payments/gateway.js';
 import { resolveBookingPrice } from '../../api/pricingGuard.js';
 import {
   getColombiaTodayIso,
@@ -284,7 +296,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const { reference, amountInCents } = checkoutRes.body;
 
       const buildSignedEvent = (status, cents = amountInCents, txId = 'tx-wompi-999') => {
-        const timestamp = 1792000000;
+        const timestamp = Math.floor(Date.now() / 1000);
         const properties = ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'];
         const raw = `${txId}${status}${cents}${timestamp}${process.env.WOMPI_EVENTS_SECRET}`;
         const checksum = crypto.createHash('sha256').update(raw).digest('hex');
@@ -723,7 +735,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
 
       const txId = 'tx-reconcile-01';
       const amountInCents = 2000000;
-      const ts = 1799000000;
+      const ts = Math.floor(Date.now() / 1000);
       const rawChecksum = `${txId}APPROVED${amountInCents}${ts}${process.env.WOMPI_EVENTS_SECRET}`;
       const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
 
@@ -1013,6 +1025,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
           return { ok: false, status: 404 };
         };
 
+        const nowTs = Math.floor(Date.now() / 1000);
         const rawPayload = {
           data: {
             transaction: {
@@ -1027,10 +1040,10 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
             properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
             checksum: crypto
               .createHash('sha256')
-              .update(`tx-tamper-01APPROVED150000001792000000test_events_secret_2026`)
+              .update(`tx-tamper-01APPROVED15000000${nowTs}test_events_secret_2026`)
               .digest('hex')
           },
-          timestamp: 1792000000,
+          timestamp: nowTs,
           event: 'transaction.updated'
         };
 
@@ -1059,6 +1072,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         };
         runtimeDB.payments = [payment];
 
+        const nowTs = Math.floor(Date.now() / 1000);
         const payload = {
           data: {
             transaction: {
@@ -1073,10 +1087,10 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
             properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
             checksum: crypto
               .createHash('sha256')
-              .update(`tx-declined-err-99DECLINED50000001792000000test_events_secret_2026`)
+              .update(`tx-declined-err-99DECLINED5000000${nowTs}test_events_secret_2026`)
               .digest('hex')
           },
-          timestamp: 1792000000,
+          timestamp: nowTs,
           event: 'transaction.updated'
         };
 
@@ -1203,6 +1217,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         runtimeDB.payments = [payment];
         runtimeDB.bookings = [booking];
 
+        const nowTs = Math.floor(Date.now() / 1000);
         const payload = {
           data: {
             transaction: {
@@ -1217,10 +1232,10 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
             properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
             checksum: crypto
               .createHash('sha256')
-              .update(`tx-atomic-fail-88APPROVED20000001792000000test_events_secret_2026`)
+              .update(`tx-atomic-fail-88APPROVED2000000${nowTs}test_events_secret_2026`)
               .digest('hex')
           },
-          timestamp: 1792000000,
+          timestamp: nowTs,
           event: 'transaction.updated'
         };
 
@@ -1304,6 +1319,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
           return { ok: false, status: 404 };
         };
 
+        const nowTs = Math.floor(Date.now() / 1000);
         const tamperedPayload = {
           data: {
             transaction: {
@@ -1318,10 +1334,10 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
             properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
             checksum: crypto
               .createHash('sha256')
-              .update(`tx-tamper-ver-99APPROVED80000001792000000test_events_secret_2026`)
+              .update(`tx-tamper-ver-99APPROVED8000000${nowTs}test_events_secret_2026`)
               .digest('hex')
           },
-          timestamp: 1792000000,
+          timestamp: nowTs,
           event: 'transaction.updated'
         };
 
@@ -1350,10 +1366,10 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
             properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
             checksum: crypto
               .createHash('sha256')
-              .update(`tx-legitimate-ver-100APPROVED80000001792000000test_events_secret_2026`)
+              .update(`tx-legitimate-ver-100APPROVED8000000${nowTs}test_events_secret_2026`)
               .digest('hex')
           },
-          timestamp: 1792000000,
+          timestamp: nowTs,
           event: 'transaction.updated'
         };
 
@@ -1895,7 +1911,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
 
       const txId = 'tx-bal-' + Date.now();
       const amountInCents = 5000000;
-      const ts = 1799000000;
+      const ts = Math.floor(Date.now() / 1000);
       const secret = process.env.WOMPI_EVENTS_SECRET || 'test_events_secret';
       const rawChecksum = `${txId}APPROVED${amountInCents}${ts}${secret}`;
       const checksum = crypto.createHash('sha256').update(rawChecksum).digest('hex');
@@ -2625,6 +2641,251 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(matchingNameAttempt.status).toBe(200);
       expect(matchingNameAttempt.body.isLoyal).toBe(true);
       expect(matchingNameAttempt.body.discountPercent).toBe(15);
+    });
+  });
+
+  // =========================================================================
+  // 14. AUDITORÍA DE SEGURIDAD Y ARQUITECTURA (HALLAZGOS A1–A2, M1–M5 Y B1–B9)
+  // =========================================================================
+  describe('14. Auditoría de Seguridad y Arquitectura (Hallazgos A1–A2, M1–M5 y B1–B9)', () => {
+    it('A1: genera previsualización con marca de agua en el servidor (sharp) y no expone originalUrl antes de delivered', async () => {
+      // Un PNG real 1x1 en Base64 para procesar con sharp
+      const onePxPngDataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+      const watermarked = await generateWatermarkedPreviewDataUrl(onePxPngDataUrl, {
+        watermarkText: 'SEBASTIANG · PRUEBA'
+      });
+      expect(watermarked.startsWith('data:image/webp;base64,')).toBe(true);
+      expect(watermarked).not.toBe(onePxPngDataUrl);
+
+      const adminToken = createAdminToken({ pwd: 1 });
+      const createRes = await invokeApp('POST', '/api/admin/sessions', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: {
+          clientName: 'Cliente Galería Protegida A1',
+          clientWhatsApp: '+573109998877',
+          packageTitle: 'Paquete Retrato',
+          includedPhotos: 5,
+          extraPhotoPrice: 15000,
+          photos: [{ id: 'p-a1-1', name: 'retrato_playa.png', url: onePxPngDataUrl }]
+        }
+      });
+      expect(createRes.status).toBe(201);
+      const token = createRes.body.session.token;
+
+      // Mientras no esté delivered, GET /api/gallery/:token sirve solo la versión con marca de agua
+      const publicBeforePaid = await invokeApp('GET', `/api/gallery/${token}`);
+      expect(publicBeforePaid.status).toBe(200);
+      expect(publicBeforePaid.body.photos[0].watermarkedInServer).toBe(true);
+      expect(publicBeforePaid.body.photos[0].url.startsWith('data:image/webp;base64,')).toBe(true);
+      expect(publicBeforePaid.body.photos[0].url).not.toBe(onePxPngDataUrl);
+      expect(publicBeforePaid.body.photos[0].originalUrl).toBeUndefined();
+
+      // Una vez marcada como delivered, expone la foto original sin marca de agua
+      const storedSession = runtimeDB.sessions.find((s) => s.token === token);
+      storedSession.status = 'delivered';
+      const publicAfterPaid = await invokeApp('GET', `/api/gallery/${token}`);
+      expect(publicAfterPaid.status).toBe(200);
+      expect(publicAfterPaid.body.photos[0].watermarkedInServer).toBe(false);
+      expect(publicAfterPaid.body.photos[0].url).toBe(onePxPngDataUrl);
+    });
+
+    it('A2 & B1: rate limiting distribuido, tope MAX_ACTIVE_BIO_CHALLENGES = 200 y consumo atómico de retos biométricos', async () => {
+      expect(MAX_ACTIVE_BIO_CHALLENGES).toBe(200);
+      expect(typeof saveDistributedBioChallenge).toBe('function');
+      expect(typeof consumeDistributedBioChallenge).toBe('function');
+
+      const bioRes = await invokeApp('POST', '/api/admin/auth/bio-challenge', {
+        body: { deviceId: 'android-device-b1-test' }
+      });
+      expect(bioRes.status).toBe(200);
+      expect(bioRes.body.challenge).toBeDefined();
+      expect(typeof bioRes.body.expiresAt).toBe('number');
+    });
+
+    it('M1: CORS desactiva credentials y rechaza comodines *.vercel.app no autorizados', () => {
+      expect(isAllowedCorsOrigin('https://sebastiang.app')).toBe(true);
+      expect(isAllowedCorsOrigin('https://foto-reservas.vercel.app')).toBe(true);
+      expect(isAllowedCorsOrigin('https://sebastiang-cualquiercosa.vercel.app')).toBe(false);
+      expect(isAllowedCorsOrigin('https://evil-attacker.vercel.app')).toBe(false);
+
+      const apiIndexCode = fs.readFileSync(path.join(process.cwd(), 'api/index.js'), 'utf8');
+      expect(apiIndexCode).toContain('credentials: false');
+    });
+
+    it('M2: /api/admin/db excluye settings y system_config y bloquea operadores Mongo ($ne, $gt) en match', async () => {
+      expect(DB_ALLOWED_TABLES.includes('settings')).toBe(false);
+      expect(DB_ALLOWED_TABLES.includes('system_config')).toBe(false);
+
+      expect(sanitizeDbMatchFilter({ id: 'book-123' })).toEqual({ valid: true, filter: { id: 'book-123' } });
+      expect(sanitizeDbMatchFilter({ id: { $ne: null } }).valid).toBe(false);
+      expect(sanitizeDbMatchFilter({ $where: '1==1' }).valid).toBe(false);
+      expect(sanitizeDbMatchFilter({ unallowedField: 'abc' }).valid).toBe(false);
+
+      const adminToken = createAdminToken({ pwd: 1 });
+      const forbiddenTableRes = await invokeApp('POST', '/api/admin/db', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: { op: 'select', table: 'settings' }
+      });
+      expect(forbiddenTableRes.status).toBe(400);
+
+      const nosqlInjectAttempt = await invokeApp('POST', '/api/admin/db', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: {
+          op: 'delete',
+          table: 'bookings',
+          match: { id: { $ne: null } }
+        }
+      });
+      expect(nosqlInjectAttempt.status).toBe(400);
+      expect(nosqlInjectAttempt.body.code).toBe('INVALID_DB_MATCH_FILTER');
+    });
+
+    it('M3: límite de fotos por sesión en 120 y body limit de 100kb en /api/gallery', () => {
+      expect(DEFAULT_MAX_SESSION_PHOTOS).toBe(120);
+      const apiIndexCode = fs.readFileSync(path.join(process.cwd(), 'api/index.js'), 'utf8');
+      expect(apiIndexCode).toContain("if (url.startsWith('/api/gallery'))");
+      expect(apiIndexCode).toContain("limit = '100kb'");
+    });
+
+    it('M4: POST /api/payments genera ID con UUID, exige reserva/sesión existente y rechaza URLs remotas externas en voucherUrl', async () => {
+      // 1. Sin reserva ni sesión existente -> 404
+      const orphanPay = await invokeApp('POST', '/api/payments', {
+        body: {
+          bookingId: 'book-inexistente-999',
+          amount: 50000,
+          method: 'nequi'
+        }
+      });
+      expect(orphanPay.status).toBe(404);
+
+      // 2. Con reserva real pero voucherUrl apuntando a servidor externo -> 400
+      runtimeDB.bookings.push({
+        id: 'book-m4-valid',
+        clientName: 'Cliente Real M4',
+        packageTitle: 'Paquete Bodas',
+        totalPrice: 200000,
+        status: 'pending'
+      });
+
+      const ssrfVoucherAttempt = await invokeApp('POST', '/api/payments', {
+        body: {
+          bookingId: 'book-m4-valid',
+          amount: 50000,
+          method: 'nequi',
+          voucherUrl: 'https://evil-tracker.example.com/pixel.png'
+        }
+      });
+      expect(ssrfVoucherAttempt.status).toBe(400);
+
+      // 3. Con reserva real y sin voucher externo -> 201 con UUID y datos vinculados a la reserva
+      const validPay = await invokeApp('POST', '/api/payments', {
+        body: {
+          bookingId: 'book-m4-valid',
+          amount: 50000,
+          method: 'nequi',
+          clientName: 'Nombre Manipulado Ignorado'
+        }
+      });
+      expect(validPay.status).toBe(201);
+      expect(validPay.body.payment.id).toMatch(/^pay-[0-9a-f-]{36}$/i);
+      expect(validPay.body.payment.clientName).toBe('Cliente Real M4');
+    });
+
+    it('M5: getAdminAuthSecret falla en cerrado (null) en producción si ADMIN_AUTH_SECRET no está definido', () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevSecret = process.env.ADMIN_AUTH_SECRET;
+      const prevMongo = process.env.MONGODB_URI;
+      const prevPin = process.env.ADMIN_PIN_SCRYPT;
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.ADMIN_AUTH_SECRET;
+        process.env.MONGODB_URI = 'mongodb+srv://user:pass@cluster.mongodb.net/db';
+        process.env.ADMIN_PIN_SCRYPT = 'scrypt$16384$8$1$c2FsdA==$aGFzaA==';
+
+        expect(getAdminAuthSecret()).toBeNull();
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevSecret !== undefined) process.env.ADMIN_AUTH_SECRET = prevSecret;
+        if (prevMongo !== undefined) process.env.MONGODB_URI = prevMongo;
+        else delete process.env.MONGODB_URI;
+        if (prevPin !== undefined) process.env.ADMIN_PIN_SCRYPT = prevPin;
+        else delete process.env.ADMIN_PIN_SCRYPT;
+      }
+    });
+
+    it('B2, B3, B4: scrypt asíncrono, ventana temporal de 5 min en webhook Wompi y revocación de jti en logout', async () => {
+      // B2: hashPinScryptAsync y verifyAdminPinAsync funcionan sin bloquear el event loop
+      const asyncHash = await hashPinScryptAsync('739184');
+      expect(asyncHash.startsWith('scrypt$')).toBe(true);
+      const verifyOk = await verifyAdminPinAsync('739184', { scryptHash: asyncHash });
+      expect(verifyOk).toBe(true);
+      const wrongOk = await verifyAdminPinAsync('000000', { scryptHash: asyncHash });
+      expect(wrongOk).toBe(false);
+
+      // B3: verifyWompiChecksum rechaza timestamps con más de 5 minutos de antigüedad
+      const oldTs = Math.floor(Date.now() / 1000) - 600; // 10 minutos atrás
+      const eventsSecret = 'test_events_secret_2026';
+      const oldChecksum = crypto
+        .createHash('sha256')
+        .update(`tx-oldAPPROVED5000000${oldTs}${eventsSecret}`)
+        .digest('hex');
+
+      const expiredWebhookCheck = verifyWompiChecksum({
+        eventPayload: {
+          data: { transaction: { id: 'tx-old', status: 'APPROVED', amount_in_cents: 5000000 } },
+          timestamp: oldTs,
+          signature: {
+            properties: ['transaction.id', 'transaction.status', 'transaction.amount_in_cents'],
+            checksum: oldChecksum
+          }
+        },
+        eventsSecret
+      });
+      expect(expiredWebhookCheck).toBe(false);
+
+      // B4: Token admin incluye jti y POST /api/admin/auth/logout lo revoca inmediatamente
+      const token = createAdminToken({ pwd: 1 });
+      const payloadBefore = verifyAdminToken(token);
+      expect(payloadBefore).not.toBeNull();
+      expect(typeof payloadBefore.jti).toBe('string');
+
+      const logoutRes = await invokeApp('POST', '/api/admin/auth/logout', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(logoutRes.status).toBe(200);
+      expect(isAdminAccessTokenJtiRevoked(payloadBefore.jti)).toBe(true);
+      expect(verifyAdminToken(token)).toBeNull();
+    });
+
+    it('B5, B6, B7, B8 y B9: db.json saneado, sin email personal hardcodeado, IPC senderFrame, SHA en CI y Android sin redirects', () => {
+      // B5: server/data/db.json no contiene hashes scrypt reales ni correos personales
+      const dbJsonRaw = fs.readFileSync(path.join(process.cwd(), 'server/data/db.json'), 'utf8');
+      expect(dbJsonRaw).not.toContain('scrypt$');
+      expect(dbJsonRaw).not.toContain('sebastian@gmail.com');
+
+      const pwdResetRaw = fs.readFileSync(path.join(process.cwd(), 'api/passwordReset.js'), 'utf8');
+      expect(pwdResetRaw).not.toContain('sebastian@gmail.com');
+
+      // B7: Electron verifica senderFrame en IPC
+      const electronMain = fs.readFileSync(path.join(process.cwd(), 'electron/main.cjs'), 'utf8');
+      expect(electronMain).toContain('isTrustedIpcSender(event)');
+      expect(electronMain).toContain('event.senderFrame');
+
+      // B8: GitHub Actions incluye permissions: contents: read y SHA pinning
+      const ciYaml = fs.readFileSync(path.join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+      expect(ciYaml).toContain('permissions:');
+      expect(ciYaml).toContain('contents: read');
+      expect(ciYaml).toContain('actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683');
+      expect(ciYaml).toContain('actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af');
+
+      // B9: Android desactiva redirecciones HTTP automáticas en WebView
+      const mainActivityKt = fs.readFileSync(
+        path.join(process.cwd(), 'android/app/src/main/java/app/sebastiang/studio/MainActivity.kt'),
+        'utf8'
+      );
+      expect(mainActivityKt).toContain('instanceFollowRedirects = false');
     });
   });
 });

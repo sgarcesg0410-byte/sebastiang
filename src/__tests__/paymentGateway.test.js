@@ -74,7 +74,7 @@ describe('Pasarela de Pagos Wompi - Módulo Criptográfico y Reglas de Negocio',
 
   describe('verifyWompiChecksum', () => {
     const eventsSecret = 'prod_events_secret_key_123';
-    const timestamp = 1791785400;
+    const timestamp = Math.floor(Date.now() / 1000);
 
     const validPayload = {
       event: 'transaction.updated',
@@ -241,7 +241,7 @@ describe('Pasarela de Pagos Wompi - Módulo Criptográfico y Reglas de Negocio',
     it('un evento firmado con WOMPI_INTEGRITY_SECRET es rechazado al validarse contra WOMPI_EVENTS_SECRET', () => {
       const integritySecret = 'prod_integrity_different_111';
       const eventsSecret = 'prod_events_different_222';
-      const timestamp = 1791785400;
+      const timestamp = Math.floor(Date.now() / 1000);
 
       // Un atacante o configuración errónea calcula checksum usando integritySecret en lugar de eventsSecret
       const raw = `tx-999APPROVED2000000${timestamp}${integritySecret}`;

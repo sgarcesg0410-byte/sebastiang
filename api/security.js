@@ -10,7 +10,7 @@
 
 import crypto from 'crypto';
 
-/** Secreto de sesión. NUNCA debe caer a un valor por defecto público. */
+/** Secreto de sesión. NUNCA debe caer a un valor por defecto público ni derivarse de MONGODB_URI / ADMIN_PIN_SCRYPT (Hallazgo M5). */
 const FORBIDDEN_SECRETS = new Set([
   'fallback-dev-secret-change-me',
   'change-me',
@@ -18,21 +18,46 @@ const FORBIDDEN_SECRETS = new Set([
   ''
 ]);
 
-let warnedAboutSecret = false;
+const DEV_EPHEMERAL_SECRET = crypto.randomBytes(32).toString('hex');
 
 export function getAdminAuthSecret() {
-  const secret = String(process.env.ADMIN_AUTH_SECRET || '').trim();
+  const raw = process.env.ADMIN_AUTH_SECRET;
+  const secret = String(raw || '').trim();
   const usable = secret.length >= 32 && !FORBIDDEN_SECRETS.has(secret);
   if (usable) return secret;
 
-  // Respaldo SOLO con semillas privadas del servidor (nunca claves públicas del cliente).
-  const seed = process.env.ADMIN_PIN_SCRYPT || process.env.MONGODB_URI || '';
-  if (!seed) {
-    // Sin semilla no se puede firmar ni verificar: se falla cerrado (401/503).
+  // En producción (o si se pasó explícitamente cadena vacía para probar fallo cerrado),
+  // JAMÁS se deriva el secreto desde MONGODB_URI ni ADMIN_PIN_SCRYPT: falla cerrado devolviendo null.
+  if (process.env.NODE_ENV === 'production' || raw === '') {
     return null;
   }
-  console.warn('[Seguridad] ADMIN_AUTH_SECRET no definido: la clave de sesion se deriva de una semilla de servidor. Definelo para desacoplarla.');
-  return crypto.createHash('sha256').update(`admin-auth-seed:${seed}`).digest('hex');
+
+  return DEV_EPHEMERAL_SECRET;
+}
+
+function scryptAsync(password, salt, keylen, options) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, keylen, options, (err, derivedKey) => {
+      if (err) reject(err);
+      else resolve(derivedKey);
+    });
+  });
+}
+
+/**
+ * Deriva un hash scrypt (`scrypt$sal$hash`) de forma asíncrona sin bloquear el event loop de Node (Hallazgo B2).
+ */
+export async function hashPinScryptAsync(pin) {
+  const clean = String(pin ?? '').trim();
+  if (!clean) throw new Error('PIN vacío para derivación scrypt.');
+  const salt = crypto.randomBytes(16);
+  const hash = await scryptAsync(clean, salt, 32, {
+    N: 1 << 15,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024
+  });
+  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
 }
 
 // ------------------------------------------------------------------------------
@@ -51,23 +76,61 @@ export function secureCompare(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
+function normalizeScryptConfig(scryptHash) {
+  let scryptConfig = String(scryptHash || process.env.ADMIN_PIN_SCRYPT || '').trim();
+  if (scryptConfig.startsWith('ADMIN_PIN_SCRYPT=')) {
+    scryptConfig = scryptConfig.substring('ADMIN_PIN_SCRYPT='.length).trim();
+  }
+  if (
+    (scryptConfig.startsWith('"') && scryptConfig.endsWith('"')) ||
+    (scryptConfig.startsWith("'") && scryptConfig.endsWith("'"))
+  ) {
+    scryptConfig = scryptConfig.slice(1, -1).trim();
+  }
+  return scryptConfig;
+}
+
 /**
- * Verifica un PIN contra el hash configurado.
- * Acepta el hash en formato scrypt (`scrypt$sal$hash`, recomendado) o SHA-256
- * (compatibilidad). Si no hay hash configurado, RECHAZA: nunca debe existir un
- * PIN por defecto conocido.
+ * Verifica un PIN contra el hash configurado de forma asíncrona (`crypto.scrypt` en el threadpool de libuv)
+ * para no bloquear el event loop de Express (Hallazgo B2).
+ */
+export async function verifyAdminPinAsync(pin, { scryptHash, sha256Hash } = {}) {
+  const value = String(pin ?? '');
+  if (!value) return false;
+
+  const scryptConfig = normalizeScryptConfig(scryptHash);
+  if (scryptConfig.startsWith('scrypt$')) {
+    const [, saltHex, hashHex] = scryptConfig.split('$');
+    if (!saltHex || !hashHex) return false;
+    try {
+      const expected = Buffer.from(hashHex, 'hex');
+      const actual = await scryptAsync(value, Buffer.from(saltHex, 'hex'), expected.length, {
+        N: 1 << 15,
+        r: 8,
+        p: 1,
+        maxmem: 64 * 1024 * 1024
+      });
+      return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+    } catch {
+      return false;
+    }
+  }
+
+  const configured = sha256Hash || process.env.ADMIN_PIN_HASH || '';
+  if (!configured) return false;
+  if (isWeakConfiguredPin(configured)) return false;
+
+  return secureCompare(hashSHA256(value), configured);
+}
+
+/**
+ * Verifica un PIN contra el hash configurado (versión síncrona para tests unitarios directos).
  */
 export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
   const value = String(pin ?? '');
   if (!value) return false;
 
-  let scryptConfig = String(scryptHash || process.env.ADMIN_PIN_SCRYPT || '').trim();
-  if (scryptConfig.startsWith('ADMIN_PIN_SCRYPT=')) {
-    scryptConfig = scryptConfig.substring('ADMIN_PIN_SCRYPT='.length).trim();
-  }
-  if ((scryptConfig.startsWith('"') && scryptConfig.endsWith('"')) || (scryptConfig.startsWith("'") && scryptConfig.endsWith("'"))) {
-    scryptConfig = scryptConfig.slice(1, -1).trim();
-  }
+  const scryptConfig = normalizeScryptConfig(scryptHash);
   if (scryptConfig.startsWith('scrypt$')) {
     const [, saltHex, hashHex] = scryptConfig.split('$');
     if (!saltHex || !hashHex) return false;
@@ -99,13 +162,39 @@ export function isWeakConfiguredPin(hash) {
 }
 
 // ------------------------------------------------------------------------------
-// Tokens de sesión de administrador (HMAC-SHA256 firmado, 12 h)
+// Tokens de sesión de administrador (HMAC-SHA256 firmado, 12 h, jti revocable y cookie HttpOnly - Hallazgo B4)
 // ------------------------------------------------------------------------------
 
 const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+export const ADMIN_SESSION_COOKIE_NAME = 'sg_admin_session';
 
 let cachedPasswordVersion = 1;
 let passwordVersionGetter = null;
+const revokedAdminAccessJtis = new Set();
+
+export function revokeAdminAccessTokenJti(jti) {
+  if (!jti || typeof jti !== 'string') return;
+  revokedAdminAccessJtis.add(jti.trim());
+  if (revokedAdminAccessJtis.size > 500) {
+    const oldest = revokedAdminAccessJtis.values().next().value;
+    if (oldest) revokedAdminAccessJtis.delete(oldest);
+  }
+}
+
+export function isAdminAccessTokenJtiRevoked(jti) {
+  if (!jti) return false;
+  return revokedAdminAccessJtis.has(String(jti).trim());
+}
+
+export function buildAdminSessionCookieHeader(token, { maxAgeMs = ADMIN_TOKEN_TTL_MS, clear = false } = {}) {
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const secureAttr = isProd ? '; Secure' : '';
+  if (clear || !token) {
+    return `${ADMIN_SESSION_COOKIE_NAME}=; Path=/api; Max-Age=0; HttpOnly; SameSite=Strict${secureAttr}`;
+  }
+  const maxAgeSec = Math.max(1, Math.floor(maxAgeMs / 1000));
+  return `${ADMIN_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/api; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Strict${secureAttr}`;
+}
 
 export function setCachedPasswordVersion(version) {
   const num = Number(version);
@@ -128,6 +217,7 @@ export function createAdminToken(extra = {}) {
   const payload = {
     role: 'admin',
     type: 'admin_access',
+    jti: extra.jti || crypto.randomUUID(),
     iat: Date.now(),
     exp: Date.now() + ADMIN_TOKEN_TTL_MS,
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -191,7 +281,7 @@ export function verifyBioRefreshToken(token, { expectedPasswordVersion, revokedJ
   }
 }
 
-export function verifyAdminToken(token, { expectedPasswordVersion } = {}) {
+export function verifyAdminToken(token, { expectedPasswordVersion, revokedJtis } = {}) {
   const secret = getAdminAuthSecret();
   if (!secret) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
@@ -211,18 +301,38 @@ export function verifyAdminToken(token, { expectedPasswordVersion } = {}) {
     if (expectedPasswordVersion !== undefined && expectedPasswordVersion !== null) {
       if (payload.pwd !== expectedPasswordVersion) return null;
     }
+    if (payload?.jti) {
+      if (isAdminAccessTokenJtiRevoked(payload.jti)) return null;
+      if (Array.isArray(revokedJtis) && revokedJtis.includes(payload.jti)) return null;
+    }
     return payload;
   } catch {
     return null;
   }
 }
 
-/** Lee el token de `Authorization: Bearer <token>` o de `x-admin-token`. */
+/** Lee el token de `Authorization: Bearer <token>`, `x-admin-token` o cookie `HttpOnly` `sg_admin_session`. */
 export function readAdminToken(req) {
   const header = String(req?.headers?.authorization || '');
   if (header.toLowerCase().startsWith('bearer ')) return header.slice(7).trim();
   const alt = req?.headers?.['x-admin-token'];
-  return typeof alt === 'string' ? alt.trim() : '';
+  if (typeof alt === 'string' && alt.trim()) return alt.trim();
+
+  const rawCookie = String(req?.headers?.cookie || '');
+  if (rawCookie) {
+    const parts = rawCookie.split(';');
+    for (const part of parts) {
+      const [k, ...rest] = part.trim().split('=');
+      if (k === ADMIN_SESSION_COOKIE_NAME && rest.length > 0) {
+        try {
+          return decodeURIComponent(rest.join('=').trim());
+        } catch {
+          return rest.join('=').trim();
+        }
+      }
+    }
+  }
+  return '';
 }
 
 /** Middleware: toda ruta protegida exige una sesión de administrador válida. */

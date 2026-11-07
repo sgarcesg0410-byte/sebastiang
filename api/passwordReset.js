@@ -11,11 +11,24 @@
 // ==============================================================================
 
 import crypto from 'crypto';
-import { hashSHA256, secureCompare, setCachedPasswordVersion, getCachedPasswordVersion, getTrustedClientIp } from './security.js';
+import {
+  hashSHA256,
+  secureCompare,
+  setCachedPasswordVersion,
+  getCachedPasswordVersion,
+  getTrustedClientIp,
+  hashPinScryptAsync
+} from './security.js';
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
-import { isMongoConfigured, upsertMongoDoc, updateMongoDoc, findMongoDocs } from './db/mongo.js';
+import {
+  isMongoConfigured,
+  upsertMongoDoc,
+  updateMongoDoc,
+  findMongoDocs,
+  checkDistributedRateLimit
+} from './db/mongo.js';
 
-// Rate limiters en memoria por IP
+// Rate limiters en memoria por IP (respaldados en MongoDB Atlas cuando está configurado - Hallazgo A2)
 const resetRequestAttempts = new Map(); // ip -> { count, windowStart }
 const resetConfirmAttempts = new Map(); // ip -> { count, windowStart }
 
@@ -29,8 +42,12 @@ export function getClientIp(req) {
   return getTrustedClientIp(req);
 }
 
+/**
+ * Lee el correo administrativo exclusivamente desde la variable de entorno ADMIN_EMAIL,
+ * sin correos personales en texto plano dentro del código fuente (Hallazgo B5).
+ */
 export function getAdminEmail() {
-  return (process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com').trim();
+  return String(process.env.ADMIN_EMAIL || '').trim();
 }
 
 /** Rate limiter para solicitud de código */
@@ -223,6 +240,22 @@ export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSen
     });
   }
 
+  if (isMongoConfigured()) {
+    const distRate = await checkDistributedRateLimit({
+      key: `pw_reset_req_${ip}`,
+      maxAttempts: RESET_REQUEST_MAX,
+      windowMs: RESET_REQUEST_WINDOW_MS,
+      failClosed: isProduction
+    });
+    if (!distRate.allowed) {
+      const retryAfterMs = distRate.retryAfterMs || RESET_REQUEST_WINDOW_MS;
+      return res.status(429).json({
+        error: `Demasiadas solicitudes de recuperación. Intenta de nuevo en ${Math.max(1, Math.ceil(retryAfterMs / 60000))} minutos.`,
+        retryAfterMs
+      });
+    }
+  }
+
   // REGLA 1: Email 100% en el servidor. Ignora completamente req.body.email.
   const targetEmail = getAdminEmail();
 
@@ -285,6 +318,22 @@ export async function handlePasswordResetConfirm(req, res, {
       error: `Demasiados intentos de verificación. Intenta en ${rate.retryAfterMin} minutos.`,
       retryAfterMs: rate.retryAfterMs
     });
+  }
+
+  if (isMongoConfigured()) {
+    const distRate = await checkDistributedRateLimit({
+      key: `pw_reset_confirm_${ip}`,
+      maxAttempts: RESET_CONFIRM_MAX,
+      windowMs: RESET_CONFIRM_WINDOW_MS,
+      failClosed: isProduction
+    });
+    if (!distRate.allowed) {
+      const retryAfterMs = distRate.retryAfterMs || RESET_CONFIRM_WINDOW_MS;
+      return res.status(429).json({
+        error: `Demasiados intentos de verificación. Intenta en ${Math.max(1, Math.ceil(retryAfterMs / 60000))} minutos.`,
+        retryAfterMs
+      });
+    }
   }
 
   const { code, newPassword } = req.body || {};
@@ -368,11 +417,9 @@ export async function handlePasswordResetConfirm(req, res, {
     runtimeDB.settings.adminResetChallenge = challenge;
   }
 
-  // 2. Derivar hash scrypt bancario de la nueva contraseña
+  // 2. Derivar hash scrypt bancario de la nueva contraseña de forma asíncrona (Hallazgo B2)
   const cleanNew = newPassword.trim();
-  const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(cleanNew, salt, 32, { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-  const newScryptHash = 'scrypt$' + salt.toString('hex') + '$' + hash.toString('hex');
+  const newScryptHash = await hashPinScryptAsync(cleanNew);
 
   // 3. Incrementar passwordVersion para revocar TODAS las sesiones activas
   const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });

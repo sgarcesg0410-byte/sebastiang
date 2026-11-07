@@ -2798,7 +2798,7 @@ export async function createAdminSession(data) {
   // Token de la galeria: aleatorio CRIPTOGRAFICO y sin el nombre del cliente.
   // Antes era `${cleanName}-${Math.random()}`: adivinable y con el nombre dentro.
   const token = (globalThis.crypto?.randomUUID?.() ||
-    `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`);
+    `tok-${Date.now()}`);
 
   const finalPrice = Number(data.totalPrice || data.packagePrice || data.sessionBasePrice || 0);
 
@@ -2961,7 +2961,7 @@ export function broadcastCatalogUpdate() {
 export async function addCatalogPhoto(photoData) {
   const cleanUrl = formatPhotoUrl(photoData.url);
   const newItem = {
-    id: photoData.id || `cat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: photoData.id || `cat-${globalThis.crypto?.randomUUID?.() || Date.now()}`,
     title: (photoData.title || '').trim(),
     category: (photoData.category || 'Retratos').trim(),
     location: (photoData.location || 'Colombia').trim(),

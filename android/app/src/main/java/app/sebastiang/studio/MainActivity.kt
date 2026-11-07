@@ -97,6 +97,9 @@ class MainActivity : AppCompatActivity() {
                         return try {
                             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                                 requestMethod = request.method
+                                // Deshabilitar redirecciones automáticas para que x-apk-device-token
+                                // jamás se reenvíe hacia un host distinto ante un HTTP 301/302 (Hallazgo B9)
+                                instanceFollowRedirects = false
                                 connectTimeout = 10_000
                                 readTimeout = 10_000
                                 setRequestProperty("Accept", "application/json")
