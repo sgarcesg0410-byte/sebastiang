@@ -48,8 +48,9 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.webkit:webkit:1.10.0")
-    // Criptografía con hardware Keystore
+    // Criptografía con hardware Keystore y BiometricPrompt nativo
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.biometric:biometric:1.1.0")
     // OneSignal Push SDK
     implementation("com.onesignal:OneSignal:5.1.19")
 }

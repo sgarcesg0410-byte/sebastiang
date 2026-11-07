@@ -1756,11 +1756,14 @@ export async function verifyAdminPin(pin) {
 
   resetAttempts();
   setAdminSessionToken(data.token);
-  if (data.bioRefreshToken) {
-    try {
-      localStorage.setItem('sebastian_g_bio_refresh_token', data.bioRefreshToken);
-    } catch (e) {}
-  }
+  try {
+    // Nunca persistir bioRefreshToken en localStorage (superficie accesible a cualquier script XSS).
+    // Se limpia cualquier rastro heredado y se mantiene efímero en sessionStorage solo para enrolamiento.
+    localStorage.removeItem('sebastian_g_bio_refresh_token');
+    if (data.bioRefreshToken) {
+      sessionStorage.setItem('sebastian_g_bio_bootstrap_token_v2', data.bioRefreshToken);
+    }
+  } catch (e) {}
 
   // El segundo factor y la expiración los controla el servidor con el token firmado.
   return { success: true, requires2FA: false, token: data.token };
@@ -2311,15 +2314,17 @@ function normalizeClientReview(r) {
 }
 
 export async function deleteReview(id) {
-  try {
-    const token = getAdminSessionToken();
-    await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: {
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      }
-    });
-  } catch (e) {}
+  const token = getAdminSessionToken();
+  const res = await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: {
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    }
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || 'No se pudo eliminar la reseña en el servidor.');
+  }
 
   try {
     const reviews = getLocalReviews().filter(r => r && r.id !== id);
@@ -2354,31 +2359,33 @@ export async function getReviews() {
     console.warn('Consultando reseñas del servidor:', err);
   }
 
-  const localReviews = getLocalReviews();
-  const map = new Map();
-  // Server reviews first, then local
-  [...serverReviews, ...localReviews].forEach(r => {
-    if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
-      if (!map.has(r.id)) {
-        map.set(r.id, normalizeClientReview(r));
-      }
-    }
-  });
-  const combinedAll = Array.from(map.values()).filter(Boolean);
-  if (fetchedFromServer && serverReviews.length > 0) {
+  // Si el servidor respondió (incluso con [] tras moderar o eliminar todas las reseñas),
+  // MongoDB Atlas es la única fuente de verdad autoritativa y purga cualquier residuo local.
+  if (fetchedFromServer) {
+    const authoritative = serverReviews
+      .filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'))
+      .map(normalizeClientReview)
+      .filter(Boolean);
     try {
-      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combinedAll));
+      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(authoritative));
     } catch (e) {}
+    return authoritative
+      .filter(r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected')
+      .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
   }
 
-  // Público: devolver únicamente reseñas verificadas y aprobadas, ordenadas de más reciente a más antigua
-  return combinedAll
+  const localReviews = getLocalReviews()
+    .map(normalizeClientReview)
+    .filter(Boolean);
+
+  return localReviews
     .filter(r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected')
     .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
 }
 
 export async function getAdminReviews() {
   let serverReviews = [];
+  let fetchedFromServer = false;
   try {
     const token = getAdminSessionToken();
     const res = await fetch(`${API_BASE}/admin/reviews`, {
@@ -2390,74 +2397,60 @@ export async function getAdminReviews() {
       const data = await res.json();
       if (Array.isArray(data)) {
         serverReviews = data;
+        fetchedFromServer = true;
       }
     }
   } catch (err) {
     console.warn('Consultando reseñas de administración:', err);
   }
 
-  const localReviews = getLocalReviews();
-  const map = new Map();
-  [...serverReviews, ...localReviews].forEach(r => {
-    if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
-      if (!map.has(r.id)) {
-        map.set(r.id, normalizeClientReview(r));
-      }
-    }
-  });
-  const combined = Array.from(map.values())
+  if (fetchedFromServer) {
+    const authoritative = serverReviews
+      .filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'))
+      .map(normalizeClientReview)
+      .filter(Boolean)
+      .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
+    try {
+      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(authoritative));
+    } catch (e) {}
+    return authoritative;
+  }
+
+  return getLocalReviews()
+    .map(normalizeClientReview)
     .filter(Boolean)
     .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
-
-  if (serverReviews.length > 0) {
-    try {
-      localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(combined));
-    } catch (e) {}
-  }
-  return combined;
 }
 
 export async function updateAdminReviewStatus(id, { status, verified } = {}) {
   const nextStatus = status || (verified ? 'verified' : 'pending');
-  let updatedServerReview = null;
-  try {
-    const token = getAdminSessionToken();
-    const res = await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({ status: nextStatus, verified: nextStatus === 'verified' })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      updatedServerReview = data?.review || null;
-    } else {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || 'No se pudo actualizar el estado de la reseña.');
-    }
-  } catch (err) {
-    console.warn('Moderación local de reseña:', err);
-  }
-
-  const list = getLocalReviews().map(r => {
-    if (r && r.id === id) {
-      return normalizeClientReview(updatedServerReview || {
-        ...r,
-        status: nextStatus,
-        verified: nextStatus === 'verified',
-        moderatedAt: new Date().toISOString()
-      });
-    }
-    return r;
+  const token = getAdminSessionToken();
+  const res = await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({ status: nextStatus, verified: nextStatus === 'verified' })
   });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || 'No se pudo actualizar el estado de la reseña en el servidor.');
+  }
+  const data = await res.json();
+  const updatedServerReview = normalizeClientReview(data?.review || {
+    id,
+    status: nextStatus,
+    verified: nextStatus === 'verified',
+    moderatedAt: new Date().toISOString()
+  });
+
+  const list = getLocalReviews().map(r => (r && r.id === id ? updatedServerReview : r));
   try {
     localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(list));
     if (typeof window !== 'undefined' && window.BroadcastChannel) {
       const bc = new BroadcastChannel('reviews_realtime_sync');
-      const targetReview = list.find(r => r && r.id === id) || updatedServerReview;
-      bc.postMessage({ type: 'UPDATE_REVIEW', review: targetReview, timestamp: Date.now() });
+      bc.postMessage({ type: 'UPDATE_REVIEW', review: updatedServerReview, timestamp: Date.now() });
       setTimeout(() => bc.close(), 300);
     }
     localStorage.setItem('sebastian_g_reviews_last_sync', Date.now().toString());
@@ -2465,7 +2458,7 @@ export async function updateAdminReviewStatus(id, { status, verified } = {}) {
 
   return {
     success: true,
-    review: updatedServerReview || list.find(r => r && r.id === id)
+    review: updatedServerReview
   };
 }
 
@@ -2585,41 +2578,29 @@ export async function createAdminReview(reviewData) {
 }
 
 export async function submitGalleryReview(token, reviewData) {
-  let serverReview = null;
+  let res;
   try {
-    const res = await fetch(`${API_BASE}/gallery/${token}/review`, {
+    res = await fetch(`${API_BASE}/gallery/${encodeURIComponent(token)}/review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(reviewData)
     });
-    if (res.ok) {
-      const data = await res.json();
-      serverReview = data.review;
-    } else if (res.status >= 400 && res.status < 500) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || 'No fue posible registrar la reseña de la galería.');
-    }
-  } catch (err) {
-    if (err.message && (err.message.includes('Ya se registró') || err.message.includes('finalizado') || err.message.includes('demostración') || err.message.includes('caracteres') || err.message.includes('calificación'))) {
-      throw err;
-    }
-    console.warn('Error al guardar reseña en servidor, guardando local:', err);
+  } catch (networkErr) {
+    throw new Error('No se pudo conectar con el servidor para verificar tu reseña. Verifica tu conexión e inténtalo de nuevo.');
   }
 
-  const newReview = normalizeClientReview(serverReview || {
-    id: `rev-${Date.now()}`,
-    clientName: (reviewData.clientName || 'Cliente').trim(),
-    rating: Number(reviewData.rating) || 5,
-    recommend: reviewData.recommend !== false,
-    comment: (reviewData.comment || '').trim(),
-    date: new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-    verified: true,
-    status: 'verified',
-    galleryToken: token,
-    token,
-    createdAt: new Date().toISOString()
-  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || 'No fue posible registrar la reseña verificada de la galería.');
+  }
 
+  const data = await res.json().catch(() => ({}));
+  if (!data?.review) {
+    throw new Error('El servidor no confirmó la reseña de la galería.');
+  }
+
+  // Solo una reseña confirmada por el servidor puede quedar como verificada
+  const newReview = normalizeClientReview(data.review);
   saveLocalReview(newReview);
 
   try {
@@ -2664,12 +2645,13 @@ export async function fetchPublicSchedule() {
   return Array.isArray(data?.slots) ? data.slots : [];
 }
 
-/** ¿El cliente tiene historial? El servidor decide; solo devuelve sí/no y el %. */
-export async function fetchPublicLoyalty(phone) {
+/** ¿El cliente tiene historial? El servidor decide; exige teléfono + nombre para mitigar enumeración. */
+export async function fetchPublicLoyalty(phone, clientName = '') {
   const clean = String(phone || '').replace(/\D/g, '');
-  if (clean.length < 7) return { isLoyal: false, discountPercent: 0 };
+  const cleanName = String(clientName || '').trim();
+  if (clean.length < 10 || cleanName.length < 2) return { isLoyal: false, discountPercent: 0 };
   try {
-    const res = await fetch(`${API_BASE}/public/loyalty?phone=${encodeURIComponent(clean)}`);
+    const res = await fetch(`${API_BASE}/public/loyalty?phone=${encodeURIComponent(clean)}&clientName=${encodeURIComponent(cleanName)}`);
     if (!res.ok) return { isLoyal: false, discountPercent: 0 };
     const data = await res.json();
     return { isLoyal: Boolean(data?.isLoyal), discountPercent: Number(data?.discountPercent) || 0 };
@@ -2686,42 +2668,20 @@ export async function fetchPublicReceipt(token) {
   return data?.booking || null;
 }
 
-export async function checkClientLoyalty(phone) {
+export async function checkClientLoyalty(phone, clientName = '') {
   if (!phone) return { isLoyal: false, discountPercent: 0 };
   const clean = phone.replace(/\D/g, '');
-  if (clean.length < 7) return { isLoyal: false, discountPercent: 0 };
+  const cleanName = String(clientName || '').trim();
+  if (clean.length < 10 || cleanName.length < 2) return { isLoyal: false, discountPercent: 0 };
 
   try {
-    // Consulta al endpoint público: el descuento lo decide el servidor.
-    const publicCheck = await fetchPublicLoyalty(phone);
+    // Consulta al endpoint público: el descuento lo decide el servidor tras verificar teléfono + nombre.
+    const publicCheck = await fetchPublicLoyalty(phone, cleanName);
     if (publicCheck.isLoyal) {
       return {
         isLoyal: true,
         discountPercent: publicCheck.discountPercent,
-        clientName: 'Cliente VIP',
-        previousSessions: 1
-      };
-    }
-
-    const bookings = [];
-    const sessions = [];
-
-    const matchedBooking = bookings.find(b => {
-      const bClean = (b.clientWhatsApp || '').replace(/\D/g, '');
-      return bClean && (bClean.endsWith(clean.slice(-8)) || clean.endsWith(bClean.slice(-8)));
-    });
-
-    const matchedSession = sessions.find(s => {
-      const sClean = (s.clientWhatsApp || '').replace(/\D/g, '');
-      return sClean && (sClean.endsWith(clean.slice(-8)) || clean.endsWith(sClean.slice(-8)));
-    });
-
-    if (matchedBooking || matchedSession) {
-      const clientName = matchedBooking?.clientName || matchedSession?.clientName || 'Cliente VIP';
-      return {
-        isLoyal: true,
-        discountPercent: 15,
-        clientName,
+        clientName: cleanName || 'Cliente VIP',
         previousSessions: 1
       };
     }

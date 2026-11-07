@@ -7,6 +7,7 @@
 // respaldos locales sin arrojar errores fatales.
 // ==============================================================================
 
+import crypto from 'crypto';
 import { MongoClient, ServerApiVersion } from 'mongodb';
 
 let cachedClient = null;
@@ -110,168 +111,407 @@ async function deduplicateCollectionByField(database, collectionName, fieldName)
 }
 
 /**
- * Crea y verifica los 19 índices críticos de producción e índices TTL en MongoDB Atlas:
+ * Definición canónica de los 19 índices BSON críticos de producción e índices TTL en MongoDB Atlas:
  * - Unicidad estricta en `bookings.id`, `payments.id`, `payments.reference`, `payments.transactionId`,
  *   `sessions.id`, `sessions.token`, `reviews.id`, `reviews.galleryToken`, `audit_logs.id`, `slot_locks.lockKey` y `rate_limits.key`.
  * - Índice compuesto `{ dateTime: 1, status: 1 }` en `bookings` para detección rápida de cruces de horario.
  * - Índice `{ expiresAt: 1 }` en `sessions` para control de caducidad de galerías privadas.
  * - Índices TTL nativos en `audit_logs` (90 días), `slot_locks` y `rate_limits`.
  */
+export const EXPECTED_MONGO_INDEXES = [
+  // 1–3. Índices de Reservas (bookings)
+  { col: 'bookings', spec: { id: 1 }, opts: { unique: true, name: 'uniq_bookings_id', background: true } },
+  { col: 'bookings', spec: { dateTime: 1, status: 1 }, opts: { name: 'idx_bookings_datetime_status', background: true } },
+  { col: 'bookings', spec: { createdAt: -1 }, opts: { name: 'idx_bookings_created_desc', background: true } },
+
+  // 4–7. Índices de Pagos y Anti-Replay de Pasarela (payments)
+  { col: 'payments', spec: { id: 1 }, opts: { unique: true, name: 'uniq_payments_id', background: true } },
+  { col: 'payments', spec: { reference: 1 }, opts: { unique: true, sparse: true, name: 'uniq_payments_reference', background: true } },
+  { col: 'payments', spec: { transactionId: 1 }, opts: { unique: true, sparse: true, name: 'uniq_payments_txid', background: true } },
+  { col: 'payments', spec: { bookingId: 1 }, opts: { name: 'idx_payments_booking_id', background: true } },
+
+  // 8–10. Índices de Galerías Privadas (sessions)
+  { col: 'sessions', spec: { id: 1 }, opts: { unique: true, name: 'uniq_sessions_id', background: true } },
+  { col: 'sessions', spec: { token: 1 }, opts: { unique: true, name: 'uniq_sessions_token', background: true } },
+  { col: 'sessions', spec: { expiresAt: 1 }, opts: { name: 'idx_sessions_expires_at', background: true } },
+
+  // 11–12. Índices de Reseñas Verificadas y Unicidad por Galería (reviews)
+  { col: 'reviews', spec: { id: 1 }, opts: { unique: true, name: 'uniq_reviews_id', background: true } },
+  { col: 'reviews', spec: { galleryToken: 1 }, opts: { unique: true, sparse: true, name: 'uniq_reviews_gallery_token', background: true } },
+
+  // 13–15. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
+  { col: 'audit_logs', spec: { id: 1 }, opts: { unique: true, name: 'uniq_audit_logs_id', background: true } },
+  { col: 'audit_logs', spec: { createdAt: -1 }, opts: { name: 'idx_audit_logs_created_desc', background: true } },
+  { col: 'audit_logs', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_audit_logs_ttl_90d', background: true } },
+
+  // 16–17. Índices de Bloqueo Distribuido de Horarios (slot_locks)
+  { col: 'slot_locks', spec: { lockKey: 1 }, opts: { unique: true, name: 'uniq_slot_locks_key', background: true } },
+  { col: 'slot_locks', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_slot_locks_ttl', background: true } },
+
+  // 18–19. Índices de Rate Limiting Distribuido (rate_limits)
+  { col: 'rate_limits', spec: { key: 1 }, opts: { unique: true, name: 'uniq_rate_limits_key', background: true } },
+  { col: 'rate_limits', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true } }
+];
+
+function indexKeyMatches(actualKey, expectedSpec) {
+  if (!actualKey || typeof actualKey !== 'object') return false;
+  const actualEntries = Object.entries(actualKey);
+  const expectedEntries = Object.entries(expectedSpec);
+  if (actualEntries.length !== expectedEntries.length) return false;
+  for (let i = 0; i < expectedEntries.length; i++) {
+    const [eField, eDir] = expectedEntries[i];
+    const [aField, aDir] = actualEntries[i];
+    if (aField !== eField || Number(aDir) !== Number(eDir)) return false;
+  }
+  return true;
+}
+
 let indexesEnsured = false;
+let indexEnsurePromise = null;
+
+export function resetIndexesEnsuredFlag() {
+  indexesEnsured = false;
+  indexEnsurePromise = null;
+}
+
 export async function ensureMongoIndexes(targetDb = null) {
   const database = targetDb || await getMongoDb();
   if (!database) return { ok: false, verified: false, reason: 'no_db', indexes: [] };
 
-  const startMs = Date.now();
-  const created = [];
+  if (!targetDb && indexEnsurePromise) {
+    return indexEnsurePromise;
+  }
 
-  try {
-    // 0. Deduplicar preventivamente antes de asegurar índices únicos
-    await deduplicateCollectionByField(database, 'bookings', 'id');
-    await deduplicateCollectionByField(database, 'payments', 'id');
-    await deduplicateCollectionByField(database, 'payments', 'reference');
-    await deduplicateCollectionByField(database, 'payments', 'transactionId');
-    await deduplicateCollectionByField(database, 'sessions', 'id');
-    await deduplicateCollectionByField(database, 'sessions', 'token');
-    await deduplicateCollectionByField(database, 'reviews', 'id');
-    await deduplicateCollectionByField(database, 'reviews', 'galleryToken');
-    await deduplicateCollectionByField(database, 'audit_logs', 'id');
+  const runEnsure = async () => {
+    const startMs = Date.now();
+    const created = [];
+    const creationErrors = [];
+    const verifiedIndexes = [];
+    const missingOrInvalid = [];
 
-    const safeCreateIndex = async (colName, spec, opts) => {
-      try {
-        await database.collection(colName).createIndex(spec, opts);
-      } catch (err) {
-        // Si ya existe un índice con el mismo nombre pero opciones previas (ej. no-unique),
-        // eliminarlo y recrearlo con las garantías actuales
-        if (opts?.name) {
-          try {
-            await database.collection(colName).dropIndex(opts.name);
-            await database.collection(colName).createIndex(spec, opts);
-          } catch {}
+    try {
+      // 0. Deduplicar preventivamente antes de asegurar índices únicos
+      await deduplicateCollectionByField(database, 'bookings', 'id');
+      await deduplicateCollectionByField(database, 'payments', 'id');
+      await deduplicateCollectionByField(database, 'payments', 'reference');
+      await deduplicateCollectionByField(database, 'payments', 'transactionId');
+      await deduplicateCollectionByField(database, 'sessions', 'id');
+      await deduplicateCollectionByField(database, 'sessions', 'token');
+      await deduplicateCollectionByField(database, 'reviews', 'id');
+      await deduplicateCollectionByField(database, 'reviews', 'galleryToken');
+      await deduplicateCollectionByField(database, 'audit_logs', 'id');
+
+      const safeCreateIndex = async (colName, spec, opts) => {
+        const indexId = `${colName}:${opts.name}`;
+        try {
+          await database.collection(colName).createIndex(spec, opts);
+          created.push(indexId);
+        } catch (err) {
+          // Si ya existe un índice con el mismo nombre pero opciones previas (ej. no-unique),
+          // eliminarlo y recrearlo con las garantías actuales; NO silenciar si el segundo intento falla.
+          if (opts?.name) {
+            try {
+              await database.collection(colName).dropIndex(opts.name);
+              await database.collection(colName).createIndex(spec, opts);
+              created.push(indexId);
+            } catch (retryErr) {
+              creationErrors.push({
+                index: indexId,
+                error: retryErr?.message || err?.message || String(retryErr)
+              });
+            }
+          } else {
+            creationErrors.push({
+              index: indexId,
+              error: err?.message || String(err)
+            });
+          }
+        }
+      };
+
+      for (const item of EXPECTED_MONGO_INDEXES) {
+        await safeCreateIndex(item.col, item.spec, item.opts);
+      }
+
+      // Verificación real mediante listIndexes() sobre cada colección en MongoDB
+      const collectionsToVerify = [...new Set(EXPECTED_MONGO_INDEXES.map(i => i.col))];
+      const actualByCol = {};
+      for (const colName of collectionsToVerify) {
+        try {
+          const colObj = database.collection(colName);
+          if (typeof colObj.listIndexes === 'function') {
+            actualByCol[colName] = await colObj.listIndexes().toArray();
+          } else {
+            actualByCol[colName] = [];
+          }
+        } catch (listErr) {
+          actualByCol[colName] = [];
+          creationErrors.push({
+            collection: colName,
+            error: `Fallo en listIndexes(): ${listErr?.message || String(listErr)}`
+          });
         }
       }
-      created.push(`${colName}:${opts.name}`);
-    };
 
-    // 1–3. Índices de Reservas (bookings)
-    await safeCreateIndex('bookings', { id: 1 }, { unique: true, name: 'uniq_bookings_id', background: true });
-    await safeCreateIndex('bookings', { dateTime: 1, status: 1 }, { name: 'idx_bookings_datetime_status', background: true });
-    await safeCreateIndex('bookings', { createdAt: -1 }, { name: 'idx_bookings_created_desc', background: true });
+      for (const expected of EXPECTED_MONGO_INDEXES) {
+        const indexId = `${expected.col}:${expected.opts.name}`;
+        const list = Array.isArray(actualByCol[expected.col]) ? actualByCol[expected.col] : [];
+        const found = list.find(idx => idx && idx.name === expected.opts.name);
 
-    // 4–7. Índices de Pagos y Anti-Replay de Pasarela (payments)
-    await safeCreateIndex('payments', { id: 1 }, { unique: true, name: 'uniq_payments_id', background: true });
-    await safeCreateIndex('payments', { reference: 1 }, { unique: true, sparse: true, name: 'uniq_payments_reference', background: true });
-    await safeCreateIndex('payments', { transactionId: 1 }, { unique: true, sparse: true, name: 'uniq_payments_txid', background: true });
-    await safeCreateIndex('payments', { bookingId: 1 }, { name: 'idx_payments_booking_id', background: true });
+        if (!found) {
+          missingOrInvalid.push({ index: indexId, reason: 'missing' });
+          continue;
+        }
+        if (!indexKeyMatches(found.key, expected.spec)) {
+          missingOrInvalid.push({ index: indexId, reason: 'key_mismatch', actualKey: found.key, expectedKey: expected.spec });
+          continue;
+        }
+        if (Boolean(expected.opts.unique) !== Boolean(found.unique)) {
+          missingOrInvalid.push({ index: indexId, reason: 'unique_mismatch', actual: Boolean(found.unique), expected: Boolean(expected.opts.unique) });
+          continue;
+        }
+        if (Boolean(expected.opts.sparse) !== Boolean(found.sparse)) {
+          missingOrInvalid.push({ index: indexId, reason: 'sparse_mismatch', actual: Boolean(found.sparse), expected: Boolean(expected.opts.sparse) });
+          continue;
+        }
+        if (typeof expected.opts.expireAfterSeconds === 'number' && found.expireAfterSeconds !== expected.opts.expireAfterSeconds) {
+          missingOrInvalid.push({
+            index: indexId,
+            reason: 'ttl_mismatch',
+            actual: found.expireAfterSeconds,
+            expected: expected.opts.expireAfterSeconds
+          });
+          continue;
+        }
+        verifiedIndexes.push(indexId);
+      }
 
-    // 8–10. Índices de Galerías Privadas (sessions)
-    await safeCreateIndex('sessions', { id: 1 }, { unique: true, name: 'uniq_sessions_id', background: true });
-    await safeCreateIndex('sessions', { token: 1 }, { unique: true, name: 'uniq_sessions_token', background: true });
-    await safeCreateIndex('sessions', { expiresAt: 1 }, { name: 'idx_sessions_expires_at', background: true });
+      const allVerified =
+        creationErrors.length === 0 &&
+        missingOrInvalid.length === 0 &&
+        verifiedIndexes.length === EXPECTED_MONGO_INDEXES.length;
 
-    // 11–12. Índices de Reseñas Verificadas y Unicidad por Galería (reviews)
-    await safeCreateIndex('reviews', { id: 1 }, { unique: true, name: 'uniq_reviews_id', background: true });
-    await safeCreateIndex('reviews', { galleryToken: 1 }, { unique: true, sparse: true, name: 'uniq_reviews_gallery_token', background: true });
+      if (allVerified) {
+        indexesEnsured = true;
+      }
 
-    // 13–15. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
-    await safeCreateIndex('audit_logs', { id: 1 }, { unique: true, name: 'uniq_audit_logs_id', background: true });
-    await safeCreateIndex('audit_logs', { createdAt: -1 }, { name: 'idx_audit_logs_created_desc', background: true });
-    await safeCreateIndex('audit_logs', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_audit_logs_ttl_90d', background: true });
+      return {
+        ok: allVerified,
+        verified: allVerified,
+        elapsedMs: Date.now() - startMs,
+        indexes: verifiedIndexes,
+        createdCount: created.length,
+        verifiedCount: verifiedIndexes.length,
+        expectedCount: EXPECTED_MONGO_INDEXES.length,
+        missingOrInvalid,
+        errors: creationErrors
+      };
+    } catch (err) {
+      console.warn('⚠️ [MongoDB Indexes] Advertencia asegurando índices:', err?.message || err);
+      return {
+        ok: false,
+        verified: false,
+        elapsedMs: Date.now() - startMs,
+        error: err?.message || String(err),
+        indexes: verifiedIndexes,
+        missingOrInvalid,
+        errors: creationErrors
+      };
+    } finally {
+      if (!targetDb) {
+        indexEnsurePromise = null;
+      }
+    }
+  };
 
-    // 16–17. Índices de Bloqueo Distribuido de Horarios (slot_locks)
-    await safeCreateIndex('slot_locks', { lockKey: 1 }, { unique: true, name: 'uniq_slot_locks_key', background: true });
-    await safeCreateIndex('slot_locks', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_slot_locks_ttl', background: true });
-
-    // 18–19. Índices de Rate Limiting Distribuido (rate_limits)
-    await safeCreateIndex('rate_limits', { key: 1 }, { unique: true, name: 'uniq_rate_limits_key', background: true });
-    await safeCreateIndex('rate_limits', { expiresAtDate: 1 }, { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true });
-
-    if (!targetDb) indexesEnsured = true;
-    return {
-      ok: true,
-      verified: true,
-      elapsedMs: Date.now() - startMs,
-      indexes: created
-    };
-  } catch (err) {
-    console.warn('⚠️ [MongoDB Indexes] Advertencia asegurando índices:', err?.message || err);
-    return {
-      ok: false,
-      verified: false,
-      elapsedMs: Date.now() - startMs,
-      error: err?.message || String(err),
-      indexes: created
-    };
+  if (!targetDb) {
+    indexEnsurePromise = runEnsure();
+    return indexEnsurePromise;
   }
+  return runEnsure();
 }
 
 /**
- * Adquiere un bloqueo distribuido en MongoDB Atlas para evitar doble reserva concurrente
- * entre múltiples instancias serverless de Vercel.
+ * Construye la lista ordenada de claves de cubetas (buckets) de 15 minutos para un intervalo horario.
+ * Garantiza que dos solicitudes solapadas (ej. 10:00-12:00 y 10:30-12:30) colisionen de forma atómica
+ * en el índice único `uniq_slot_locks_key` de MongoDB sin depender de lecturas previas no atómicas.
  */
-export async function acquireDistributedSlotLock({ lockKey, dateKey, startMin, endMin, ttlMs = 30000 } = {}) {
-  const database = await getMongoDb();
-  if (!database) return { acquired: true, distributed: false };
+export function buildSlotLockBucketKeys(arg1 = {}, startMinArg = undefined, endMinArg = undefined, bucketStepArg = 15) {
+  const opts = typeof arg1 === 'string'
+    ? { dateKey: arg1, startMin: startMinArg, endMin: endMinArg, bucketStepMin: bucketStepArg }
+    : (arg1 || {});
+  const { lockKey, dateKey, startMin, endMin, bucketStepMin = 15 } = opts;
+  const keys = [];
+  if (dateKey && Number.isFinite(startMin) && Number.isFinite(endMin) && endMin > startMin) {
+    const step = Math.max(5, Number(bucketStepMin) || 15);
+    const firstBucket = Math.floor(startMin / step) * step;
+    for (let m = firstBucket; m < endMin; m += step) {
+      keys.push(`slot_bucket_${dateKey}_${m}`);
+    }
+  } else if (lockKey) {
+    keys.push(String(lockKey));
+  }
+  return keys;
+}
+
+/**
+ * Adquiere un bloqueo distribuido atómico en MongoDB Atlas para evitar doble reserva concurrente
+ * o doble checkout entre múltiples instancias serverless de Vercel.
+ * Opera con política fail-closed ante errores inesperados de base de datos.
+ */
+export async function acquireDistributedSlotLock({
+  lockKey,
+  dateKey,
+  startMin,
+  endMin,
+  ttlMs = 30000,
+  failClosed = true,
+  targetDb = null
+} = {}) {
+  const database = targetDb || await getMongoDb();
+  if (!database) {
+    const mustFailClosed = failClosed !== false && (process.env.NODE_ENV === 'production' || isMongoConfigured());
+    if (mustFailClosed) {
+      return { acquired: false, distributed: false, error: 'Persistencia MongoDB no disponible para bloqueo distribuido' };
+    }
+    return { acquired: true, distributed: false };
+  }
 
   const now = new Date();
   const expiresAtDate = new Date(now.getTime() + ttlMs);
   const col = database.collection('slot_locks');
+  const bucketKeys = buildSlotLockBucketKeys({ lockKey, dateKey, startMin, endMin });
+  if (bucketKeys.length === 0) {
+    return { acquired: false, distributed: true, error: 'No se pudo derivar clave de bloqueo distribuido' };
+  }
+
+  const ownerId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${ crypto.randomBytes(6).toString('hex') }`;
+  const acquiredKeys = [];
+
+  const rollbackAcquired = async () => {
+    if (acquiredKeys.length === 0) return;
+    try {
+      await col.deleteMany({ lockKey: { $in: acquiredKeys }, ownerId });
+    } catch {}
+  };
 
   try {
-    // 1. Limpiar bloqueos vencidos del mismo día
-    await col.deleteMany({ dateKey, expiresAtDate: { $lte: now } });
+    for (const bKey of bucketKeys) {
+      // 1. Purgar exclusivamente si el bucket específico ya venció
+      await col.deleteMany({ lockKey: bKey, expiresAtDate: { $lte: now } });
 
-    // 2. Verificar si existe algún bloqueo activo que se solape con [startMin, endMin)
-    const overlapping = await col.findOne({
-      dateKey,
-      expiresAtDate: { $gt: now },
-      startMin: { $lt: endMin },
-      endMin: { $gt: startMin }
-    });
-    if (overlapping) {
-      return { acquired: false, distributed: true, conflictKey: overlapping.lockKey };
+      // 2. Inserción condicional atómica protegida por el índice único uniq_slot_locks_key
+      try {
+        const res = await col.updateOne(
+          { lockKey: bKey },
+          {
+            $setOnInsert: {
+              lockKey: bKey,
+              ownerId,
+              dateKey: dateKey || null,
+              startMin: Number.isFinite(startMin) ? startMin : null,
+              endMin: Number.isFinite(endMin) ? endMin : null,
+              createdAt: now.toISOString(),
+              expiresAtDate
+            }
+          },
+          { upsert: true }
+        );
+
+        const wasInserted = Boolean(
+          res &&
+          (
+            (typeof res.upsertedCount === 'number' && res.upsertedCount > 0) ||
+            res.upsertedId ||
+            (res.matchedCount === 0 && res.upsertedCount === undefined)
+          )
+        );
+
+        if (!wasInserted) {
+          await rollbackAcquired();
+          return { acquired: false, distributed: true, conflictKey: bKey };
+        }
+        acquiredKeys.push(bKey);
+      } catch (bucketErr) {
+        await rollbackAcquired();
+        if (bucketErr?.code === 11000) {
+          return { acquired: false, distributed: true, conflictKey: bKey };
+        }
+        throw bucketErr;
+      }
     }
 
-    // 3. Insertar bloqueo con clave determinista por ventana o clave provista
-    const effectiveKey = lockKey || `slot_${dateKey}_${startMin}`;
-    await col.updateOne(
-      { lockKey: effectiveKey, expiresAtDate: { $lte: now } },
-      {
-        $setOnInsert: {
-          lockKey: effectiveKey,
-          dateKey,
-          startMin,
-          endMin,
-          createdAt: now.toISOString(),
-          expiresAtDate
-        }
-      },
-      { upsert: true }
-    );
-    return { acquired: true, distributed: true, lockKey: effectiveKey };
+    return {
+      acquired: true,
+      distributed: true,
+      lockKey: acquiredKeys[0] || lockKey,
+      lockKeys: acquiredKeys,
+      ownerId
+    };
   } catch (err) {
+    await rollbackAcquired();
     if (err?.code === 11000) {
       return { acquired: false, distributed: true };
     }
-    return { acquired: true, distributed: false };
+    return {
+      acquired: failClosed === false,
+      distributed: true,
+      error: err?.message || String(err)
+    };
   }
 }
 
-export async function releaseDistributedSlotLock(lockKey) {
-  if (!lockKey) return;
-  const database = await getMongoDb();
+export async function releaseDistributedSlotLock(lockOrHandle, { targetDb = null } = {}) {
+  if (!lockOrHandle) return;
+  const database = targetDb || await getMongoDb();
   if (!database) return;
+  const col = database.collection('slot_locks');
+
   try {
-    await database.collection('slot_locks').deleteOne({ lockKey });
+    if (typeof lockOrHandle === 'string') {
+      await col.deleteOne({ lockKey: lockOrHandle });
+      return;
+    }
+    if (Array.isArray(lockOrHandle)) {
+      if (lockOrHandle.length > 0) {
+        await col.deleteMany({ lockKey: { $in: lockOrHandle } });
+      }
+      return;
+    }
+    if (typeof lockOrHandle === 'object') {
+      const keys = Array.isArray(lockOrHandle.lockKeys) && lockOrHandle.lockKeys.length > 0
+        ? lockOrHandle.lockKeys
+        : (lockOrHandle.lockKey ? [lockOrHandle.lockKey] : []);
+      if (keys.length === 0) return;
+      const filter = { lockKey: { $in: keys } };
+      if (lockOrHandle.ownerId) {
+        filter.ownerId = lockOrHandle.ownerId;
+      }
+      await col.deleteMany(filter);
+    }
   } catch {}
 }
 
 /**
- * Verifica y actualiza de forma distribuida un contador de límite de intentos en MongoDB Atlas.
+ * Verifica y actualiza de forma atómica un contador de límite de intentos en MongoDB Atlas.
+ * Usa `findOneAndUpdate` condicional (`count < maxAttempts`) + índice único `uniq_rate_limits_key`
+ * para impedir condiciones de carrera bajo ráfagas simultáneas.
  */
-export async function checkDistributedRateLimit({ key, maxAttempts, windowMs }) {
-  const database = await getMongoDb();
-  if (!database || !key) return { allowed: true, distributed: false };
+export async function checkDistributedRateLimit({
+  key,
+  maxAttempts,
+  windowMs,
+  failClosed = false,
+  targetDb = null
+} = {}) {
+  if (!key) return { allowed: true, distributed: false };
+  const database = targetDb || await getMongoDb();
+  if (!database) {
+    if (failClosed && (process.env.NODE_ENV === 'production' || isMongoConfigured())) {
+      return { allowed: false, distributed: false, error: 'rate_limit_db_unavailable' };
+    }
+    return { allowed: true, distributed: false };
+  }
 
   const now = Date.now();
   const nowDate = new Date(now);
@@ -279,32 +519,71 @@ export async function checkDistributedRateLimit({ key, maxAttempts, windowMs }) 
   const col = database.collection('rate_limits');
 
   try {
-    const existing = await col.findOne({ key });
-    if (!existing || !existing.expiresAtDate || new Date(existing.expiresAtDate).getTime() <= now) {
-      await col.updateOne(
-        { key },
-        { $set: { key, count: 1, windowStart: now, expiresAtDate } },
-        { upsert: true }
-      );
-      return { allowed: true, count: 1, distributed: true };
-    }
+    // 1. Eliminar ventana vencida de forma atómica si ya caducó
+    await col.deleteMany({ key, expiresAtDate: { $lte: nowDate } });
 
-    if (existing.count >= maxAttempts) {
+    // 2. Incrementar atómicamente solo si count < maxAttempts (o insertar con count=1 si no existe).
+    // Si el documento existe y ya alcanzó count >= maxAttempts, el filtro no coincide y el upsert
+    // intenta insertar un duplicado sobre uniq_rate_limits_key, arrojando código 11000 atómicamente.
+    const updated = await col.findOneAndUpdate(
+      {
+        key,
+        $or: [
+          { count: { $lt: maxAttempts } },
+          { count: { $exists: false } }
+        ]
+      },
+      {
+        $inc: { count: 1 },
+        $setOnInsert: {
+          key,
+          windowStart: now,
+          expiresAtDate
+        }
+      },
+      { upsert: true, returnDocument: 'after' }
+    );
+
+    const doc = updated && typeof updated === 'object' && 'value' in updated ? updated.value : updated;
+    if (!doc) {
       return {
         allowed: false,
-        count: existing.count,
-        retryAfterMs: Math.max(0, new Date(existing.expiresAtDate).getTime() - now),
+        count: maxAttempts,
+        retryAfterMs: windowMs,
         distributed: true
       };
     }
 
-    await col.updateOne(
-      { key },
-      { $inc: { count: 1 } }
-    );
-    return { allowed: true, count: existing.count + 1, distributed: true };
-  } catch {
-    return { allowed: true, distributed: false };
+    return {
+      allowed: true,
+      count: Number(doc.count) || 1,
+      distributed: true
+    };
+  } catch (err) {
+    if (err?.code === 11000) {
+      let retryAfterMs = windowMs;
+      let currentCount = maxAttempts;
+      try {
+        const existing = await col.findOne({ key });
+        if (existing) {
+          currentCount = Number(existing.count) || maxAttempts;
+          if (existing.expiresAtDate) {
+            retryAfterMs = Math.max(0, new Date(existing.expiresAtDate).getTime() - now);
+          }
+        }
+      } catch {}
+      return {
+        allowed: false,
+        count: currentCount,
+        retryAfterMs,
+        distributed: true
+      };
+    }
+    return {
+      allowed: !failClosed,
+      distributed: false,
+      error: err?.message || String(err)
+    };
   }
 }
 
@@ -319,7 +598,7 @@ export async function pingMongoDB() {
     if (!indexesEnsured) {
       ensureMongoIndexes(database).catch(() => {});
     }
-    return { ok: true, connected: true, latencyMs: Date.now() - start, error: null };
+    return { ok: true, connected: true, latencyMs: Date.now() - start, error: null, indexesEnsured };
   } catch (err) {
     return { ok: false, connected: false, latencyMs: Date.now() - start, error: err?.message || String(err) };
   }

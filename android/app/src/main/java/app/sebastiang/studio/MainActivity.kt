@@ -35,7 +35,12 @@ class MainActivity : AppCompatActivity() {
 
         tokenStorage = SecureTokenStorage(applicationContext)
         webView = WebView(this)
-        notificationBridge = AndroidNotificationBridge(tokenStorage) { webView.url }
+        notificationBridge = AndroidNotificationBridge(
+            activity = this,
+            tokenStorage = tokenStorage,
+            mainFrameUrlProvider = { webView.url },
+            evaluateJavascriptCallback = { script -> webView.evaluateJavascript(script, null) }
+        )
         setContentView(webView)
 
         webView.settings.apply {

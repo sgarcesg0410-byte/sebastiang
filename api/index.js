@@ -30,7 +30,9 @@ import {
   decryptBackupPayload,
   recordOperationalEvent,
   getOperationalMonitoringReport,
-  secureCompare
+  secureCompare,
+  verifyBiometricAssertion,
+  BIO_REFRESH_TOKEN_TTL_MS
 } from './security.js';
 import {
   validateImagePayload,
@@ -104,6 +106,16 @@ export function isAllowedCorsOrigin(origin, isProd = (process.env.NODE_ENV === '
 
 const app = express();
 app.set('trust proxy', 1);
+export const HARDENED_CONTENT_SECURITY_POLICY =
+  "default-src 'self'; img-src 'self' data: blob: https://images.unsplash.com https://*.googleusercontent.com https://drive.google.com https://i.imgur.com https://*.cloudinary.com https://sebastiang.app https://www.sebastiang.app; script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co; connect-src 'self' https://onesignal.com https://api.onesignal.com https://cdn.onesignal.com https://checkout.wompi.co https://*.wompi.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://checkout.wompi.co; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self' https://checkout.wompi.co https://onesignal.com; worker-src 'self' blob:; frame-ancestors 'self'";
+
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', HARDENED_CONTENT_SECURITY_POLICY);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 app.use(cors({
   origin: (origin, callback) => {
     if (isAllowedCorsOrigin(origin)) {
@@ -902,7 +914,8 @@ app.post('/api/settings', requireAdminAuth, async (req, res) => {
     // Nunca permitir que se sobreescriban credenciales o hashes de seguridad por este endpoint
     const {
       adminPin, adminPinHash, adminPinScrypt, adminPasswordVersion,
-      adminResetChallenge, revokedApkDeviceIds, _loadedFromMongo, id, _id,
+      adminResetChallenge, revokedApkDeviceIds, revokedBioRefreshJtis,
+      biometricCredentials, _loadedFromMongo, id, _id,
       ...safeSettings
     } = newSettings;
     const candidateSettings = { ...runtimeDB.settings, ...safeSettings };
@@ -1159,6 +1172,7 @@ app.post('/api/bookings', async (req, res) => {
     expiresAt: now + 30000
   });
 
+  let distributedLockHandle = null;
   if (isMongoConfigured()) {
     const distRate = await checkDistributedRateLimit({
       key: `bookings:${clientIp}`,
@@ -1179,13 +1193,14 @@ app.post('/api/bookings', async (req, res) => {
       endMin: requestedSlot.endMin,
       ttlMs: 30000
     });
-    if (distLock && distLock.acquired === false) {
+    if (!distLock || distLock.acquired === false) {
       global.__activeSlotLocks.delete(myLockKey);
       return res.status(409).json({
         error: 'Ese horario ya se encuentra en proceso de reserva por otro usuario. Por favor elige otro horario disponible.',
         code: 'SLOT_ALREADY_BOOKED'
       });
     }
+    distributedLockHandle = distLock;
   }
 
   try {
@@ -1334,7 +1349,7 @@ app.post('/api/bookings', async (req, res) => {
       global.__activeSlotLocks.delete(myLockKey);
     }
     if (isMongoConfigured()) {
-      await releaseDistributedSlotLock(distributedLockKey).catch(() => {});
+      await releaseDistributedSlotLock(distributedLockHandle || distributedLockKey).catch(() => {});
     }
   }
 });
@@ -1809,7 +1824,128 @@ app.post('/api/admin/auth/bio-challenge', async (req, res) => {
   return res.json({ success: true, challenge: nonce, expiresAt: now + 60000 });
 });
 
-// Renovación de sesión rápida mediante huella biométrica con desafío obligatorio de un solo uso y rotación de token
+// Registro de clave pública biométrica del dispositivo (ECDSA P-256 / WebAuthn / Android Keystore)
+app.post('/api/admin/auth/bio-enroll', requireAdminAuth, async (req, res) => {
+  if (!requireDurablePersistence(res)) return;
+  const ip = getClientIp(req);
+  try {
+    const {
+      credentialId,
+      publicKeySpki,
+      rpId,
+      origin,
+      provider = 'webcrypto_p256',
+      deviceName = 'Dispositivo Admin',
+      challenge,
+      clientDataJSON,
+      authenticatorData,
+      signature
+    } = req.body || {};
+
+    if (!credentialId || !publicKeySpki || !challenge || !clientDataJSON || !signature) {
+      return res.status(400).json({
+        error: 'Se requieren credentialId, publicKeySpki, challenge, clientDataJSON y signature para enrolar biometría verificada.'
+      });
+    }
+
+    const storedChallenge = global.__activeBioChallenges.get(challenge);
+    if (!storedChallenge || storedChallenge.expiresAt < Date.now()) {
+      global.__activeBioChallenges.delete(challenge);
+      return res.status(401).json({ error: 'Desafío de enrolamiento biométrico inválido o expirado.' });
+    }
+    global.__activeBioChallenges.delete(challenge);
+
+    const verification = verifyBiometricAssertion({
+      credentialId: String(credentialId).trim(),
+      publicKeySpki: String(publicKeySpki).trim(),
+      clientDataJSON,
+      authenticatorData,
+      signature: String(signature).trim(),
+      expectedChallenge: challenge,
+      expectedRpId: rpId || null
+    });
+
+    if (!verification.valid) {
+      return res.status(401).json({
+        error: `No se pudo verificar la firma criptográfica de enrolamiento biométrico (${verification.reason}).`,
+        code: 'INVALID_BIOMETRIC_ENROLLMENT_SIGNATURE'
+      });
+    }
+
+    const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+    runtimeDB.settings = runtimeDB.settings || {};
+    let currentCreds = Array.isArray(runtimeDB.settings.biometricCredentials)
+      ? [...runtimeDB.settings.biometricCredentials]
+      : [];
+
+    if (isMongoConfigured()) {
+      try {
+        const settingsDoc = await findMongoDoc('settings', { id: 'app_settings' });
+        if (Array.isArray(settingsDoc?.biometricCredentials)) {
+          const map = new Map();
+          [...settingsDoc.biometricCredentials, ...currentCreds].forEach(c => {
+            if (c?.credentialId) map.set(c.credentialId, c);
+          });
+          currentCreds = Array.from(map.values());
+        }
+      } catch {}
+    }
+
+    const cleanCredId = String(credentialId).trim().slice(0, 128);
+    const newCred = {
+      credentialId: cleanCredId,
+      publicKeySpki: String(publicKeySpki).trim(),
+      rpId: verification.rpId || 'sebastiang.app',
+      origin: verification.origin || origin || 'https://sebastiang.app',
+      provider: String(provider || 'webcrypto_p256').slice(0, 40),
+      deviceName: sanitizeText(String(deviceName || 'Dispositivo Admin')).slice(0, 80),
+      pwdVersion: activeVersion,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: new Date().toISOString()
+    };
+
+    currentCreds = [
+      newCred,
+      ...currentCreds.filter(c => c && c.credentialId !== cleanCredId)
+    ].slice(0, 10);
+
+    if (isMongoConfigured()) {
+      await upsertMongoDoc('settings', { id: 'app_settings' }, {
+        id: 'app_settings',
+        biometricCredentials: currentCreds
+      }, { throwOnError: true });
+    }
+    runtimeDB.settings.biometricCredentials = currentCreds;
+
+    const bioRefreshToken = createBioRefreshToken({
+      pwd: activeVersion,
+      cid: cleanCredId
+    });
+
+    await recordFinancialAuditLog({
+      action: 'biometric_device_enrolled',
+      actor: 'admin',
+      entityType: 'security',
+      entityId: cleanCredId,
+      status: 'active',
+      ip,
+      metadata: { provider: newCred.provider, rpId: newCred.rpId, origin: newCred.origin }
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+    return res.status(201).json({
+      success: true,
+      credentialId: cleanCredId,
+      bioRefreshToken,
+      ttlMs: BIO_REFRESH_TOKEN_TTL_MS
+    });
+  } catch (err) {
+    console.error('[Seguridad] Error en bio-enroll:', err?.message || err);
+    return res.status(500).json({ error: 'Error registrando credencial biométrica.' });
+  }
+});
+
+// Renovación de sesión rápida mediante huella biométrica con desafío obligatorio de un solo uso,
+// verificación criptográfica de firma ECDSA P-256 (biometricProof) en el servidor y rotación de token
 app.post('/api/admin/auth/bio-refresh', async (req, res) => {
   const ip = getClientIp(req);
   const rateCheck = checkRateLimit(ip);
@@ -1843,12 +1979,23 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
     let revokedJtis = Array.isArray(runtimeDB.settings.revokedBioRefreshJtis)
       ? [...runtimeDB.settings.revokedBioRefreshJtis]
       : [];
+    let enrolledCredentials = Array.isArray(runtimeDB.settings.biometricCredentials)
+      ? [...runtimeDB.settings.biometricCredentials]
+      : [];
 
     if (isMongoConfigured()) {
       try {
         const settingsDoc = await findMongoDoc('settings', { id: 'app_settings' });
         if (Array.isArray(settingsDoc?.revokedBioRefreshJtis)) {
           revokedJtis = Array.from(new Set([...revokedJtis, ...settingsDoc.revokedBioRefreshJtis]));
+        }
+        if (Array.isArray(settingsDoc?.biometricCredentials)) {
+          const map = new Map();
+          [...settingsDoc.biometricCredentials, ...enrolledCredentials].forEach(c => {
+            if (c?.credentialId) map.set(c.credentialId, c);
+          });
+          enrolledCredentials = Array.from(map.values());
+          runtimeDB.settings.biometricCredentials = enrolledCredentials;
         }
       } catch {}
     }
@@ -1864,6 +2011,62 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
 
     if (payload.pwd !== activeVersion) {
       return res.status(401).json({ error: 'La contraseña fue cambiada. Ingresa con tu nueva contraseña.' });
+    }
+
+    // Verificación criptográfica obligatoria de la aserción biométrica firmada sobre el challenge
+    const rawProof = req.body?.biometricProof || (
+      req.body?.signature && req.body?.clientDataJSON
+        ? {
+            credentialId: req.body.credentialId || payload.cid,
+            clientDataJSON: req.body.clientDataJSON,
+            authenticatorData: req.body.authenticatorData || null,
+            signature: req.body.signature
+          }
+        : null
+    );
+
+    if (!rawProof || typeof rawProof !== 'object' || !rawProof.signature || !rawProof.clientDataJSON) {
+      recordFailedLogin(ip);
+      return res.status(401).json({
+        error: 'Se requiere prueba criptográfica biométrica firmada (biometricProof) sobre el desafío del servidor.',
+        code: 'BIOMETRIC_PROOF_REQUIRED'
+      });
+    }
+
+    const proofCredentialId = String(rawProof.credentialId || payload.cid || '').trim();
+    if (payload.cid && proofCredentialId !== payload.cid) {
+      recordFailedLogin(ip);
+      return res.status(401).json({
+        error: 'El identificador de credencial biométrica no coincide con el token de refresco.',
+        code: 'BIOMETRIC_CREDENTIAL_MISMATCH'
+      });
+    }
+
+    const enrolledCred = enrolledCredentials.find(c => c && c.credentialId === proofCredentialId);
+    if (!enrolledCred || !enrolledCred.publicKeySpki) {
+      recordFailedLogin(ip);
+      return res.status(401).json({
+        error: 'Credencial biométrica no registrada o revocada en el servidor. Registra tu huella nuevamente.',
+        code: 'BIOMETRIC_CREDENTIAL_NOT_ENROLLED'
+      });
+    }
+
+    const assertionCheck = verifyBiometricAssertion({
+      credentialId: enrolledCred.credentialId,
+      publicKeySpki: enrolledCred.publicKeySpki,
+      clientDataJSON: rawProof.clientDataJSON,
+      authenticatorData: rawProof.authenticatorData || null,
+      signature: rawProof.signature,
+      expectedChallenge: challenge,
+      expectedRpId: enrolledCred.rpId || null
+    });
+
+    if (!assertionCheck.valid) {
+      recordFailedLogin(ip);
+      return res.status(401).json({
+        error: `Firma criptográfica biométrica inválida (${assertionCheck.reason}).`,
+        code: 'INVALID_BIOMETRIC_SIGNATURE'
+      });
     }
 
     // Rotación y revocación inmediata del jti consumido
@@ -1882,7 +2085,10 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
     }
 
     const freshToken = createAdminToken({ pwd: activeVersion });
-    const rotatedBioRefreshToken = createBioRefreshToken({ pwd: activeVersion });
+    const rotatedBioRefreshToken = createBioRefreshToken({
+      pwd: activeVersion,
+      cid: enrolledCred.credentialId
+    });
     return res.json({
       success: true,
       token: freshToken,
@@ -2310,6 +2516,12 @@ app.post('/api/payments/checkout', async (req, res) => {
     if (!booking) {
       return res.status(400).json({ error: 'Se requiere una reserva válida para pagar el abono inicial.' });
     }
+    if (booking.depositPaid === true) {
+      return res.status(409).json({
+        error: 'El anticipo de esta reserva ya se encuentra pagado y verificado.',
+        code: 'DEPOSIT_ALREADY_PAID'
+      });
+    }
   }
 
   // Si el concepto es 'session_balance' o 'saldo_galeria', se requiere sesión o reserva válida
@@ -2319,21 +2531,51 @@ app.post('/api/payments/checkout', async (req, res) => {
     }
   }
 
-  let sessionRemaining = undefined;
-  if (concept === 'session_balance' || concept === 'saldo_galeria') {
+  const targetEntityKey = booking?.id || bookingId || session?.token || sessionToken;
+  const checkoutLockKey = `checkout_lock_${targetEntityKey}_${concept}`;
+  if (!global.__activeCheckoutLocks) global.__activeCheckoutLocks = new Map();
+  const nowLockMs = Date.now();
+  for (const [k, exp] of global.__activeCheckoutLocks.entries()) {
+    if (exp <= nowLockMs) global.__activeCheckoutLocks.delete(k);
+  }
+  if (global.__activeCheckoutLocks.has(checkoutLockKey)) {
+    return res.status(409).json({
+      error: 'Ya existe una solicitud de pago procesándose simultáneamente para este saldo.',
+      code: 'CHECKOUT_IN_PROGRESS'
+    });
+  }
+  global.__activeCheckoutLocks.set(checkoutLockKey, nowLockMs + 15000);
 
-    const totalAmount = session
-      ? Number(session.totalPrice || session.packagePrice || session.sessionBasePrice || 0)
-      : (booking ? Number(booking.totalPrice || 0) : 0);
+  let distCheckoutLock = null;
+  if (isMongoConfigured()) {
+    distCheckoutLock = await acquireDistributedSlotLock({
+      lockKey: checkoutLockKey,
+      ttlMs: 15000
+    });
+    if (!distCheckoutLock || distCheckoutLock.acquired === false) {
+      global.__activeCheckoutLocks.delete(checkoutLockKey);
+      return res.status(409).json({
+        error: 'Ya existe una solicitud de pago procesándose simultáneamente para este saldo.',
+        code: 'CHECKOUT_IN_PROGRESS'
+      });
+    }
+  }
 
-    // Sumar todos los pagos verificados correspondientes a esta sesión/reserva
-    const relevantPayments = (runtimeDB.payments || []).filter(p =>
-      (p.status === 'verified' || p.status === 'approved' || p.status === 'completed') &&
-      ((session && session.token && p.sessionToken === session.token) ||
-       (session && session.bookingId && p.bookingId === session.bookingId) ||
-       (booking && (p.bookingId === booking.id || (p.sessionToken && p.sessionToken === booking.id))))
-    );
+  try {
+    const ACTIVE_PENDING_GATEWAY_TTL_MS = 15 * 60 * 1000;
+    const nowMs = Date.now();
 
+    const matchesTargetEntity = (p) => {
+      if (!p) return false;
+      if (booking?.id && (p.bookingId === booking.id || p.sessionToken === booking.id)) return true;
+      if (bookingId && p.bookingId === bookingId) return true;
+      if (session?.token && p.sessionToken === session.token) return true;
+      if (session?.bookingId && p.bookingId === session.bookingId) return true;
+      if (sessionToken && p.sessionToken === sessionToken) return true;
+      return false;
+    };
+
+    const allCandidatePayments = [...(runtimeDB.payments || [])].filter(matchesTargetEntity);
     if (isMongoConfigured()) {
       try {
         const queryOr = [];
@@ -2342,16 +2584,16 @@ app.post('/api/payments/checkout', async (req, res) => {
         if (booking?.id) {
           queryOr.push({ bookingId: booking.id });
           queryOr.push({ sessionToken: booking.id });
+        } else if (bookingId) {
+          queryOr.push({ bookingId });
         }
+        if (sessionToken) queryOr.push({ sessionToken });
         if (queryOr.length > 0) {
-          const mongoPays = await findMongoDocs('payments', {
-            status: { $in: ['verified', 'approved', 'completed'] },
-            $or: queryOr
-          });
+          const mongoPays = await findMongoDocs('payments', { $or: queryOr });
           if (Array.isArray(mongoPays)) {
             for (const mp of mongoPays) {
-              if (!relevantPayments.some(p => p.id === mp.id || (p.reference && p.reference === mp.reference))) {
-                relevantPayments.push(mp);
+              if (!allCandidatePayments.some(p => p.id === mp.id || (p.reference && p.reference === mp.reference))) {
+                allCandidatePayments.push(mp);
               }
             }
           }
@@ -2359,101 +2601,160 @@ app.post('/api/payments/checkout', async (req, res) => {
       } catch (eMongo) {}
     }
 
-    const verifiedPaid = relevantPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-    sessionRemaining = Math.max(0, totalAmount - verifiedPaid);
-  }
+    // Si ya existe un pago verificado para el abono inicial, impedir segundo cobro de abono
+    if (concept === 'booking_deposit' || concept === 'abono') {
+      const verifiedDeposit = allCandidatePayments.find(
+        p => (p.status === 'verified' || p.status === 'approved' || p.status === 'completed') &&
+             (p.concept === 'booking_deposit' || p.concept === 'abono')
+      );
+      if (verifiedDeposit) {
+        return res.status(409).json({
+          error: 'El anticipo de esta reserva ya fue pagado y verificado.',
+          code: 'DEPOSIT_ALREADY_PAID'
+        });
+      }
+    }
 
-  const check = validateCheckoutAmount({
-    concept,
-    amount,
-    booking,
-    sessionRemaining
-  });
+    let sessionRemaining = undefined;
+    if (concept === 'session_balance' || concept === 'saldo_galeria') {
+      const totalAmount = session
+        ? Number(session.totalPrice || session.packagePrice || session.sessionBasePrice || 0)
+        : (booking ? Number(booking.totalPrice || 0) : 0);
 
-  if (!check.valid) {
-    return res.status(400).json({
-      error: check.error || 'Monto inválido para el concepto.',
-      expectedAmount: check.expectedAmount
+      const verifiedPayments = allCandidatePayments.filter(
+        p => p.status === 'verified' || p.status === 'approved' || p.status === 'completed'
+      );
+      const verifiedPaid = verifiedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      sessionRemaining = Math.max(0, totalAmount - verifiedPaid);
+
+      if (totalAmount > 0 && sessionRemaining <= 0) {
+        return res.status(409).json({
+          error: 'El saldo de esta sesión ya se encuentra cubierto en su totalidad.',
+          code: 'BALANCE_ALREADY_PAID'
+        });
+      }
+    }
+
+    const check = validateCheckoutAmount({
+      concept,
+      amount,
+      booking,
+      sessionRemaining
     });
-  }
 
-  const reference = generatePaymentReference('wompi');
-  const amountInCents = Number(amount) * 100;
-  const currency = 'COP';
-
-  const paymentRecord = {
-    id: `pay-wompi-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-    bookingId: booking?.id || bookingId || null,
-    sessionToken: sessionToken || '',
-    clientName: (clientName || booking?.clientName || 'Cliente').trim(),
-    clientWhatsApp: (clientWhatsApp || booking?.clientWhatsApp || '').trim(),
-    clientEmail: (clientEmail || booking?.clientEmail || '').trim(),
-    packageTitle: booking?.packageName || 'Sesión Fotográfica',
-    amount: Number(amount),
-    amountInCents,
-    currency,
-    method: 'wompi',
-    gatewayProvider: 'wompi',
-    reference,
-    concept,
-    status: 'pending_gateway',
-    createdAt: new Date().toISOString()
-  };
-
-  if (!runtimeDB.payments) runtimeDB.payments = [];
-  runtimeDB.payments.unshift(paymentRecord);
-
-  // Persistencia inmediata y duradera en MongoDB Atlas
-  if (isMongoConfigured()) {
-    try {
-      await persistPaymentToMongo(paymentRecord, { throwOnError: true });
-    } catch (eMongo) {
-      const idx = runtimeDB.payments.findIndex(p => p.id === paymentRecord.id);
-      if (idx !== -1) runtimeDB.payments.splice(idx, 1);
-      return res.status(503).json({
-        error: 'No se pudo registrar la referencia de pago en la base de datos central. Por favor intenta de nuevo.'
+    if (!check.valid) {
+      return res.status(400).json({
+        error: check.error || 'Monto inválido para el concepto.',
+        expectedAmount: check.expectedAmount
       });
     }
-  }
 
-  await recordFinancialAuditLog({
-    action: 'wompi_checkout_created',
-    actor: 'public_client',
-    entityType: 'payment',
-    entityId: paymentRecord.id,
-    amount: paymentRecord.amount,
-    status: paymentRecord.status,
-    ip,
-    metadata: { reference, concept, bookingId: paymentRecord.bookingId }
-  }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+    // Impedir múltiples referencias pending_gateway activas sobre el mismo saldo/concepto
+    const activePendingCheckout = allCandidatePayments.find(p => {
+      if (p.status !== 'pending_gateway' || p.concept !== concept) return false;
+      const createdTs = Date.parse(p.createdAt || '') || 0;
+      const isFresh = createdTs > 0 && (nowMs - createdTs) < ACTIVE_PENDING_GATEWAY_TTL_MS;
+      if (!isFresh) {
+        p.status = 'expired';
+        return false;
+      }
+      return true;
+    });
 
-  let signature = '';
-  try {
-    signature = generateWompiSignature({
-      reference,
+    if (activePendingCheckout) {
+      return res.status(409).json({
+        error: 'Ya existe un proceso de pago activo para este saldo. Completa la referencia vigente antes de generar otra.',
+        code: 'DUPLICATE_PENDING_CHECKOUT',
+        activeReference: activePendingCheckout.reference,
+        amount: activePendingCheckout.amount
+      });
+    }
+
+    const reference = generatePaymentReference('wompi');
+    const amountInCents = Number(amount) * 100;
+    const currency = 'COP';
+
+    const paymentRecord = {
+      id: `pay-wompi-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      bookingId: booking?.id || bookingId || null,
+      sessionToken: sessionToken || '',
+      clientName: (clientName || booking?.clientName || 'Cliente').trim(),
+      clientWhatsApp: (clientWhatsApp || booking?.clientWhatsApp || '').trim(),
+      clientEmail: (clientEmail || booking?.clientEmail || '').trim(),
+      packageTitle: booking?.packageName || 'Sesión Fotográfica',
+      amount: Number(amount),
       amountInCents,
       currency,
-      integritySecret
+      method: 'wompi',
+      gatewayProvider: 'wompi',
+      reference,
+      concept,
+      status: 'pending_gateway',
+      createdAt: new Date().toISOString()
+    };
+
+    if (!runtimeDB.payments) runtimeDB.payments = [];
+    runtimeDB.payments.unshift(paymentRecord);
+
+    // Persistencia inmediata y duradera en MongoDB Atlas
+    if (isMongoConfigured()) {
+      try {
+        await persistPaymentToMongo(paymentRecord, { throwOnError: true });
+      } catch (eMongo) {
+        const idx = runtimeDB.payments.findIndex(p => p.id === paymentRecord.id);
+        if (idx !== -1) runtimeDB.payments.splice(idx, 1);
+        return res.status(503).json({
+          error: 'No se pudo registrar la referencia de pago en la base de datos central. Por favor intenta de nuevo.'
+        });
+      }
+    }
+
+    await recordFinancialAuditLog({
+      action: 'wompi_checkout_created',
+      actor: 'public_client',
+      entityType: 'payment',
+      entityId: paymentRecord.id,
+      amount: paymentRecord.amount,
+      status: paymentRecord.status,
+      ip,
+      metadata: { reference, concept, bookingId: paymentRecord.bookingId }
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+    let signature = '';
+    try {
+      signature = generateWompiSignature({
+        reference,
+        amountInCents,
+        currency,
+        integritySecret
+      });
+    } catch (err) {
+      console.error('Error generando firma de Wompi:', err);
+    }
+
+    const publicKey = process.env.WOMPI_PUBLIC_KEY || '';
+    const redirectUrl = encodeURIComponent(`https://sebastiang.app/?payment_success=true&ref=${reference}`);
+    const checkoutUrl = `https://checkout.wompi.co/p/?public-key=${publicKey}&currency=${currency}&amount-in-cents=${amountInCents}&reference=${reference}&signature:integrity=${signature}&redirect-url=${redirectUrl}`;
+
+    return res.status(201).json({
+      success: true,
+      paymentId: paymentRecord.id,
+      reference,
+      amount: paymentRecord.amount,
+      amountInCents,
+      currency,
+      signature,
+      publicKey,
+      checkoutUrl
     });
-  } catch (err) {
-    console.error('Error generando firma de Wompi:', err);
+  } finally {
+    if (global.__activeCheckoutLocks) {
+      global.__activeCheckoutLocks.delete(checkoutLockKey);
+    }
+    if (isMongoConfigured() && distCheckoutLock) {
+      await releaseDistributedSlotLock(distCheckoutLock).catch(() => {});
+    }
   }
-
-  const publicKey = process.env.WOMPI_PUBLIC_KEY || '';
-  const redirectUrl = encodeURIComponent(`https://sebastiang.app/?payment_success=true&ref=${reference}`);
-  const checkoutUrl = `https://checkout.wompi.co/p/?public-key=${publicKey}&currency=${currency}&amount-in-cents=${amountInCents}&reference=${reference}&signature:integrity=${signature}&redirect-url=${redirectUrl}`;
-
-  return res.status(201).json({
-    success: true,
-    paymentId: paymentRecord.id,
-    reference,
-    amount: paymentRecord.amount,
-    amountInCents,
-    currency,
-    signature,
-    publicKey,
-    checkoutUrl
-  });
 });
 
 app.post('/api/payments/webhook', async (req, res) => {
@@ -2686,32 +2987,90 @@ app.post('/api/payments/webhook', async (req, res) => {
     }
     payment._isProcessing = true;
 
-    // 3. Preparar candidatos de pago y reserva sin mutar memoria prematuramente
+    // 3. Preparar candidatos de pago y reserva sin mutar memoria prematuramente,
+    // verificando además que el pago acumulado no exceda el total autorizado de la reserva/sesión.
+    let associatedBookingObj = null;
+    if (payment.bookingId) {
+      associatedBookingObj = await findBookingById(payment.bookingId);
+    }
+    const associatedSessionObj = payment.sessionToken
+      ? (runtimeDB.sessions || []).find(s => s && (s.token === payment.sessionToken || s.id === payment.sessionToken))
+      : null;
+
+    const authorizedTotal = Number(
+      associatedBookingObj?.totalPrice ||
+      associatedSessionObj?.totalPrice ||
+      associatedSessionObj?.packagePrice ||
+      0
+    );
+
+    const priorVerifiedPayments = (runtimeDB.payments || []).filter(p =>
+      p &&
+      p.id !== payment.id &&
+      p.reference !== payment.reference &&
+      (p.status === 'verified' || p.status === 'approved' || p.status === 'completed') &&
+      (
+        (payment.bookingId && p.bookingId === payment.bookingId) ||
+        (payment.sessionToken && p.sessionToken === payment.sessionToken)
+      )
+    );
+    const alreadyVerifiedPaid = priorVerifiedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const projectedTotalPaid = alreadyVerifiedPaid + (Number(payment.amount) || 0);
+    const overpaymentDetected = authorizedTotal > 0 && projectedTotalPaid > authorizedTotal;
+    const overpaymentAmount = overpaymentDetected ? (projectedTotalPaid - authorizedTotal) : 0;
+
+    if (overpaymentDetected) {
+      recordOperationalEvent(
+        'wompiErrors',
+        `Sobrepago detectado en ref ${tx.reference}: acumulado $${projectedTotalPaid} > autorizado $${authorizedTotal}`,
+        'high'
+      );
+      await recordFinancialAuditLog({
+        action: 'wompi_overpayment_detected',
+        actor: 'wompi_webhook',
+        entityType: 'payment',
+        entityId: payment.id,
+        amount: payment.amount,
+        status: 'overpayment_flagged',
+        ip: getClientIp(req),
+        metadata: {
+          reference: payment.reference,
+          transactionId: tx.id,
+          alreadyVerifiedPaid,
+          authorizedTotal,
+          overpaymentAmount
+        }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+    }
+
     const approvedPayment = {
       ...payment,
       status: 'verified',
       gatewayStatus: tx.status,
       transactionId: tx.id,
       paymentMethodType: tx.payment_method_type || 'WOMPI',
-      approvedAt: new Date().toISOString()
+      approvedAt: new Date().toISOString(),
+      ...(overpaymentDetected ? {
+        overpaymentDetected: true,
+        overpaymentAmount,
+        reconciliationStatus: 'overpayment_review_required'
+      } : {})
     };
 
     let approvedBooking = null;
-    if (payment.bookingId) {
-      const b = await findBookingById(payment.bookingId);
-      if (b) {
-        const isDepositPayment = (payment.concept === 'booking_deposit' || payment.concept === 'abono' || !payment.concept) &&
-          payment.concept !== 'session_balance' &&
-          payment.concept !== 'saldo_galeria';
+    if (associatedBookingObj) {
+      const b = associatedBookingObj;
+      const isDepositPayment = (payment.concept === 'booking_deposit' || payment.concept === 'abono' || !payment.concept) &&
+        payment.concept !== 'session_balance' &&
+        payment.concept !== 'saldo_galeria';
 
-        approvedBooking = {
-          ...b,
-          ...(isDepositPayment ? {
-            status: b.status === 'pending' ? 'confirmed' : b.status,
-            depositPaid: true
-          } : {})
-        };
-      }
+      approvedBooking = {
+        ...b,
+        ...(isDepositPayment ? {
+          status: b.status === 'pending' ? 'confirmed' : b.status,
+          depositPaid: true
+        } : {})
+      };
     }
 
     // 4. Persistir de forma duradera AMBOS (pago y reserva) en MongoDB Atlas con throwOnError: true
@@ -3227,7 +3586,8 @@ app.post('/api/admin/settings', async (req, res) => {
     // Proteger estrictamente los campos de seguridad interna
     const FORBIDDEN_SETTINGS_KEYS = new Set([
       'adminPin', 'adminPinHash', 'adminPinScrypt', 'adminPasswordVersion',
-      'adminResetChallenge', 'revokedApkDeviceIds', 'id', '_id', 'key', '_loadedFromMongo'
+      'adminResetChallenge', 'revokedApkDeviceIds', 'revokedBioRefreshJtis',
+      'biometricCredentials', 'id', '_id', 'key', '_loadedFromMongo'
     ]);
     const safeSettings = {};
     for (const [k, v] of Object.entries(settings)) {
@@ -3585,8 +3945,14 @@ app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
     req.query?.encrypt === 'true' ||
     rawUrl.includes('encrypt=1') ||
     rawUrl.includes('encrypt=true');
-  // En producción, la exportación se cifra por defecto con AES-256-GCM
-  const shouldEncrypt = isProduction ? !explicitDisableEncrypt : explicitEnableEncrypt;
+  // En producción, está terminantemente prohibido desactivar el cifrado AES-256-GCM
+  if (isProduction && explicitDisableEncrypt) {
+    return res.status(400).json({
+      error: 'En producción está prohibido exportar respaldos sin cifrado AES-256-GCM.',
+      code: 'UNENCRYPTED_BACKUP_FORBIDDEN_IN_PROD'
+    });
+  }
+  const shouldEncrypt = isProduction ? true : explicitEnableEncrypt;
 
   // Sanitizar estrictamente: nunca exportar hashes de PIN, retos de reseteo ni secretos
   const cleanSnapshot = sanitizeBackupSnapshot({
@@ -3669,7 +4035,8 @@ app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAd
       adminPasswordVersion: runtimeDB.settings?.adminPasswordVersion,
       adminResetChallenge: runtimeDB.settings?.adminResetChallenge,
       revokedApkDeviceIds: runtimeDB.settings?.revokedApkDeviceIds,
-      revokedBioRefreshJtis: runtimeDB.settings?.revokedBioRefreshJtis
+      revokedBioRefreshJtis: runtimeDB.settings?.revokedBioRefreshJtis,
+      biometricCredentials: runtimeDB.settings?.biometricCredentials
     };
 
     const candidateSettings = {
@@ -3734,18 +4101,35 @@ app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAd
           payments: prevPaymentsDocs || []
         };
 
-        // Fase 1 (Staging): Validar salud de escritura en colección temporal antes de tocar colecciones vivas
-        const stageId = `stage_${Date.now()}`;
-        await upsertMongoDoc('staging_restore', { id: stageId }, {
+        // Fase 1 (Staging real): Persistir y verificar el lote completo en staging_restore antes de modificar colecciones vivas
+        const stageId = `stage_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+        const stagedDoc = {
           id: stageId,
           createdAt: new Date().toISOString(),
           counts: {
+            packages: candidatePackages.length,
+            catalog: candidateCatalog.length,
             bookings: candidateBookings.length,
             payments: candidatePayments.length,
-            sessions: candidateSessions.length
-          }
-        }, { throwOnError: true });
+            sessions: candidateSessions.length,
+            reviews: candidateReviews.length
+          },
+          snapshotDigest: crypto
+            .createHash('sha256')
+            .update(JSON.stringify({
+              b: candidateBookings.map(x => x.id),
+              p: candidatePayments.map(x => x.id),
+              s: candidateSessions.map(x => x.token),
+              r: candidateReviews.map(x => x.id)
+            }))
+            .digest('hex')
+        };
+        await upsertMongoDoc('staging_restore', { id: stageId }, stagedDoc, { throwOnError: true });
+        const verifiedStagedDoc = await findMongoDoc('staging_restore', { id: stageId }, { throwOnError: true });
         await deleteMongoDoc('staging_restore', { id: stageId }, { throwOnError: true });
+        if (!verifiedStagedDoc || verifiedStagedDoc.snapshotDigest !== stagedDoc.snapshotDigest) {
+          throw new Error('La validación de integridad en staging_restore falló antes de aplicar la restauración.');
+        }
 
         // Fase 2 (Commit): Aplicar cambios sobre colecciones vivas
         // 1. Persistir configuración restaurada
@@ -3798,40 +4182,67 @@ app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAd
         mongoPersistMs = Math.max(1, Math.round(performance.now() - mongoStartMs));
         indexReport = await ensureMongoIndexes();
 
-        const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-        if (isProduction && indexReport && indexReport.verified === false) {
-          throw new Error('Fallo al verificar los índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
+        if (!indexReport || indexReport.verified !== true) {
+          throw new Error('Fallo al verificar los 19 índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
         }
       } catch (eMongo) {
         console.error('❌ [Restore] Fallo persistiendo respaldo en MongoDB Atlas, ejecutando rollback:', eMongo?.message || eMongo);
         let rolledBack = false;
+        const rollbackErrors = [];
         if (preRestoreMongoSnapshot) {
           try {
             const restoreCol = async (colName, docs, keyField = 'id') => {
               const keys = docs.map(d => d?.[keyField]).filter(Boolean);
-              await deleteMongoDocs(colName, keys.length > 0 ? { [keyField]: { $nin: keys } } : {});
+              const delRes = await deleteMongoDocs(
+                colName,
+                keys.length > 0 ? { [keyField]: { $nin: keys } } : {},
+                { throwOnError: true }
+              );
+              if (!delRes || delRes.acknowledged !== true) {
+                throw new Error(`Rollback deleteMany no reconocido en ${colName}`);
+              }
               for (const doc of docs) {
                 if (doc?.[keyField]) {
-                  await upsertMongoDoc(colName, { [keyField]: doc[keyField] }, doc);
+                  const ok = await upsertMongoDoc(
+                    colName,
+                    { [keyField]: doc[keyField] },
+                    doc,
+                    { throwOnError: true }
+                  );
+                  if (!ok) {
+                    throw new Error(`Rollback upsert falló en ${colName}:${doc[keyField]}`);
+                  }
                 }
               }
             };
-            await restoreCol('settings', preRestoreMongoSnapshot.settings, 'id');
-            await restoreCol('packages', preRestoreMongoSnapshot.packages, 'id');
-            await restoreCol('catalog', preRestoreMongoSnapshot.catalog, 'id');
-            await restoreCol('sessions', preRestoreMongoSnapshot.sessions, 'token');
-            await restoreCol('reviews', preRestoreMongoSnapshot.reviews, 'id');
-            await restoreCol('bookings', preRestoreMongoSnapshot.bookings, 'id');
-            await restoreCol('payments', preRestoreMongoSnapshot.payments, 'id');
-            rolledBack = true;
+            const collectionsToRollback = [
+              ['settings', preRestoreMongoSnapshot.settings, 'id'],
+              ['packages', preRestoreMongoSnapshot.packages, 'id'],
+              ['catalog', preRestoreMongoSnapshot.catalog, 'id'],
+              ['sessions', preRestoreMongoSnapshot.sessions, 'token'],
+              ['reviews', preRestoreMongoSnapshot.reviews, 'id'],
+              ['bookings', preRestoreMongoSnapshot.bookings, 'id'],
+              ['payments', preRestoreMongoSnapshot.payments, 'id']
+            ];
+            for (const [colName, docs, keyField] of collectionsToRollback) {
+              try {
+                await restoreCol(colName, docs, keyField);
+              } catch (colRollbackErr) {
+                rollbackErrors.push(`${colName}: ${colRollbackErr?.message || colRollbackErr}`);
+              }
+            }
+            rolledBack = rollbackErrors.length === 0;
           } catch (rollbackErr) {
+            rollbackErrors.push(rollbackErr?.message || String(rollbackErr));
+            rolledBack = false;
             console.error('⚠️ [Restore Rollback] Error durante reversión de emergencia:', rollbackErr?.message || rollbackErr);
           }
         }
         Object.assign(runtimeDB, preRestoreMemorySnapshot);
         return res.status(500).json({
           error: 'Fallo al restaurar el respaldo en la base de datos central. Se revirtieron los cambios para proteger la integridad.',
-          rolledBack
+          rolledBack,
+          ...(rollbackErrors.length > 0 ? { rollbackErrors } : {})
         });
       }
     }
@@ -4223,14 +4634,17 @@ app.post('/api/gallery/:token/review', async (req, res) => {
   if (cleanComment.length < 3) {
     return res.status(400).json({ error: 'El comentario de la reseña debe contener al menos 3 caracteres.' });
   }
-  const cleanName = sanitizeText(clientName || session.clientName || 'Cliente').slice(0, 80) || 'Cliente';
-  if (cleanName.length < 2) {
-    return res.status(400).json({ error: 'El nombre del cliente debe contener al menos 2 caracteres.' });
+  // En reseñas verificadas por galería privada, la identidad pública proviene SIEMPRE del titular real de la sesión
+  const sessionAuthorName = sanitizeText(session.clientName || 'Cliente Verificado').slice(0, 80) || 'Cliente Verificado';
+  const submittedAlias = clientName ? sanitizeText(String(clientName)).slice(0, 80) : '';
+  if (sessionAuthorName.length < 2) {
+    return res.status(400).json({ error: 'El nombre del titular de la sesión debe contener al menos 2 caracteres.' });
   }
 
   const newReview = {
     id: `rev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    clientName: cleanName,
+    clientName: sessionAuthorName,
+    ...(submittedAlias && submittedAlias !== sessionAuthorName ? { submittedAlias } : {}),
     rating: ratingInt,
     recommend: recommend !== false,
     comment: cleanComment,

@@ -144,19 +144,42 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   });
 
   // ----------------------------------------------------------------------------
-  // 2. FIDELIDAD DEL CLIENTE (solo un booleano y un porcentaje, con rate limit estricto)
+  // 2. FIDELIDAD DEL CLIENTE (protegido contra enumeración: exige teléfono + coincidencia de nombre o token, rate limit 3/15m)
   // ----------------------------------------------------------------------------
-  const loyaltyLimiter = createPublicRateLimiter({ max: 5, windowMs: 15 * 60 * 1000 });
+  const loyaltyLimiter = createPublicRateLimiter({ max: 3, windowMs: 15 * 60 * 1000 });
+  const normalizeNameTokens = (nameStr) =>
+    String(nameStr || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length >= 2);
+
   app.get('/api/public/loyalty', loyaltyLimiter, async (req, res) => {
     const phone = String(req.query.phone || '').replace(/\D/g, '');
-    if (phone.length < 10) {
+    const clientNameQuery = String(req.query.clientName || '').trim();
+    const receiptTokenQuery = String(req.query.receiptToken || '').trim();
+    const verifiedReceiptBookingId = receiptTokenQuery ? verifyReceiptToken(receiptTokenQuery) : null;
+    const queryNameTokens = normalizeNameTokens(clientNameQuery);
+
+    // Exigir al menos 10 dígitos y un factor de verificación adicional (nombre del titular o token firmado)
+    // para impedir que terceros enumeren si un teléfono ha sido cliente del estudio.
+    if (phone.length < 10 || (queryNameTokens.length === 0 && !verifiedReceiptBookingId)) {
       return res.json({ isLoyal: false, discountPercent: 0 });
     }
 
     const key = phone.slice(-8);
     const matches = (item) => {
       const other = String(item?.clientWhatsApp || '').replace(/\D/g, '');
-      return other.length >= 8 && (other.endsWith(key) || key.endsWith(other.slice(-8)));
+      const phoneMatches = other.length >= 8 && (other.endsWith(key) || key.endsWith(other.slice(-8)));
+      if (!phoneMatches) return false;
+      if (verifiedReceiptBookingId && String(item?.id) === String(verifiedReceiptBookingId)) {
+        return true;
+      }
+      const storedTokens = normalizeNameTokens(item?.clientName || item?.client_name || '');
+      if (storedTokens.length === 0 || queryNameTokens.length === 0) return false;
+      return queryNameTokens.some((qt) => storedTokens.includes(qt));
     };
 
     try {

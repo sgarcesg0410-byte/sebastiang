@@ -141,7 +141,7 @@ export function createAdminToken(extra = {}) {
   return `${body}.${signature}`;
 }
 
-const BIO_REFRESH_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 días
+export const BIO_REFRESH_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 días (rotación estricta)
 
 export function createBioRefreshToken(extra = {}) {
   const secret = getAdminAuthSecret();
@@ -616,7 +616,8 @@ const FORBIDDEN_BACKUP_SETTINGS_KEYS = new Set([
   'adminResetChallenge',
   'adminPasswordVersion',
   'revokedApkDeviceIds',
-  'revokedBioRefreshJtis'
+  'revokedBioRefreshJtis',
+  'biometricCredentials'
 ]);
 
 export function sanitizeBackupSnapshot(rawSnapshot = {}) {
@@ -845,6 +846,238 @@ export function isValidOfficialDomain(rawUrl) {
     return false;
   }
 }
+
+// ------------------------------------------------------------------------------
+// Verificación criptográfica de aserciones biométricas (ECDSA P-256 / WebAuthn / Android Keystore)
+// ------------------------------------------------------------------------------
+
+function decodeFlexibleBuffer(input) {
+  if (!input) return null;
+  if (Buffer.isBuffer(input)) return input;
+  if (input instanceof Uint8Array) return Buffer.from(input);
+  if (typeof input !== 'string') return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0 && trimmed.length >= 64) {
+    return Buffer.from(trimmed, 'hex');
+  }
+  const normalizedB64 = trimmed.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalizedB64 + '='.repeat((4 - (normalizedB64.length % 4)) % 4);
+  return Buffer.from(padded, 'base64');
+}
+
+export function isAllowedBiometricOrigin(origin, customAllowedOrigins = null) {
+  if (!origin || typeof origin !== 'string') return false;
+  const trimmed = origin.trim();
+  if (Array.isArray(customAllowedOrigins) && customAllowedOrigins.includes(trimmed)) {
+    return true;
+  }
+  if (trimmed === 'https://sebastiang.app' || trimmed === 'https://www.sebastiang.app') {
+    return true;
+  }
+  if (/^https:\/\/(foto-reservas|sebastiang)[a-z0-9-]*\.vercel\.app$/i.test(trimmed)) {
+    return true;
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isAllowedBiometricRpId(rpId, expectedRpId = null) {
+  if (!rpId || typeof rpId !== 'string') return false;
+  const normalized = rpId.trim().toLowerCase();
+  if (expectedRpId && normalized === String(expectedRpId).trim().toLowerCase()) {
+    return true;
+  }
+  if (normalized === 'sebastiang.app' || normalized === 'www.sebastiang.app') {
+    return true;
+  }
+  if (/^(foto-reservas|sebastiang)[a-z0-9-]*\.vercel\.app$/i.test(normalized)) {
+    return true;
+  }
+  if (process.env.NODE_ENV !== 'production' && (normalized === 'localhost' || normalized === '127.0.0.1')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Verifica criptográficamente en el servidor una firma ECDSA P-256 (WebCrypto / WebAuthn / Android Keystore)
+ * emitida sobre el reto de un solo uso (`expectedChallenge`), validando `origin`, `rpId` y clave pública SPKI.
+ */
+export function verifyBiometricAssertion({
+  credentialId,
+  publicKeySpki,
+  clientDataJSON,
+  authenticatorData = null,
+  signature,
+  expectedChallenge,
+  allowedOrigins = null,
+  expectedRpId = null
+} = {}) {
+  try {
+    if (!credentialId || typeof credentialId !== 'string') {
+      return { valid: false, reason: 'missing_credential_id' };
+    }
+    if (!publicKeySpki || typeof publicKeySpki !== 'string') {
+      return { valid: false, reason: 'missing_public_key' };
+    }
+    if (!signature || typeof signature !== 'string') {
+      return { valid: false, reason: 'missing_signature' };
+    }
+    if (!expectedChallenge || typeof expectedChallenge !== 'string') {
+      return { valid: false, reason: 'missing_expected_challenge' };
+    }
+
+    // 1. Decodificar y validar clientDataJSON
+    let rawClientDataStr = '';
+    if (typeof clientDataJSON === 'string') {
+      const trimmed = clientDataJSON.trim();
+      if (trimmed.startsWith('{')) {
+        rawClientDataStr = trimmed;
+      } else {
+        const decoded = decodeFlexibleBuffer(trimmed);
+        rawClientDataStr = decoded ? decoded.toString('utf8') : '';
+      }
+    } else if (clientDataJSON && typeof clientDataJSON === 'object') {
+      rawClientDataStr = JSON.stringify(clientDataJSON);
+    }
+
+    if (!rawClientDataStr) {
+      return { valid: false, reason: 'invalid_client_data_json' };
+    }
+
+    let clientData;
+    try {
+      clientData = JSON.parse(rawClientDataStr);
+    } catch {
+      return { valid: false, reason: 'malformed_client_data_json' };
+    }
+
+    const challengeInPayload = String(clientData?.challenge || '').trim();
+    const expectedB64Url = Buffer.from(expectedChallenge, 'utf8').toString('base64url');
+    if (challengeInPayload !== expectedChallenge && challengeInPayload !== expectedB64Url) {
+      return { valid: false, reason: 'challenge_mismatch' };
+    }
+
+    if (!isAllowedBiometricOrigin(clientData?.origin, allowedOrigins)) {
+      return { valid: false, reason: 'origin_not_allowed' };
+    }
+
+    const rpIdToCheck = clientData?.rpId || expectedRpId || 'sebastiang.app';
+    if (!isAllowedBiometricRpId(rpIdToCheck, expectedRpId)) {
+      return { valid: false, reason: 'rpid_not_allowed' };
+    }
+
+    // 2. Importar clave pública SPKI (ECDSA P-256)
+    let pubKeyObj;
+    if (publicKeySpki.includes('-----BEGIN')) {
+      pubKeyObj = crypto.createPublicKey(publicKeySpki);
+    } else {
+      const derBuf = decodeFlexibleBuffer(publicKeySpki);
+      if (!derBuf || derBuf.length < 32) {
+        return { valid: false, reason: 'invalid_spki_buffer' };
+      }
+      pubKeyObj = crypto.createPublicKey({ key: derBuf, format: 'der', type: 'spki' });
+    }
+
+    // 3. Verificar firma ECDSA SHA-256 (soporta IEEE-P1363 de WebCrypto y ASN.1 DER de Android Keystore / WebAuthn)
+    const sigBuf = decodeFlexibleBuffer(signature);
+    if (!sigBuf || sigBuf.length < 32) {
+      return { valid: false, reason: 'invalid_signature_buffer' };
+    }
+
+    const clientDataBuf = Buffer.from(rawClientDataStr, 'utf8');
+    const candidates = [clientDataBuf];
+
+    if (authenticatorData) {
+      const authDataBuf = decodeFlexibleBuffer(authenticatorData);
+      if (authDataBuf && authDataBuf.length > 0) {
+        const clientDataHash = crypto.createHash('sha256').update(clientDataBuf).digest();
+        candidates.unshift(Buffer.concat([authDataBuf, clientDataHash]));
+      }
+    }
+
+    let signatureValid = false;
+    for (const candidateBuf of candidates) {
+      try {
+        if (crypto.verify('sha256', candidateBuf, { key: pubKeyObj, dsaEncoding: 'ieee-p1363' }, sigBuf)) {
+          signatureValid = true;
+          break;
+        }
+      } catch {}
+      try {
+        if (crypto.verify('sha256', candidateBuf, { key: pubKeyObj, dsaEncoding: 'der' }, sigBuf)) {
+          signatureValid = true;
+          break;
+        }
+      } catch {}
+    }
+
+    if (!signatureValid) {
+      return { valid: false, reason: 'invalid_cryptographic_signature' };
+    }
+
+    return {
+      valid: true,
+      credentialId,
+      origin: clientData.origin,
+      rpId: rpIdToCheck
+    };
+  } catch (err) {
+    return { valid: false, reason: err?.message || 'verification_exception' };
+  }
+}
+
+/**
+ * Helper criptográfico para generar pares de claves ECDSA P-256 y firmar desafíos biométricos
+ * (utilizado en pruebas de integración y verificación de extremo a extremo).
+ */
+export function createBiometricTestAssertion({
+  challenge,
+  credentialId = 'bio-cred-test-01',
+  origin = 'https://sebastiang.app',
+  rpId = 'sebastiang.app',
+  type = 'webauthn.get',
+  privateKeyPem = null,
+  publicKeySpki = null
+} = {}) {
+  let privKey;
+  let spkiB64 = publicKeySpki;
+  let exportedPrivPem = privateKeyPem;
+
+  if (privateKeyPem) {
+    privKey = crypto.createPrivateKey(privateKeyPem);
+  } else {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    privKey = privateKey;
+    spkiB64 = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+    exportedPrivPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  }
+
+  const clientDataJSON = JSON.stringify({
+    type,
+    challenge,
+    origin,
+    rpId
+  });
+  const sigBuf = crypto.sign('sha256', Buffer.from(clientDataJSON, 'utf8'), {
+    key: privKey,
+    dsaEncoding: 'ieee-p1363'
+  });
+
+  return {
+    credentialId,
+    publicKeySpki: spkiB64,
+    privateKeyPem: exportedPrivPem,
+    clientDataJSON,
+    signature: sigBuf.toString('base64')
+  };
+}
+
 
 
 

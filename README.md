@@ -46,7 +46,7 @@
 |---|---|
 | **Frontend** | React 18, Vite 6, Tailwind CSS v4, Lucide React, Canvas Confetti |
 | **Backend & API** | Node.js, Express, Multer, Nodemailer, Sharp |
-| **Persistencia Cloud** | MongoDB Atlas (Fuente Única de Verdad, 17 índices BSON únicos/compuestos/TTL) |
+| **Persistencia Cloud** | MongoDB Atlas (Fuente Única de Verdad, 19 índices BSON únicos/compuestos/TTL verificados por `listIndexes()`) |
 | **Persistencia Local / Offline** | IndexedDB, LocalStorage, Runtime JSON DB |
 | **Documentos & Comprobantes** | jsPDF (vectorial), html2canvas, QRCode |
 | **Notificaciones** | OneSignal Web Push SDK, Web Push API, Service Workers, Audio Chimes |
@@ -60,7 +60,7 @@
 foto-reservas/
 ├── api/
 │   ├── db/
-│   │   └── mongo.js                # Conexión persistente, bloqueos distribuidos y 17 índices BSON (TTL nativo)
+│   │   └── mongo.js                # Conexión persistente, bloqueos atómicos por buckets y 19 índices BSON verificados (TTL nativo)
 │   ├── payments/
 │   │   └── gateway.js              # Pasarela Wompi con firma SHA-256 e idempotencia
 │   ├── emailService.js             # Envío de notificaciones por correo vía Nodemailer (Zoho SMTP)
@@ -203,7 +203,7 @@ Cuadros en retablo de madera con cantos biselados y película protectora UV list
 **MongoDB Atlas es la única fuente de verdad persistente (Single Source of Truth) del sistema.**
 (Los esquemas y scripts históricos de Supabase fueron retirados de producción y archivados como referencia bajo `docs/legacy/`).
 
-El backend administra automáticamente **17 índices BSON de alto rendimiento (+ 2 índices únicos de reseñas = 19 índices totales)** (gestionados en [`api/db/mongo.js`](api/db/mongo.js) tras ejecutar deduplicación preventiva):
+El backend administra y verifica automáticamente contra `listIndexes()` los **19 índices BSON de alto rendimiento** (gestionados en [`api/db/mongo.js`](api/db/mongo.js) tras ejecutar deduplicación preventiva):
 - **`bookings`** (3 índices): `id` (`unique: true`), `dateTime + status` (compuesto para detección de cruces de horario), `createdAt` (`-1`).
 - **`payments`** (4 índices): `id` (`unique: true`), `reference` (`unique: true, sparse: true`), `transactionId` (`unique: true, sparse: true`), `bookingId` (`1`).
 - **`sessions`** (3 índices): `id` (`unique: true`), `token` (`unique: true`, galerías privadas), `expiresAt` (`1`).

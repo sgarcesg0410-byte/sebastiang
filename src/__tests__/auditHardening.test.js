@@ -23,8 +23,15 @@ import {
   recordFinancialAuditLog,
   getTrustedClientIp,
   toMinimalApkFeed,
-  isValidOfficialDomain
+  isValidOfficialDomain,
+  verifyBiometricAssertion,
+  createBiometricTestAssertion
 } from '../../api/security.js';
+import {
+  EXPECTED_MONGO_INDEXES,
+  buildSlotLockBucketKeys,
+  ensureMongoIndexes
+} from '../../api/db/mongo.js';
 import app, {
   checkPublicWriteRateLimit,
   clearApiRateLimiters,
@@ -43,17 +50,18 @@ import { DEMO_DEFAULT_BOOKINGS, REAL_DEFAULT_BOOKINGS, DEFAULT_PIN_HASH } from '
 // Helper para invocar rutas de Express en memoria sin abrir puertos TCP
 async function invokeApp(method, url, { body = {}, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(url, 'http://localhost');
     const req = {
       method: method.toUpperCase(),
       url,
       originalUrl: url,
-      path: url.split('?')[0],
+      path: parsedUrl.pathname,
       headers: {
         'content-type': 'application/json',
         ...Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]))
       },
       body,
-      query: {},
+      query: Object.fromEntries(parsedUrl.searchParams.entries()),
       params: {},
       socket: { remoteAddress: '127.0.0.1' },
       get(name) {
@@ -1961,11 +1969,35 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(mainActivityCode).toContain('ALLOWED_ORIGIN_RULES');
     });
 
-    it('P1-2.2: bio_refresh usa clave HMAC separada, es rechazado en rutas admin (401), exige challenge obligatorio y rota/revoca el jti tras cada uso', async () => {
-      runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 1, revokedBioRefreshJtis: [] };
-      const bioToken = createBioRefreshToken({ pwd: 1 });
+    it('P1-2.2: bio_refresh usa clave HMAC separada, es rechazado en rutas admin (401), exige challenge + firma criptográfica ECDSA P-256 y rota/revoca el jti tras cada uso', async () => {
+      runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 1, revokedBioRefreshJtis: [], biometricCredentials: [] };
+      const adminToken = createAdminToken({ pwd: 1 });
 
-      // 1. bio_refresh jamás es aceptado por verifyAdminToken ni por requireAdminAuth
+      // 1. Enrolar credencial biométrica ECDSA P-256 real en el servidor
+      const enrollChal = (await invokeApp('POST', '/api/admin/auth/bio-challenge')).body.challenge;
+      const enrollAssertion = createBiometricTestAssertion({
+        challenge: enrollChal,
+        credentialId: 'cred-ecdsa-test-1',
+        type: 'webauthn.create'
+      });
+
+      const enrollRes = await invokeApp('POST', '/api/admin/auth/bio-enroll', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: {
+          credentialId: enrollAssertion.credentialId,
+          publicKeySpki: enrollAssertion.publicKeySpki,
+          deviceName: 'Dispositivo Test P-256',
+          provider: 'webauthn',
+          challenge: enrollChal,
+          clientDataJSON: enrollAssertion.clientDataJSON,
+          signature: enrollAssertion.signature
+        }
+      });
+      expect(enrollRes.status).toBe(201);
+      const bioToken = enrollRes.body.bioRefreshToken;
+      expect(bioToken).toBeDefined();
+
+      // 2. bio_refresh jamás es aceptado por verifyAdminToken ni por requireAdminAuth
       expect(verifyAdminToken(bioToken)).toBeNull();
       expect(verifyBioRefreshToken(bioToken)?.type).toBe('bio_refresh');
 
@@ -1974,16 +2006,36 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       });
       expect(directAdminAttempt.status).toBe(401);
 
-      // 2. Sin challenge, /api/admin/auth/bio-refresh rechaza con 401
+      // 3. Sin challenge o sin biometricProof criptográfico, /api/admin/auth/bio-refresh rechaza con 401
       const noChallengeRes = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
         body: { bioRefreshToken: bioToken }
       });
       expect(noChallengeRes.status).toBe(401);
 
-      // 3. Con challenge válido, emite nuevo access token + bioRefreshToken rotado y revoca el jti anterior
+      const chalMissingProof = (await invokeApp('POST', '/api/admin/auth/bio-challenge')).body.challenge;
+      const missingProofRes = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
+        body: { bioRefreshToken: bioToken, challenge: chalMissingProof }
+      });
+      expect(missingProofRes.status).toBe(401);
+
+      // 4. Con challenge válido + firma ECDSA P-256 válida, emite nuevo access token + bioRefreshToken rotado y revoca el jti anterior
       const chal1 = (await invokeApp('POST', '/api/admin/auth/bio-challenge')).body.challenge;
+      const validProof = createBiometricTestAssertion({
+        challenge: chal1,
+        credentialId: enrollAssertion.credentialId,
+        privateKeyPem: enrollAssertion.privateKeyPem,
+        type: 'webauthn.get'
+      });
       const refreshOk = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
-        body: { bioRefreshToken: bioToken, challenge: chal1 }
+        body: {
+          bioRefreshToken: bioToken,
+          challenge: chal1,
+          biometricProof: {
+            credentialId: validProof.credentialId,
+            clientDataJSON: validProof.clientDataJSON,
+            signature: validProof.signature
+          }
+        }
       });
       expect(refreshOk.status).toBe(200);
       expect(refreshOk.body.token).toBeDefined();
@@ -1991,19 +2043,34 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(refreshOk.body.bioRefreshToken).not.toBe(bioToken);
       expect(verifyAdminToken(refreshOk.body.token)?.type).toBe('admin_access');
 
-      // 4. Intentar reutilizar el bioToken antiguo con un nuevo challenge válido falla con 401 (jti revocado)
+      // 5. Intentar reutilizar el bioToken antiguo con un nuevo challenge y firma válida falla con 401 (jti revocado)
       const chal2 = (await invokeApp('POST', '/api/admin/auth/bio-challenge')).body.challenge;
+      const replayProof = createBiometricTestAssertion({
+        challenge: chal2,
+        credentialId: enrollAssertion.credentialId,
+        privateKeyPem: enrollAssertion.privateKeyPem,
+        type: 'webauthn.get'
+      });
       const reuseOldBioToken = await invokeApp('POST', '/api/admin/auth/bio-refresh', {
-        body: { bioRefreshToken: bioToken, challenge: chal2 }
+        body: {
+          bioRefreshToken: bioToken,
+          challenge: chal2,
+          biometricProof: {
+            credentialId: replayProof.credentialId,
+            clientDataJSON: replayProof.clientDataJSON,
+            signature: replayProof.signature
+          }
+        }
       });
       expect(reuseOldBioToken.status).toBe(401);
     });
 
-    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 17 índices BSON (unicidad, compuesto dateTime+status, expiresAt y TTL)', () => {
+    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 19 índices BSON (unicidad, compuesto dateTime+status, expiresAt, reseñas y TTL)', () => {
       const rootDir = process.cwd();
       const mongoJs = fs.readFileSync(path.join(rootDir, 'api/db/mongo.js'), 'utf8');
       const readmeMd = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
 
+      expect(EXPECTED_MONGO_INDEXES.length).toBe(19);
       expect(mongoJs).toContain("name: 'uniq_bookings_id'");
       expect(mongoJs).toContain("name: 'idx_bookings_datetime_status'");
       expect(mongoJs).toContain("name: 'uniq_payments_id'");
@@ -2012,11 +2079,13 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(mongoJs).toContain("name: 'uniq_sessions_id'");
       expect(mongoJs).toContain("name: 'uniq_sessions_token'");
       expect(mongoJs).toContain("name: 'idx_sessions_expires_at'");
+      expect(mongoJs).toContain("name: 'uniq_reviews_id'");
+      expect(mongoJs).toContain("name: 'uniq_reviews_gallery_token'");
       expect(mongoJs).toContain("name: 'uniq_audit_logs_id'");
       expect(mongoJs).toContain("name: 'idx_audit_logs_ttl_90d'");
       expect(mongoJs).toContain("name: 'uniq_slot_locks_key'");
       expect(mongoJs).toContain("name: 'uniq_rate_limits_key'");
-      expect(readmeMd).toContain('17 índices BSON');
+      expect(readmeMd).toContain('19 índices BSON');
     });
 
     it('P1-2.5: GET /api/admin/backup cifra por defecto en producción (AES-256-GCM)', async () => {
@@ -2293,6 +2362,269 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       // 5. Índice único por galleryToken en MongoDB
       expect(mongoCode).toContain("name: 'uniq_reviews_gallery_token'");
       expect(mongoCode).toContain("name: 'uniq_reviews_id'");
+    });
+  });
+
+  describe('13. Endurecimiento Integral P1 (2.1–2.5) y Sección 3 (3.1–3.9) de la Auditoría Técnica', () => {
+    it('P1-2.1: buildSlotLockBucketKeys discretiza intervalos de 90 min en 6 buckets de 15 min para colisión atómica de horarios solapados (ej. 10:00 vs 10:30)', () => {
+      // Cliente A: 10:00 a. m. (600 min -> [600, 690))
+      const bucketsA = buildSlotLockBucketKeys('20/12/2026', 600, 690);
+      // Cliente B: 10:30 a. m. (630 min -> [630, 720))
+      const bucketsB = buildSlotLockBucketKeys('20/12/2026', 630, 720);
+
+      expect(bucketsA.length).toBe(6);
+      expect(bucketsB.length).toBe(6);
+
+      // Deben compartir exactamente 4 buckets atómicos (630, 645, 660, 675) que colisionan en uniq_slot_locks_key
+      const intersection = bucketsA.filter(k => bucketsB.includes(k));
+      expect(intersection).toEqual([
+        'slot_bucket_20/12/2026_630',
+        'slot_bucket_20/12/2026_645',
+        'slot_bucket_20/12/2026_660',
+        'slot_bucket_20/12/2026_675'
+      ]);
+    });
+
+    it('P1-2.2 & 3.3: ensureMongoIndexes verifica realmente listIndexes() para los 19 índices y falla cerrado si un índice no existe o carece de unique/TTL', async () => {
+      // Simulacro de base MongoDB donde un índice crítico (uniq_payments_reference) perdió unique: true
+      const fakeCollections = new Map();
+      for (const item of EXPECTED_MONGO_INDEXES) {
+        if (!fakeCollections.has(item.col)) {
+          fakeCollections.set(item.col, []);
+        }
+        fakeCollections.get(item.col).push({
+          name: item.opts.name,
+          key: item.spec,
+          unique: item.opts.name === 'uniq_payments_reference' ? false : Boolean(item.opts.unique),
+          sparse: Boolean(item.opts.sparse),
+          ...(typeof item.opts.expireAfterSeconds === 'number'
+            ? { expireAfterSeconds: item.opts.expireAfterSeconds }
+            : {})
+        });
+      }
+
+      const buildMockDb = () => ({
+        collection(colName) {
+          return {
+            find: () => ({
+              sort: () => ({ toArray: async () => [] }),
+              project: () => ({ toArray: async () => [] })
+            }),
+            deleteMany: async () => ({ deletedCount: 0 }),
+            updateMany: async () => ({ modifiedCount: 0 }),
+            createIndex: async () => 'ok',
+            listIndexes: () => ({
+              toArray: async () => fakeCollections.get(colName) || []
+            })
+          };
+        }
+      });
+
+      const unverifiedReport = await ensureMongoIndexes(buildMockDb());
+      expect(unverifiedReport.ok).toBe(false);
+      expect(unverifiedReport.verified).toBe(false);
+      expect(unverifiedReport.missingOrInvalid.some(f => f.index === 'payments:uniq_payments_reference')).toBe(true);
+
+      // Ahora corregimos uniq_payments_reference con unique: true -> debe verificar los 19 índices
+      const paymentsIdxs = fakeCollections.get('payments');
+      const targetIdx = paymentsIdxs.find(i => i.name === 'uniq_payments_reference');
+      targetIdx.unique = true;
+
+      const verifiedReport = await ensureMongoIndexes(buildMockDb());
+      expect(verifiedReport.ok).toBe(true);
+      expect(verifiedReport.verified).toBe(true);
+      expect(verifiedReport.verifiedCount).toBe(19);
+      expect(verifiedReport.expectedCount).toBe(19);
+      expect(verifiedReport.missingOrInvalid.length).toBe(0);
+    });
+
+    it('P1-2.3: verifyBiometricAssertion rechaza firmas falsificadas, challenges distintos o orígenes no permitidos', () => {
+      const challenge = 'chal-test-ecdsa-999';
+      const validAssertion = createBiometricTestAssertion({
+        challenge,
+        credentialId: 'cred-1',
+        origin: 'https://sebastiang.app',
+        rpId: 'sebastiang.app',
+        type: 'webauthn.get'
+      });
+
+      // 1. Firma auténtica con la clave pública correcta -> valid: true
+      const okResult = verifyBiometricAssertion({
+        credentialId: 'cred-1',
+        publicKeySpki: validAssertion.publicKeySpki,
+        expectedChallenge: challenge,
+        clientDataJSON: validAssertion.clientDataJSON,
+        signature: validAssertion.signature
+      });
+      expect(okResult.valid).toBe(true);
+
+      // 2. Challenge distinto -> rechazado
+      const wrongChal = verifyBiometricAssertion({
+        credentialId: 'cred-1',
+        publicKeySpki: validAssertion.publicKeySpki,
+        expectedChallenge: 'otro-challenge-distinto',
+        clientDataJSON: validAssertion.clientDataJSON,
+        signature: validAssertion.signature
+      });
+      expect(wrongChal.valid).toBe(false);
+      expect(wrongChal.reason).toBe('challenge_mismatch');
+
+      // 3. Firma generada por otra llave privada atacante -> rechazado
+      const attackerAssertion = createBiometricTestAssertion({
+        challenge,
+        credentialId: 'cred-1',
+        origin: 'https://sebastiang.app',
+        rpId: 'sebastiang.app',
+        type: 'webauthn.get'
+      });
+      const forgedSig = verifyBiometricAssertion({
+        credentialId: 'cred-1',
+        publicKeySpki: validAssertion.publicKeySpki,
+        expectedChallenge: challenge,
+        clientDataJSON: validAssertion.clientDataJSON,
+        signature: attackerAssertion.signature
+      });
+      expect(forgedSig.valid).toBe(false);
+      expect(forgedSig.reason).toBe('invalid_cryptographic_signature');
+    });
+
+    it('P1-2.4: POST /api/payments/checkout impide crear dos checkouts pending_gateway simultáneos para el mismo saldo/abono (409 DUPLICATE_PENDING_CHECKOUT) y el webhook detecta sobrepagos', async () => {
+      const prevPub = process.env.WOMPI_PUBLIC_KEY;
+      const prevInt = process.env.WOMPI_INTEGRITY_SECRET;
+      const prevEvt = process.env.WOMPI_EVENTS_SECRET;
+      try {
+        process.env.WOMPI_PUBLIC_KEY = 'pub_test_checkout_lock';
+        process.env.WOMPI_INTEGRITY_SECRET = 'test_integrity_checkout_lock';
+        process.env.WOMPI_EVENTS_SECRET = 'test_events_checkout_lock';
+
+        const bookingId = 'book-dup-checkout-' + Date.now();
+        runtimeDB.bookings = [{
+          id: bookingId,
+          clientName: 'Cliente Checkout Único',
+          clientWhatsApp: '+573109998877',
+          totalPrice: 75000,
+          status: 'pending'
+        }];
+        runtimeDB.payments = [];
+
+        // Primer checkout -> 201 Created y crea registro pending_gateway
+        const firstCheckout = await invokeApp('POST', '/api/payments/checkout', {
+          body: {
+            bookingId,
+            concept: 'booking_deposit',
+            amount: 20000,
+            clientName: 'Cliente Checkout Único',
+            clientWhatsApp: '+573109998877'
+          }
+        });
+        expect(firstCheckout.status).toBe(201);
+        expect(firstCheckout.body.reference).toBeDefined();
+
+        // Segundo checkout inmediato para el mismo concepto y reserva -> 409 DUPLICATE_PENDING_CHECKOUT
+        const secondCheckout = await invokeApp('POST', '/api/payments/checkout', {
+          body: {
+            bookingId,
+            concept: 'booking_deposit',
+            amount: 20000,
+            clientName: 'Cliente Checkout Único',
+            clientWhatsApp: '+573109998877'
+          }
+        });
+        expect(secondCheckout.status).toBe(409);
+        expect(secondCheckout.body.code).toBe('DUPLICATE_PENDING_CHECKOUT');
+      } finally {
+        if (prevPub !== undefined) process.env.WOMPI_PUBLIC_KEY = prevPub;
+        else delete process.env.WOMPI_PUBLIC_KEY;
+        if (prevInt !== undefined) process.env.WOMPI_INTEGRITY_SECRET = prevInt;
+        else delete process.env.WOMPI_INTEGRITY_SECRET;
+        if (prevEvt !== undefined) process.env.WOMPI_EVENTS_SECRET = prevEvt;
+        else delete process.env.WOMPI_EVENTS_SECRET;
+      }
+    });
+
+    it('P1-2.5 & 3.1: POST /api/gallery/:token/review vincula clientName al titular real de la sesión y api.js no fabrica reseñas verificadas locales si el servidor falla', async () => {
+      runtimeDB.reviews = [];
+      const token = 'gal-author-bind-' + Date.now();
+      runtimeDB.sessions = [{
+        id: 'sess-author-1',
+        token,
+        clientName: 'Valeria Titular Real',
+        status: 'delivered'
+      }];
+
+      // Intento de enviar un nombre falsificado distinto al de la galería
+      const res = await invokeApp('POST', `/api/gallery/${token}/review`, {
+        body: {
+          clientName: 'Nombre Inventado Externo',
+          rating: 5,
+          recommend: true,
+          comment: 'Excelente calidad y atención durante toda la sesión'
+        }
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.review.clientName).toBe('Valeria Titular Real');
+      expect(res.body.review.submittedAlias).toBe('Nombre Inventado Externo');
+
+      const apiClientCode = fs.readFileSync(path.join(process.cwd(), 'src/services/api.js'), 'utf8');
+      expect(apiClientCode).toContain('El servidor no confirmó la reseña de la galería.');
+      expect(apiClientCode).toContain('No se pudo actualizar el estado de la reseña en el servidor.');
+    });
+
+    it('Sección 3.4, 3.6, 3.7, 3.8 y 3.9: backup sin cifrar prohibido en prod (400), Electron restringe file:// a dist/, CSP sin unsafe-inline en script-src y fidelidad exige teléfono + nombre', async () => {
+      // 3.4: GET /api/admin/backup?encrypt=0 en producción devuelve 400
+      const prevEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'production';
+        runtimeDB.settings = { ...runtimeDB.settings, adminPasswordVersion: 1 };
+        const adminToken = createAdminToken({ pwd: 1 });
+        const unencRes = await invokeApp('GET', '/api/admin/backup?encrypt=0', {
+          headers: { Authorization: `Bearer ${adminToken}` }
+        });
+        expect(unencRes.status).toBe(400);
+        expect(unencRes.body.code).toBe('UNENCRYPTED_BACKUP_FORBIDDEN_IN_PROD');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+      }
+
+      // 3.6: Electron restringe file: a dist/
+      const electronMain = fs.readFileSync(path.join(process.cwd(), 'electron/main.cjs'), 'utf8');
+      expect(electronMain).toContain('isAllowedLocalDistFileUrl');
+      expect(electronMain).toContain("path.resolve(__dirname, '..', 'dist')");
+
+      // 3.7: AndroidNotificationBridge no expone storeDeviceToken ni clearStoredDeviceToken en @JavascriptInterface
+      const bridgeKt = fs.readFileSync(
+        path.join(process.cwd(), 'android/app/src/main/java/app/sebastiang/studio/bridge/AndroidNotificationBridge.kt'),
+        'utf8'
+      );
+      expect(bridgeKt).toContain('private fun storeDeviceTokenInternal');
+      expect(bridgeKt).toContain('private fun clearStoredDeviceTokenInternal');
+      expect(bridgeKt).toContain('BiometricPrompt');
+
+      // 3.8: CSP sin 'unsafe-inline' en script-src
+      const vercelJson = fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8');
+      expect(vercelJson).toContain("script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co;");
+      expect(vercelJson).not.toContain("script-src 'self' 'unsafe-inline'");
+
+      // 3.9: GET /api/public/loyalty no revela fidelidad solo con el teléfono sin coincidencia de nombre
+      runtimeDB.bookings = [{
+        id: 'b-loyal-test',
+        clientName: 'Mariana Gómez',
+        clientWhatsApp: '+573158887766',
+        status: 'completed'
+      }];
+
+      const blindPhoneAttempt = await invokeApp('GET', '/api/public/loyalty?phone=573158887766');
+      expect(blindPhoneAttempt.status).toBe(200);
+      expect(blindPhoneAttempt.body.isLoyal).toBe(false);
+
+      const wrongNameAttempt = await invokeApp('GET', '/api/public/loyalty?phone=573158887766&clientName=Pedro');
+      expect(wrongNameAttempt.status).toBe(200);
+      expect(wrongNameAttempt.body.isLoyal).toBe(false);
+
+      const matchingNameAttempt = await invokeApp('GET', '/api/public/loyalty?phone=573158887766&clientName=Mariana%20Gomez');
+      expect(matchingNameAttempt.status).toBe(200);
+      expect(matchingNameAttempt.body.isLoyal).toBe(true);
+      expect(matchingNameAttempt.body.discountPercent).toBe(15);
     });
   });
 });

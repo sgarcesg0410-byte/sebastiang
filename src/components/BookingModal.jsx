@@ -195,22 +195,19 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   };
 
-  // Detección automática de cliente frecuente para fidelización
+  // Detección automática de cliente frecuente para fidelización (exige teléfono + nombre)
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (formData.clientWhatsApp && formData.clientWhatsApp.replace(/\D/g, '').length >= 7) {
-        const res = await checkClientLoyalty(formData.clientWhatsApp);
+      if (formData.clientWhatsApp && formData.clientWhatsApp.replace(/\D/g, '').length >= 10 && formData.clientName && formData.clientName.trim().length >= 2) {
+        const res = await checkClientLoyalty(formData.clientWhatsApp, formData.clientName);
         setLoyalInfo(res);
-        if (res.isLoyal && !formData.clientName && res.clientName && res.clientName !== 'Cliente VIP') {
-          setFormData(prev => ({ ...prev, clientName: res.clientName }));
-        }
       } else {
         setLoyalInfo({ isLoyal: false, discountPercent: 0, clientName: '' });
       }
     }, 400);
 
     return () => clearTimeout(timer);
-  }, [formData.clientWhatsApp]);
+  }, [formData.clientWhatsApp, formData.clientName]);
 
   // Detección y validación de código de referido en tiempo real
   useEffect(() => {

@@ -1,14 +1,16 @@
 const { app, BrowserWindow, Menu, shell, ipcMain, Notification } = require('electron');
 const path = require('path');
+const { fileURLToPath } = require('url');
 
 let mainWindow;
 
 // ------------------------------------------------------------------------------
-// VALIDACIÓN DE ENLACES EXTERNOS
+// VALIDACIÓN DE ENLACES EXTERNOS Y RUTAS FILE:// LOCALES
 // ------------------------------------------------------------------------------
 // Antes se usaba `!url.includes('sebastiang.app')`, que se burla con un dominio
 // como sebastiang.app.evil.com. Ahora se parsea la URL y se exige https + host
-// de una lista blanca. Nunca se abren esquemas peligrosos (file:, ms-*, smb:...).
+// de una lista blanca. Para `file:`, se restringe exclusivamente al directorio
+// empaquetado `dist/` de la aplicación.
 // ------------------------------------------------------------------------------
 const APP_HOSTS = ['sebastiang.app', 'www.sebastiang.app'];
 const EXTERNAL_HOSTS = [
@@ -17,12 +19,25 @@ const EXTERNAL_HOSTS = [
   'instagram.com', 'www.instagram.com',
   'facebook.com', 'www.facebook.com'
 ];
+const LOCAL_DIST_ROOT = path.resolve(__dirname, '..', 'dist');
 
 function parseUrl(rawUrl) {
   try {
     return new URL(String(rawUrl || ''));
   } catch {
     return null;
+  }
+}
+
+function isAllowedLocalDistFileUrl(parsedUrl) {
+  if (!parsedUrl || parsedUrl.protocol !== 'file:') return false;
+  try {
+    const resolvedTarget = path.resolve(fileURLToPath(parsedUrl));
+    const normRoot = process.platform === 'win32' ? LOCAL_DIST_ROOT.toLowerCase() : LOCAL_DIST_ROOT;
+    const normTarget = process.platform === 'win32' ? resolvedTarget.toLowerCase() : resolvedTarget;
+    return normTarget === normRoot || normTarget.startsWith(normRoot + path.sep);
+  } catch {
+    return false;
   }
 }
 
@@ -37,7 +52,10 @@ function isSafeExternalUrl(rawUrl) {
 function isInternalUrl(rawUrl) {
   const parsed = parseUrl(rawUrl);
   if (!parsed) return false;
-  if (parsed.protocol === 'file:') return true;
+  if (parsed.protocol === 'file:') {
+    return isAllowedLocalDistFileUrl(parsed);
+  }
+  if (parsed.protocol !== 'https:') return false;
   return APP_HOSTS.includes(parsed.hostname.toLowerCase());
 }
 
