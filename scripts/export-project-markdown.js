@@ -6,13 +6,17 @@ const outputFile = path.join(projectRoot, 'PROJECT_SOURCE_CODE.md');
 
 const includedExtensions = new Set([
   '.js', '.jsx', '.cjs', '.mjs', '.sql', '.html', '.css', '.json',
-  '.kt', '.kts', '.xml', '.md', '.yml', '.yaml'
+  '.kt', '.kts', '.xml', '.md', '.yml', '.yaml', '.pro', '.properties',
+  '.txt', '.ps1', '.bat', '.example', '.gitignore', '.htaccess'
+]);
+const includedExactNames = new Set([
+  '.env.example', '.gitignore', '.htaccess'
 ]);
 const excludedDirectories = new Set([
-  'node_modules', 'dist', 'release', '.git', 'scratch_photos', '.gemini', 'coverage', '.system_generated', 'legacy'
+  'node_modules', 'dist', 'release', '.git', 'scratch_photos', 'scratch', '.gemini', 'coverage', '.system_generated', 'legacy'
 ]);
 const excludedFiles = new Set([
-  'package-lock.json', 'PROJECT_SOURCE_CODE.md', '.env', '.env.local', '.env.production', 'db.json'
+  'package-lock.json', 'PROJECT_SOURCE_CODE.md', '.env', '.env.local', '.env.production'
 ]);
 
 function getFiles(dir) {
@@ -28,7 +32,7 @@ function getFiles(dir) {
       }
     } else {
       const ext = path.extname(item.name).toLowerCase();
-      if (includedExtensions.has(ext) && !excludedFiles.has(item.name)) {
+      if ((includedExtensions.has(ext) || includedExactNames.has(item.name)) && !excludedFiles.has(item.name)) {
         results.push(path.join(dir, item.name));
       }
     }
