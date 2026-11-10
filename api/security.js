@@ -9,6 +9,7 @@
 // ==============================================================================
 
 import crypto from 'crypto';
+import net from 'net';
 
 /** Secreto de sesión con soporte de rotación por keyring (`ADMIN_AUTH_SECRET_KEYRING`, `ADMIN_AUTH_SECRET_V1..V4`, `ADMIN_AUTH_SECRET`).
  *  NUNCA cae a un secreto efímero aleatorio en memoria (Hallazgos #8, P2-15, P2-21 y M5).
@@ -74,9 +75,15 @@ export function resolveAdminAuthKeyring() {
     }
   }
 
+  // ADVERTENCIA DE SEGURIDAD: Esta semilla determinista existe EXCLUSIVAMENTE para
+  // ejecución de suites de prueba unitarias locales (Vitest con NODE_ENV === 'test')
+  // cuando ninguna variable ADMIN_AUTH_SECRET* fue definida. Jamás debe llegar a un
+  // entorno real ni puede activarse si VERCEL o CI_PRODUCTION están presentes.
   if (
     Object.keys(ring).length === 0 &&
     process.env.NODE_ENV === 'test' &&
+    !process.env.VERCEL &&
+    !process.env.CI_PRODUCTION &&
     rawPrimary === undefined
   ) {
     ring.v1 = 'test-only-deterministic-secret-not-used-outside-vitest-2026';
@@ -614,18 +621,53 @@ export function isValidGalleryTokenFormat(token) {
 }
 
 // ------------------------------------------------------------------------------
-// Obtención de IP confiable (anti-spoofing de X-Forwarded-For)
+// Obtención de IP confiable (anti-spoofing de X-Forwarded-For + validación net.isIP)
 // ------------------------------------------------------------------------------
 
+/**
+ * Normaliza una cadena candidata de dirección IP (IPv4 o IPv6), eliminando
+ * prefijos IPv4-mapped (`::ffff:`), zonas IPv6 (`%eth0`) o puertos adjuntos,
+ * y verifica estrictamente su validez sintáctica mediante `net.isIP()`.
+ * Devuelve la IP normalizada o `null` si contiene basura o caracteres inválidos.
+ */
+export function normalizeAndValidateIp(rawCandidate) {
+  if (!rawCandidate || typeof rawCandidate !== 'string') return null;
+  let candidate = rawCandidate.trim();
+  if (!candidate || candidate.length > 64) return null;
+
+  // Extraer IP entre corchetes con puerto: [2001:db8::1]:443 -> 2001:db8::1
+  const bracketMatch = candidate.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (bracketMatch) {
+    candidate = bracketMatch[1];
+  }
+
+  // Quitar prefijo IPv4-mapped IPv6 (::ffff:192.0.2.1 -> 192.0.2.1)
+  candidate = candidate.replace(/^::ffff:/i, '');
+
+  // Quitar identificador de zona IPv6 (fe80::1%lo0 -> fe80::1)
+  const zoneIdx = candidate.indexOf('%');
+  if (zoneIdx !== -1) {
+    candidate = candidate.slice(0, zoneIdx);
+  }
+
+  // Si es IPv4 con puerto (ej. 203.0.113.5:54321), separar el puerto
+  if (candidate.includes('.') && /^\d+\.\d+\.\d+\.\d+:\d+$/.test(candidate)) {
+    candidate = candidate.split(':')[0];
+  }
+
+  return net.isIP(candidate) !== 0 ? candidate : null;
+}
+
 export function getTrustedClientIp(req) {
-  if (!req) return 'unknown';
+  if (!req) return '0.0.0.0';
 
   // 1. En Vercel Edge/Serverless, x-vercel-forwarded-for y x-real-ip son inyectados por la plataforma
   if (process.env.VERCEL === '1') {
-    const vercelIp = String(req.headers?.['x-vercel-forwarded-for'] || req.headers?.['x-real-ip'] || '')
+    const rawVercelIp = String(req.headers?.['x-vercel-forwarded-for'] || req.headers?.['x-real-ip'] || '')
       .split(',')[0]
       .trim();
-    if (vercelIp) return vercelIp;
+    const validVercelIp = normalizeAndValidateIp(rawVercelIp);
+    if (validVercelIp) return validVercelIp;
   }
 
   // 2. Solo si TRUST_PROXY=true explícito se acepta el último salto añadido por el proxy reverso confiable
@@ -633,14 +675,18 @@ export function getTrustedClientIp(req) {
     const xff = String(req.headers?.['x-forwarded-for'] || '');
     if (xff) {
       const hops = xff.split(',').map((s) => s.trim()).filter(Boolean);
-      if (hops.length > 0) return hops[hops.length - 1];
+      for (let i = hops.length - 1; i >= 0; i -= 1) {
+        const validHop = normalizeAndValidateIp(hops[i]);
+        if (validHop) return validHop;
+      }
     }
-    if (req.ip) return String(req.ip).trim();
+    const validReqIp = normalizeAndValidateIp(String(req.ip || ''));
+    if (validReqIp) return validReqIp;
   }
 
   // 3. Por defecto se ignora X-Forwarded-For enviado por el cliente para impedir falsificación de IP
   const rawAddr = String(req.socket?.remoteAddress || req.ip || '127.0.0.1').trim();
-  return rawAddr.replace(/^::ffff:/i, '') || '127.0.0.1';
+  return normalizeAndValidateIp(rawAddr) || '127.0.0.1';
 }
 
 // ------------------------------------------------------------------------------
@@ -926,10 +972,13 @@ export function resolveBackupKeyring(keyringOverride = null) {
     }
   }
 
-  // Solo en entorno de tests unitarios (si ninguna variable BACKUP_ENCRYPTION_KEY* fue definida y no fue vaciada explícitamente con '')
+  // ADVERTENCIA DE SEGURIDAD: Clave determinista exclusiva para pruebas unitarias locales (Vitest).
+  // Jamás debe emplearse fuera de NODE_ENV === 'test' ni cuando VERCEL o CI_PRODUCTION estén activos.
   if (
     Object.keys(ring).length === 0 &&
     process.env.NODE_ENV === 'test' &&
+    !process.env.VERCEL &&
+    !process.env.CI_PRODUCTION &&
     rawBackupKey === undefined
   ) {
     ring.v1 = 'test-only-dedicated-backup-encryption-key-2026-independent';

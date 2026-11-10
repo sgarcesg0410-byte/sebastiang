@@ -3131,6 +3131,51 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(isValidGalleryTokenFormat('gal-token-valido-123456')).toBe(true);
       expect(DEFAULT_WOMPI_API_TIMEOUT_MS).toBe(4500);
       expect(typeof structuredLog).toBe('function');
+
+      // Toggle hidden en POST /api/admin/reviews y PATCH /api/admin/reviews/:id:
+      // oculta reseñas en GET /api/reviews pero las mantiene visibles en GET /api/admin/reviews
+      const adminToken = createAdminToken({ pwd: runtimeDB.settings?.adminPasswordVersion || 1 });
+      const createdRevRes = await invokeApp('POST', '/api/admin/reviews', {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: {
+          clientName: 'Laura Gómez',
+          rating: 5,
+          recommend: true,
+          comment: 'Sesión impecable y trato maravilloso.',
+          verified: true,
+          hidden: false
+        }
+      });
+      expect(createdRevRes.status).toBe(201);
+      const revId = createdRevRes.body.review.id;
+      expect(createdRevRes.body.review.hidden).toBe(false);
+
+      // Ocultar con PATCH { hidden: true }
+      const hideRes = await invokeApp('PATCH', `/api/admin/reviews/${revId}`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: { hidden: true }
+      });
+      expect(hideRes.status).toBe(200);
+      expect(hideRes.body.review.hidden).toBe(true);
+      expect(hideRes.body.review.verified).toBe(true);
+
+      // No aparece en GET /api/reviews público, pero sí en GET /api/admin/reviews
+      const pubReviewsHidden = await invokeApp('GET', '/api/reviews');
+      expect(pubReviewsHidden.body.some(r => r.id === revId)).toBe(false);
+      const admReviewsHidden = await invokeApp('GET', '/api/admin/reviews', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(admReviewsHidden.body.some(r => r.id === revId && r.hidden === true)).toBe(true);
+
+      // Volver a mostrar con PATCH { hidden: false }
+      const unhideRes = await invokeApp('PATCH', `/api/admin/reviews/${revId}`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        body: { hidden: false }
+      });
+      expect(unhideRes.status).toBe(200);
+      expect(unhideRes.body.review.hidden).toBe(false);
+      const pubReviewsVisible = await invokeApp('GET', '/api/reviews');
+      expect(pubReviewsVisible.body.some(r => r.id === revId)).toBe(true);
     });
   });
 });

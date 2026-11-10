@@ -54,3 +54,26 @@ jobs:
             }
             console.log('✓ SAST security gate passed');
           "
+
+  codeql-sast:
+    name: CodeQL Deep Taint-Tracking SAST
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Initialize CodeQL (javascript-typescript)
+        uses: github/codeql-action/init@f1f6e5f6af878fb37dc8fa8febc4bd5f4ed0b7a7 # v3.28.0
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+
+      - name: Perform CodeQL Taint-Tracking Analysis
+        uses: github/codeql-action/analyze@f1f6e5f6af878fb37dc8fa8febc4bd5f4ed0b7a7 # v3.28.0
+        with:
+          category: "/language:javascript-typescript"

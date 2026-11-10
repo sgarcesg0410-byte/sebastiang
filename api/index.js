@@ -4761,7 +4761,7 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
 });
 
 // ==============================================================================
-// RESEÑAS (CON FLUJO DE MODERACIÓN: pending | verified | rejected)
+// RESEÑAS (CON FLUJO DE MODERACIÓN: pending | verified | rejected + flag hidden)
 // ==============================================================================
 function normalizeReviewRecord(r) {
   if (!r || typeof r !== 'object') return null;
@@ -4777,10 +4777,11 @@ function normalizeReviewRecord(r) {
   if (!clean.status) {
     clean.status = clean.verified === true ? 'verified' : 'pending';
   }
+  clean.hidden = Boolean(clean.hidden);
   return clean;
 }
 
-async function loadAllReviewsFromStore() {
+async function loadAllReviewsFromStore({ includeHidden = false } = {}) {
   let reviews = Array.isArray(runtimeDB.reviews) ? [...runtimeDB.reviews] : [];
 
   if (isMongoConfigured()) {
@@ -4800,38 +4801,31 @@ async function loadAllReviewsFromStore() {
   }
 
   return reviews
-    .filter(r => r && r.id && r.hidden !== true && r.deleted !== true)
+    .filter(r => r && r.id && r.deleted !== true && (includeHidden || r.hidden !== true))
     .map(normalizeReviewRecord)
     .filter(Boolean)
     .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
 }
 
 app.get('/api/reviews', async (req, res) => {
-  const allReviews = await loadAllReviewsFromStore();
-  // El endpoint público devuelve ÚNICAMENTE reseñas verificadas y aprobadas
+  const allReviews = await loadAllReviewsFromStore({ includeHidden: false });
+  // El endpoint público devuelve ÚNICAMENTE reseñas verificadas, aprobadas y no ocultas
   const verifiedList = allReviews.filter(
-    r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected'
+    r => r.verified === true && r.hidden !== true && r.status !== 'pending' && r.status !== 'rejected'
   );
   res.json(verifiedList);
 });
 
 app.get('/api/admin/reviews', requireAdminAuth, async (req, res) => {
-  const allReviews = await loadAllReviewsFromStore();
+  const includeHidden = req.query?.includeHidden !== 'false';
+  const allReviews = await loadAllReviewsFromStore({ includeHidden });
   res.json(allReviews);
 });
 
 app.patch('/api/admin/reviews/:id', requireAdminAuth, async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
-  const { status, verified } = req.body || {};
-
-  let nextStatus = status;
-  if (!nextStatus && typeof verified === 'boolean') {
-    nextStatus = verified ? 'verified' : 'pending';
-  }
-  if (!['verified', 'pending', 'rejected'].includes(nextStatus)) {
-    return res.status(400).json({ error: 'Estado de reseña inválido. Usa verified, pending o rejected.' });
-  }
+  const { status, verified, hidden } = req.body || {};
 
   let existing = (runtimeDB.reviews || []).find(r => r && r.id === id);
   if (!existing && isMongoConfigured()) {
@@ -4843,14 +4837,29 @@ app.patch('/api/admin/reviews/:id', requireAdminAuth, async (req, res) => {
       }
     } catch {}
   }
+
+  const hasHiddenFlag = typeof hidden === 'boolean';
+  let nextStatus = status;
+  if (!nextStatus && typeof verified === 'boolean') {
+    nextStatus = verified ? 'verified' : 'pending';
+  }
+  if (!nextStatus && hasHiddenFlag) {
+    nextStatus = existing?.status || (existing?.verified ? 'verified' : 'pending');
+  }
+  if (!['verified', 'pending', 'rejected'].includes(nextStatus)) {
+    return res.status(400).json({ error: 'Estado de reseña inválido. Usa verified, pending, rejected o hidden: boolean.' });
+  }
+
   if (!existing) {
     return res.status(404).json({ error: 'Reseña no encontrada.' });
   }
 
+  const nextHidden = hasHiddenFlag ? hidden : Boolean(existing.hidden);
   const updatedReview = normalizeReviewRecord({
     ...existing,
     status: nextStatus,
     verified: nextStatus === 'verified',
+    hidden: nextHidden,
     moderatedAt: new Date().toISOString()
   });
 
@@ -5076,7 +5085,7 @@ app.post('/api/gallery/:token/review', async (req, res) => {
 
 app.post('/api/admin/reviews', requireAdminAuth, async (req, res) => {
   if (!requireDurablePersistence(res)) return;
-  const { clientName, rating, recommend, comment, date, verified } = req.body || {};
+  const { clientName, rating, recommend, comment, date, verified, hidden } = req.body || {};
   if (!clientName || !comment) {
     return res.status(400).json({ error: 'Faltan el nombre del cliente o el comentario.' });
   }
@@ -5096,6 +5105,7 @@ app.post('/api/admin/reviews', requireAdminAuth, async (req, res) => {
     date: date ? String(date).slice(0, 20) : new Date().toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric' }),
     verified: isVerified,
     status: isVerified ? 'verified' : 'pending',
+    hidden: Boolean(hidden),
     createdAt: new Date().toISOString()
   };
 

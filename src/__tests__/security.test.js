@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import {
   hashStringSHA256,
   secureCompare,
@@ -6,6 +8,11 @@ import {
   validateSessionToken,
   DEFAULT_PIN_HASH
 } from '../services/auth/adminSecurity';
+import {
+  getTrustedClientIp,
+  normalizeAndValidateIp,
+  resolveAdminAuthKeyring
+} from '../../api/security.js';
 
 describe('Seguridad y Criptografía de Administrador', () => {
   it('debe calcular hash SHA-256 consistente y mantener DEFAULT_PIN_HASH vacío (sin PIN 0493 por defecto)', async () => {
@@ -53,5 +60,94 @@ describe('Seguridad y Criptografía de Administrador', () => {
   it('debe rechazar tokens corruptos o inválidos', () => {
     const invalid = validateSessionToken('token-invalido-o-corrupto');
     expect(invalid.valid).toBe(false);
+  });
+
+  it('SAST Gate Automatizado: ningún archivo de api/, onesignal.js ni db.json contiene PII, UUID de OneSignal o hashes débiles hardcodeados, y CI integra CodeQL', () => {
+    const forbiddenLiterals = [
+      'sgarcesg0410',
+      '3244725167',
+      '3023696513',
+      'bc62cb00-9782-4a8e-a344-e8cf031a211a',
+      '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3',
+      'DEV_EPHEMERAL_SECRET'
+    ];
+
+    function collectJsFiles(dir) {
+      const results = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          results.push(...collectJsFiles(fullPath));
+        } else if (/\.(js|mjs|cjs)$/.test(entry.name)) {
+          results.push(fullPath);
+        }
+      }
+      return results;
+    }
+
+    const filesToScan = [
+      ...collectJsFiles(path.join(process.cwd(), 'api')),
+      path.join(process.cwd(), 'src/services/onesignal.js'),
+      path.join(process.cwd(), 'server/data/db.json')
+    ];
+
+    for (const filePath of filesToScan) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      for (const literal of forbiddenLiterals) {
+        expect(content, `Regresión SAST en ${path.relative(process.cwd(), filePath)}: contiene "${literal}"`).not.toContain(literal);
+      }
+    }
+
+    const ciWorkflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    expect(ciWorkflow).toContain('github/codeql-action/init@f1f6e5f6af878fb37dc8fa8febc4bd5f4ed0b7a7');
+    expect(ciWorkflow).toContain('github/codeql-action/analyze@f1f6e5f6af878fb37dc8fa8febc4bd5f4ed0b7a7');
+
+    const envExample = fs.readFileSync(path.join(process.cwd(), '.env.example'), 'utf8');
+    expect(envExample).toContain('node scripts/hash-admin-pin.mjs');
+  });
+
+  it('getTrustedClientIp y normalizeAndValidateIp validan formato IPv4/IPv6 con net.isIP() y descartan cabeceras con basura', () => {
+    expect(normalizeAndValidateIp('203.0.113.45')).toBe('203.0.113.45');
+    expect(normalizeAndValidateIp('::ffff:198.51.100.12')).toBe('198.51.100.12');
+    expect(normalizeAndValidateIp('192.0.2.88:54321')).toBe('192.0.2.88');
+    expect(normalizeAndValidateIp('2001:db8::1')).toBe('2001:db8::1');
+    expect(normalizeAndValidateIp('[2001:db8::1]:443')).toBe('2001:db8::1');
+    expect(normalizeAndValidateIp('<script>alert(1)</script>')).toBeNull();
+    expect(normalizeAndValidateIp('basura-maliciosa-log-injection\nFAKE')).toBeNull();
+    expect(normalizeAndValidateIp('999.999.999.999')).toBeNull();
+
+    const prevVercel = process.env.VERCEL;
+    try {
+      process.env.VERCEL = '1';
+      const poisonedReq = {
+        headers: { 'x-vercel-forwarded-for': '<basura-inyectada-en-header>' },
+        socket: { remoteAddress: '::ffff:127.0.0.1' }
+      };
+      expect(getTrustedClientIp(poisonedReq)).toBe('127.0.0.1');
+
+      const validVercelReq = {
+        headers: { 'x-vercel-forwarded-for': '181.50.100.25, 10.0.0.1' },
+        socket: { remoteAddress: '127.0.0.1' }
+      };
+      expect(getTrustedClientIp(validVercelReq)).toBe('181.50.100.25');
+    } finally {
+      if (prevVercel !== undefined) process.env.VERCEL = prevVercel;
+      else delete process.env.VERCEL;
+    }
+  });
+
+  it('resolveAdminAuthKeyring bloquea el fallback de test si VERCEL o CI_PRODUCTION están activos', () => {
+    const prevSecret = process.env.ADMIN_AUTH_SECRET;
+    const prevVercel = process.env.VERCEL;
+    try {
+      delete process.env.ADMIN_AUTH_SECRET;
+      process.env.VERCEL = '1';
+      const { ring } = resolveAdminAuthKeyring();
+      expect(Object.keys(ring)).toHaveLength(0);
+    } finally {
+      if (prevSecret !== undefined) process.env.ADMIN_AUTH_SECRET = prevSecret;
+      if (prevVercel !== undefined) process.env.VERCEL = prevVercel;
+      else delete process.env.VERCEL;
+    }
   });
 });

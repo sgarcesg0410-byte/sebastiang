@@ -6936,15 +6936,18 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               {reviewsList.map((review, idx) => {
                 const isVerifiedRev = review.verified === true && review.status !== 'pending' && review.status !== 'rejected';
                 const isRejectedRev = review.status === 'rejected';
+                const isHiddenRev = review.hidden === true;
                 return (
                 <div
                   key={review.id || idx}
                   className={`bg-stone-900/90 border rounded-3xl p-5 flex flex-col justify-between shadow-xl transition-all space-y-4 relative group ${
-                    isVerifiedRev
-                      ? 'border-stone-800 hover:border-amber-500/40'
-                      : isRejectedRev
-                        ? 'border-red-900/40 opacity-75'
-                        : 'border-amber-500/40 bg-amber-950/10'
+                    isHiddenRev
+                      ? 'border-stone-700/60 opacity-65'
+                      : isVerifiedRev
+                        ? 'border-stone-800 hover:border-amber-500/40'
+                        : isRejectedRev
+                          ? 'border-red-900/40 opacity-75'
+                          : 'border-amber-500/40 bg-amber-950/10'
                   }`}
                 >
                   <div className="space-y-3">
@@ -6955,6 +6958,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         ))}
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {isHiddenRev && (
+                          <span className="text-[10px] font-bold text-stone-300 bg-stone-800 border border-stone-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <EyeOff className="w-3 h-3" />
+                            <span>Oculta en Web</span>
+                          </span>
+                        )}
                         {isVerifiedRev ? (
                           <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <ShieldCheck className="w-3 h-3" />
@@ -7017,15 +7026,15 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                       )}
                     </div>
 
-                    {/* CONTROLES DE MODERACIÓN (APROBAR / RECHAZAR) */}
-                    <div className="flex items-center gap-2 pt-1">
+                    {/* CONTROLES DE MODERACIÓN (APROBAR / RECHAZAR / TOGGLE OCULTAR EN WEB) */}
+                    <div className="flex items-center gap-2 pt-1 flex-wrap">
                       {!isVerifiedRev && (
                         <button
                           type="button"
                           onClick={async () => {
                             try {
-                              const res = await updateAdminReviewStatus(review.id, { status: 'verified', verified: true });
-                              setReviewsList(prev => prev.map(r => r.id === review.id ? (res.review || { ...r, status: 'verified', verified: true }) : r));
+                              const res = await updateAdminReviewStatus(review.id, { status: 'verified', verified: true, hidden: false });
+                              setReviewsList(prev => prev.map(r => r.id === review.id ? (res.review || { ...r, status: 'verified', verified: true, hidden: false }) : r));
                             } catch (err) {
                               alert('Error al verificar reseña: ' + (err.message || 'Intenta de nuevo'));
                             }
@@ -7036,6 +7045,27 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           <span>Aprobar y Publicar</span>
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const nextHidden = !isHiddenRev;
+                            const res = await updateAdminReviewStatus(review.id, { hidden: nextHidden });
+                            setReviewsList(prev => prev.map(r => r.id === review.id ? (res.review || { ...r, hidden: nextHidden }) : r));
+                          } catch (err) {
+                            alert('Error al cambiar visibilidad de la reseña: ' + (err.message || 'Intenta de nuevo'));
+                          }
+                        }}
+                        className={`py-1.5 px-2.5 rounded-xl border font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                          isHiddenRev
+                            ? 'bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/40 text-amber-300'
+                            : 'bg-stone-800 hover:bg-stone-700 border-stone-700 text-stone-300'
+                        }`}
+                        title={isHiddenRev ? 'Mostrar reseña en la página pública' : 'Ocultar reseña de la página pública sin borrarla'}
+                      >
+                        {isHiddenRev ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                        <span>{isHiddenRev ? 'Mostrar en Web' : 'Ocultar en Web'}</span>
+                      </button>
                       {!isRejectedRev && (
                         <button
                           type="button"
@@ -7050,7 +7080,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           className="py-1.5 px-2.5 rounded-xl bg-stone-800 hover:bg-red-950/50 border border-stone-700 hover:border-red-500/40 text-stone-400 hover:text-red-300 font-semibold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer"
                         >
                           <X className="w-3.5 h-3.5" />
-                          <span>{isVerifiedRev ? 'Ocultar' : 'Rechazar'}</span>
+                          <span>Rechazar</span>
                         </button>
                       )}
                     </div>

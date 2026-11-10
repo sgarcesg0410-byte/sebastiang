@@ -2310,6 +2310,7 @@ function normalizeClientReview(r) {
   if (!clean.status) {
     clean.status = clean.verified === true ? 'verified' : 'pending';
   }
+  clean.hidden = Boolean(clean.hidden);
   return clean;
 }
 
@@ -2363,14 +2364,14 @@ export async function getReviews() {
   // MongoDB Atlas es la única fuente de verdad autoritativa y purga cualquier residuo local.
   if (fetchedFromServer) {
     const authoritative = serverReviews
-      .filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'))
+      .filter(r => r && r.id && r.deleted !== true && r.hidden !== true)
       .map(normalizeClientReview)
       .filter(Boolean);
     try {
       localStorage.setItem(LOCAL_REVIEWS_KEY, JSON.stringify(authoritative));
     } catch (e) {}
     return authoritative
-      .filter(r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected')
+      .filter(r => r.verified === true && r.hidden !== true && r.status !== 'pending' && r.status !== 'rejected')
       .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
   }
 
@@ -2379,7 +2380,7 @@ export async function getReviews() {
     .filter(Boolean);
 
   return localReviews
-    .filter(r => r.verified === true && r.status !== 'pending' && r.status !== 'rejected')
+    .filter(r => r.verified === true && r.hidden !== true && r.status !== 'pending' && r.status !== 'rejected')
     .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
 }
 
@@ -2406,7 +2407,7 @@ export async function getAdminReviews() {
 
   if (fetchedFromServer) {
     const authoritative = serverReviews
-      .filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'))
+      .filter(r => r && r.id && r.deleted !== true)
       .map(normalizeClientReview)
       .filter(Boolean)
       .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
@@ -2422,8 +2423,18 @@ export async function getAdminReviews() {
     .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
 }
 
-export async function updateAdminReviewStatus(id, { status, verified } = {}) {
-  const nextStatus = status || (verified ? 'verified' : 'pending');
+export async function updateAdminReviewStatus(id, { status, verified, hidden } = {}) {
+  const payload = {};
+  if (typeof status === 'string' && status) {
+    payload.status = status;
+    payload.verified = status === 'verified';
+  } else if (typeof verified === 'boolean') {
+    payload.status = verified ? 'verified' : 'pending';
+    payload.verified = verified;
+  }
+  if (typeof hidden === 'boolean') {
+    payload.hidden = hidden;
+  }
   const token = getAdminSessionToken();
   const res = await fetch(`${API_BASE}/admin/reviews/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -2431,7 +2442,7 @@ export async function updateAdminReviewStatus(id, { status, verified } = {}) {
       'Content-Type': 'application/json',
       ...(token ? { 'Authorization': `Bearer ${token}` } : {})
     },
-    body: JSON.stringify({ status: nextStatus, verified: nextStatus === 'verified' })
+    body: JSON.stringify(payload)
   });
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
@@ -2440,8 +2451,7 @@ export async function updateAdminReviewStatus(id, { status, verified } = {}) {
   const data = await res.json();
   const updatedServerReview = normalizeClientReview(data?.review || {
     id,
-    status: nextStatus,
-    verified: nextStatus === 'verified',
+    ...payload,
     moderatedAt: new Date().toISOString()
   });
 
