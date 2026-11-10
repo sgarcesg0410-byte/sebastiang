@@ -1,4 +1,7 @@
 import crypto from 'crypto';
+import { REQUIRED_BOOKING_DEPOSIT } from '../pricing.js';
+
+export const DEFAULT_WOMPI_API_TIMEOUT_MS = 4500; // Hallazgo #35: Timeout reducido para Vercel Serverless
 
 /**
  * Genera una referencia única para transacciones de Wompi.
@@ -141,7 +144,7 @@ export function validateCheckoutAmount({ concept, amount, booking, sessionRemain
 
   if (concept === 'booking_deposit' || concept === 'abono') {
     const bookingTotal = booking?.totalPrice !== undefined ? Number(booking.totalPrice) : Infinity;
-    const expectedDeposit = bookingTotal < 20000 ? bookingTotal : 20000;
+    const expectedDeposit = bookingTotal < REQUIRED_BOOKING_DEPOSIT ? bookingTotal : REQUIRED_BOOKING_DEPOSIT;
 
     if (numAmount !== expectedDeposit) {
       return {
@@ -187,7 +190,8 @@ export function validateCheckoutAmount({ concept, amount, booking, sessionRemain
  */
 export async function fetchWompiTransaction(transactionId, {
   privateKey = process.env.WOMPI_PRIVATE_KEY,
-  apiBaseUrl = process.env.WOMPI_API_URL || 'https://production.wompi.co/v1'
+  apiBaseUrl = process.env.WOMPI_API_URL || 'https://production.wompi.co/v1',
+  timeoutMs = DEFAULT_WOMPI_API_TIMEOUT_MS
 } = {}) {
   if (!transactionId) {
     return { ok: false, error: 'transactionId requerido para consultar en Wompi API' };
@@ -199,7 +203,8 @@ export async function fetchWompiTransaction(transactionId, {
   try {
     const url = `${apiBaseUrl.replace(/\/+$/, '')}/transactions/${encodeURIComponent(transactionId)}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const effectiveTimeout = Math.max(500, Math.min(8000, Number(timeoutMs) || DEFAULT_WOMPI_API_TIMEOUT_MS));
+    const timeout = setTimeout(() => controller.abort(), effectiveTimeout);
     if (timeout && timeout.unref) timeout.unref();
 
     const res = await fetch(url, {

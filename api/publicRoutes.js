@@ -179,7 +179,14 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
       }
       const storedTokens = normalizeNameTokens(item?.clientName || item?.client_name || '');
       if (storedTokens.length === 0 || queryNameTokens.length === 0) return false;
-      return queryNameTokens.some((qt) => storedTokens.includes(qt));
+      // Hallazgo #18: Si el nombre registrado tiene 2 o más palabras (ej. "Mariana Gómez"),
+      // exigir al menos 2 tokens coincidentes para impedir enumeración con un solo nombre común ("Ana", "Juan").
+      const matchedCount = queryNameTokens.filter((qt) => storedTokens.includes(qt)).length;
+      const requiredMatches = storedTokens.length >= 2 ? 2 : 1;
+      if (requiredMatches === 1) {
+        return matchedCount >= 1 && storedTokens[0].length >= 4 && queryNameTokens[0] === storedTokens[0];
+      }
+      return matchedCount >= requiredMatches;
     };
 
     try {

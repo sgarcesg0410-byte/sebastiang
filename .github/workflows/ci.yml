@@ -38,3 +38,19 @@ jobs:
 
       - name: Security audit (production dependencies)
         run: npm audit --omit=dev --audit-level=high
+
+      - name: SAST & Secret Hardening Gate (Zero PII / Zero Weak Secrets)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const apiSec = fs.readFileSync('api/security.js', 'utf8');
+            const apiIdx = fs.readFileSync('api/index.js', 'utf8');
+            const emailSvc = fs.readFileSync('api/emailService.js', 'utf8');
+            if (apiSec.includes('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3')) {
+              throw new Error('SAST: Hardcoded weak PIN SHA-256 hash found in api/security.js');
+            }
+            if (emailSvc.includes('sgarcesg0410@gmail.com') || apiIdx.includes('bc62cb00-9782-4a8e-a344-e8cf031a211a')) {
+              throw new Error('SAST: Hardcoded personal email or OneSignal App ID found in backend');
+            }
+            console.log('✓ SAST security gate passed');
+          "

@@ -34,6 +34,7 @@ import {
   decryptBackupPayload,
   recordOperationalEvent,
   getOperationalMonitoringReport,
+  setOperationalPersistenceAdapter,
   secureCompare,
   verifyBiometricAssertion,
   BIO_REFRESH_TOKEN_TTL_MS
@@ -133,6 +134,7 @@ export const HARDENED_CONTENT_SECURITY_POLICY =
 
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', HARDENED_CONTENT_SECURITY_POLICY);
+  res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -147,12 +149,31 @@ app.use(cors({
   },
   credentials: false,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-apk-device-token', 'x-apk-key']
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-admin-token',
+    'x-apk-device-token',
+    'x-apk-key',
+    'x-csrf-token',
+    'x-requested-with',
+    'x-admin-reauth-pin',
+    'x-bot-signature',
+    'x-bot-secret'
+  ]
 }));
-// Parser de JSON dinámico y sensible a la ruta (Hallazgo M3: /api/gallery limitado estrictamente a 100 KB;
-// solo rutas administrativas de subida de fotos o backups habilitan 50 MB).
+// Parser de JSON dinámico y sensible a la ruta (Hallazgo M3 y #15: /api/gallery limitado estrictamente a 100 KB;
+// rutas administrativas de subida de fotos o backups limitadas a 25 MB con rechazo temprano 413 por Content-Length).
+export const MAX_ADMIN_UPLOAD_BODY_BYTES = 25 * 1024 * 1024;
 app.use((req, res, next) => {
   const url = req.originalUrl || req.url || '';
+  const contentLength = Number(req.headers?.['content-length'] || 0);
+  if (contentLength > MAX_ADMIN_UPLOAD_BODY_BYTES) {
+    return res.status(413).json({
+      error: 'El tamaño del payload excede el límite máximo permitido de 25 MB.',
+      code: 'PAYLOAD_TOO_LARGE'
+    });
+  }
   let limit = '2mb';
   if (url.startsWith('/api/gallery')) {
     limit = '100kb';
@@ -161,7 +182,7 @@ app.use((req, res, next) => {
     url.startsWith('/api/admin/sessions') ||
     url.startsWith('/api/admin/backup/restore')
   ) {
-    limit = '50mb';
+    limit = '25mb';
   } else if (url.startsWith('/api/payments')) {
     limit = '15mb';
   }
@@ -174,7 +195,8 @@ app.use((req, res, next) => {
 // Las claves se leen EXCLUSIVAMENTE desde variables de entorno.
 // Si no están configuradas, las notificaciones push se deshabilitan sin fallar.
 // ==============================================================================
-const ONESIGNAL_APP_ID = process.env.ONESIGNAL_APP_ID || 'bc62cb00-9782-4a8e-a344-e8cf031a211a';
+const ONESIGNAL_APP_ID = (process.env.ONESIGNAL_APP_ID || '').trim();
+const ONESIGNAL_ADMIN_EXTERNAL_ID = (process.env.ONESIGNAL_ADMIN_EXTERNAL_ID || 'sebastiang_admin').trim();
 let rawOneSignalKey = process.env.ONESIGNAL_REST_API_KEY || '';
 // Detectar si la clave fue provista en Base64 y decodificarla
 if (rawOneSignalKey && !rawOneSignalKey.startsWith('os_v2_')) {
@@ -194,6 +216,24 @@ if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
   );
 }
 
+export function buildOneSignalAdminPushPayload({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
+  return {
+    app_id: ONESIGNAL_APP_ID,
+    target_channel: 'push',
+    include_aliases: {
+      external_id: [ONESIGNAL_ADMIN_EXTERNAL_ID]
+    },
+    filters: [
+      { field: 'tag', key: 'role', relation: '=', value: 'admin' }
+    ],
+    headings: { es: title, en: title },
+    contents: { es: message, en: message },
+    url,
+    priority: 10,
+    data
+  };
+}
+
 async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
   if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
     return { id: 'test-push-suppressed', simulated: true };
@@ -203,15 +243,7 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
     return null;
   }
   try {
-    const payload = JSON.stringify({
-      app_id: ONESIGNAL_APP_ID,
-      included_segments: ['Total Subscriptions', 'Subscribed Users'],
-      headings: { es: title, en: title },
-      contents: { es: message, en: message },
-      url: url,
-      priority: 10,
-      data
-    });
+    const payload = JSON.stringify(buildOneSignalAdminPushPayload({ title, message, url, data }));
 
     const response = await fetch('https://onesignal.com/api/v1/notifications', {
       method: 'POST',
@@ -244,6 +276,10 @@ if (!isMongoConfigured() && process.env.NODE_ENV !== 'test' && !process.env.VITE
 setPasswordVersionGetter(() => getActivePasswordVersionFromStore({
   runtimeDB
 }));
+setOperationalPersistenceAdapter({
+  isMongoConfigured,
+  upsertMongoDoc
+});
 
 function normalizeBookingDoc(b) {
   if (!b || !b.id) return null;
@@ -593,12 +629,36 @@ export function checkPublicWriteRateLimit(ip, maxAttempts, scope = 'default') {
   }
 
   if (isMongoConfigured()) {
+    const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
     checkDistributedRateLimit({
       key: `pub_${scope}_${ip || 'unknown'}`,
       maxAttempts,
       windowMs: PUBLIC_WRITE_WINDOW_MS,
-      failClosed: false
-    }).catch(() => {});
+      failClosed: isProd
+    }).then((dist) => {
+      if (dist && !dist.allowed) {
+        publicWriteAttempts.set(key, { count: maxAttempts, windowStart: now });
+      }
+    }).catch(() => {
+      if (isProd) {
+        publicWriteAttempts.set(key, { count: maxAttempts, windowStart: now });
+      }
+    });
+  }
+  return true;
+}
+
+export async function checkPublicWriteDistributedRateLimit(ip, maxAttempts, scope = 'default') {
+  if (!checkPublicWriteRateLimit(ip, maxAttempts, scope)) return false;
+  if (isMongoConfigured()) {
+    const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+    const dist = await checkDistributedRateLimit({
+      key: `pub_${scope}_${ip || 'unknown'}`,
+      maxAttempts,
+      windowMs: PUBLIC_WRITE_WINDOW_MS,
+      failClosed: isProd
+    });
+    if (!dist.allowed) return false;
   }
   return true;
 }
@@ -653,8 +713,8 @@ function getDefaultDB() {
   return {
     settings: {
       photographerName: "Sebastian G",
-      photographerWhatsApp: "+573244725167",
-      photographerWhatsApp2: "+573023696513",
+      photographerWhatsApp: process.env.PHOTOGRAPHER_WHATSAPP || "",
+      photographerWhatsApp2: process.env.PHOTOGRAPHER_WHATSAPP_2 || "",
       outOfSanAnteroSurcharge: 10000,
       currencySymbol: "$",
       tagline: "Capturamos momentos, creamos recuerdos. ♡",
@@ -760,7 +820,7 @@ registerPublicRoutes(app, {
 // ENDPOINTS PÚBLICOS
 // ==============================================================================
 
-app.get('/api/health', async (req, res) => {
+async function buildHealthPayload(req, { forceDetailed = false } = {}) {
   const configured = isMongoConfigured();
   const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
 
@@ -775,8 +835,6 @@ app.get('/api/health', async (req, res) => {
     mongoError = ping.error || null;
   }
 
-  // En producción, tanto la falta de configuración como la desconexión real de MongoDB Atlas
-  // sitúan el servicio en estado 'degraded' y devuelven HTTP 503.
   const persistenceReady = configured && connected;
   const status = persistenceReady
     ? 'ok'
@@ -784,7 +842,20 @@ app.get('/api/health', async (req, res) => {
 
   const httpStatus = persistenceReady ? 200 : (isProduction ? 503 : 200);
 
-  res.status(httpStatus).json({
+  let isAdminCaller = forceDetailed;
+  if (!isAdminCaller) {
+    try {
+      const rawToken = readAdminToken(req);
+      if (rawToken) {
+        const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+        const payload = verifyAdminToken(rawToken, { expectedPasswordVersion: activeVersion });
+        isAdminCaller = Boolean(payload && payload.pwd === activeVersion);
+      }
+    } catch {}
+  }
+
+  // Hallazgo #5 (P0-4): El endpoint público /api/health oculta errores internos de conexión, latencia y configuración SMTP/Push a usuarios no autenticados.
+  const baseResponse = {
     status,
     healthy: persistenceReady,
     service: 'sebastiang-api',
@@ -793,12 +864,33 @@ app.get('/api/health', async (req, res) => {
     isProduction,
     mongoConfigured: configured,
     mongoConnected: connected,
-    mongoLatencyMs,
-    mongoError,
-    smtpConfigured: Boolean(process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS),
-    pushConfigured: Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY),
     timestamp: new Date().toISOString()
-  });
+  };
+
+  if (!isAdminCaller) {
+    return { httpStatus, payload: baseResponse };
+  }
+
+  return {
+    httpStatus,
+    payload: {
+      ...baseResponse,
+      mongoLatencyMs,
+      mongoError,
+      smtpConfigured: Boolean(process.env.ZOHO_SMTP_PASS || process.env.SMTP_PASS),
+      pushConfigured: Boolean(ONESIGNAL_APP_ID && ONESIGNAL_REST_API_KEY)
+    }
+  };
+}
+
+app.get('/api/health', async (req, res) => {
+  const { httpStatus, payload } = await buildHealthPayload(req, { forceDetailed: false });
+  res.status(httpStatus).json(payload);
+});
+
+app.get('/api/admin/health', requireAdminAuth, async (req, res) => {
+  const { httpStatus, payload } = await buildHealthPayload(req, { forceDetailed: true });
+  res.status(httpStatus).json(payload);
 });
 
 app.post('/api/send-push', requireAdminAuth, async (req, res) => {
@@ -1416,8 +1508,8 @@ app.post('/api/bookings', async (req, res) => {
     })
   ]);
 
-  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
-  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || process.env.PHOTOGRAPHER_WHATSAPP || '').replace(/\D/g, '');
+  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || process.env.PHOTOGRAPHER_WHATSAPP_2 || '').replace(/\D/g, '');
   const msgText = encodeURIComponent(
     `📸 *¡Hola Sebastian G! Acabo de hacer una reserva en tu sitio web:*\n` +
     `👤 *Nombre:* ${newBooking.clientName}\n` +
@@ -1565,7 +1657,9 @@ app.get('/api/gallery/:token', async (req, res) => {
   }
   let session = (runtimeDB.sessions || []).find(s => s.token === token);
 
-  if (!session && token === 'demo-cliente-2026') {
+  const isProductionGallery = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const allowDemoGallery = !isProductionGallery || process.env.ALLOW_DEMO_GALLERY === 'true';
+  if (!session && token === 'demo-cliente-2026' && allowDemoGallery) {
     session = {
       id: "sess-demo",
       token: "demo-cliente-2026",
@@ -1876,8 +1970,8 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
   });
   summary += `\n_Quedo atento a la entrega final en alta resolución. ¡Muchas gracias!_`;
 
-  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
-  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || process.env.PHOTOGRAPHER_WHATSAPP || '').replace(/\D/g, '');
+  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || process.env.PHOTOGRAPHER_WHATSAPP_2 || '').replace(/\D/g, '');
   const directWhatsAppUrl = `https://wa.me/${photogWhatsApp1}?text=${encodeURIComponent(summary)}`;
   const secondaryWhatsAppUrl = `https://wa.me/${photogWhatsApp2}?text=${encodeURIComponent(summary)}`;
 
@@ -2617,12 +2711,12 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
   if (!runtimeDB.payments) runtimeDB.payments = [];
   runtimeDB.payments.unshift(newPayment);
 
-  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
-  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || '+573023696513').replace(/\D/g, '');
+  const photogWhatsApp1 = (runtimeDB.settings.photographerWhatsApp || process.env.PHOTOGRAPHER_WHATSAPP || '').replace(/\D/g, '');
+  const photogWhatsApp2 = (runtimeDB.settings.photographerWhatsApp2 || process.env.PHOTOGRAPHER_WHATSAPP_2 || '').replace(/\D/g, '');
   const methodNames = {
-    nequi: 'Nequi (3244725167)',
-    daviplata: 'DaviPlata (Llave @PLATA3244725167)',
-    dale: 'Dale! (Llave @SGG04)'
+    nequi: 'Nequi Oficial',
+    daviplata: 'DaviPlata Oficial',
+    dale: 'Dale! (@SGG04)'
   };
   const methodName = methodNames[newPayment.method] || newPayment.method;
 
@@ -2744,7 +2838,8 @@ app.post('/api/payments/checkout', async (req, res) => {
         }
       } catch (eMongo) {}
     }
-    if (!session && sessionToken !== 'demo-cliente-2026') {
+    const allowDemoCheckout = !isProduction || process.env.ALLOW_DEMO_GALLERY === 'true';
+    if (!session && !(sessionToken === 'demo-cliente-2026' && allowDemoCheckout)) {
       return res.status(404).json({ error: 'Sesión no encontrada para asociar el pago.' });
     }
   }
@@ -3640,7 +3735,7 @@ app.delete('/api/admin/sessions/:id', async (req, res) => {
   });
 });
 
-app.post('/api/admin/sessions', express.json({ limit: '50mb' }), async (req, res) => {
+app.post('/api/admin/sessions', express.json({ limit: '25mb' }), async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const {
     clientName, clientWhatsApp, packageTitle, maxPhotosAllowed, photos,
@@ -3903,7 +3998,7 @@ app.post('/api/admin/settings', async (req, res) => {
 // ==============================================================================
 // GESTIÓN DE CATÁLOGO
 // ==============================================================================
-app.post('/api/admin/catalog', express.json({ limit: '50mb' }), async (req, res) => {
+app.post('/api/admin/catalog', express.json({ limit: '25mb' }), async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const { id, title, category, url, location } = req.body;
   if (!title || !url) {
@@ -4273,7 +4368,32 @@ app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
   });
 });
 
-app.post('/api/admin/backup/restore', express.json({ limit: '50mb' }), requireAdminAuth, async (req, res) => {
+app.post('/api/admin/backup/restore', express.json({ limit: '25mb' }), requireAdminAuth, async (req, res) => {
+  // Hallazgo #10 (P1-13): Exigir confirmación explícita o re-autenticación step-up con PIN en producción
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const rawReauthPin = String(req.body?.reauthPin || req.headers?.['x-admin-reauth-pin'] || '').trim();
+  const explicitConfirmation = req.body?.confirmRestore === 'RESTORE_CONFIRMED';
+
+  if (rawReauthPin) {
+    const activeScrypt = await getActiveAdminScryptHash();
+    const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || '';
+    const pinOk = await verifyAdminPinAsync(rawReauthPin, {
+      scryptHash: activeScrypt,
+      sha256Hash: effectiveSha
+    });
+    if (!pinOk) {
+      return res.status(401).json({
+        error: 'El PIN de re-autenticación proporcionado para restaurar el respaldo no es válido.',
+        code: 'INVALID_RESTORE_REAUTH_PIN'
+      });
+    }
+  } else if (isProduction && !explicitConfirmation) {
+    return res.status(403).json({
+      error: 'En producción se requiere re-autenticación con PIN (reauthPin) o confirmación explícita (confirmRestore: "RESTORE_CONFIRMED") para restaurar un backup.',
+      code: 'RESTORE_REAUTH_REQUIRED'
+    });
+  }
+
   if (!requireDurablePersistence(res)) return;
   const clientIp = getClientIp(req);
   if (!checkPublicWriteRateLimit(clientIp, 5, 'admin-backup-restore')) {
@@ -4680,7 +4800,7 @@ async function loadAllReviewsFromStore() {
   }
 
   return reviews
-    .filter(r => r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara'))
+    .filter(r => r && r.id && r.hidden !== true && r.deleted !== true)
     .map(normalizeReviewRecord)
     .filter(Boolean)
     .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0));
@@ -5025,11 +5145,49 @@ app.delete('/api/admin/reviews/:id', async (req, res) => {
 });
 
 // ==============================================================================
-// WEBHOOK BOT WHATSAPP
+// WEBHOOK BOT WHATSAPP (AUTENTICACIÓN HMAC-SHA256 / SECRETO OBLIGATORIO EN PROD)
 // ==============================================================================
+export function verifyBotWebhookSignature(req) {
+  const secret = String(process.env.WHATSAPP_BOT_WEBHOOK_SECRET || '').trim();
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+
+  if (!secret) {
+    return !isProd;
+  }
+
+  const directSecret = String(
+    req.headers?.['x-bot-secret'] ||
+    (String(req.headers?.authorization || '').startsWith('Bearer ')
+      ? String(req.headers.authorization).slice(7)
+      : '')
+  ).trim();
+
+  if (directSecret && secureCompare(directSecret, secret)) {
+    return true;
+  }
+
+  const rawSigHeader = String(
+    req.headers?.['x-bot-signature'] ||
+    req.headers?.['x-hub-signature-256'] ||
+    ''
+  ).trim();
+  if (!rawSigHeader) return false;
+
+  const cleanReceivedSig = rawSigHeader.replace(/^sha256=/i, '');
+  const payloadStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {});
+  const expectedSig = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
+  return secureCompare(cleanReceivedSig, expectedSig);
+}
+
 app.all('/api/bot-webhook', async (req, res) => {
-  if (!checkPublicWriteRateLimit(getClientIp(req), 90)) {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 90, 'bot-webhook')) {
     return res.status(429).json({ error: 'Demasiadas solicitudes al bot.' });
+  }
+  if (!verifyBotWebhookSignature(req)) {
+    return res.status(401).json({
+      error: 'Firma o credencial de webhook de bot no autorizada.',
+      code: 'BOT_WEBHOOK_UNAUTHORIZED'
+    });
   }
   try {
     const rawMsg = (req.body?.query?.message || req.body?.message || req.query?.message || '').trim();
@@ -5053,7 +5211,8 @@ app.all('/api/bot-webhook', async (req, res) => {
     } else if (cleanMsg === '3' || cleanMsg.includes('foto') || cleanMsg.includes('portafolio')) {
       replyText = `🎨 *CONOCE NUESTRO TRABAJO:*\n👉 https://sebastiang.app\nInstagram: @sebastiang_fotos`;
     } else if (cleanMsg === '4' || cleanMsg.includes('nequi') || cleanMsg.includes('pago')) {
-      replyText = `💳 *CUENTAS OFICIALES:*\n🟣 Nequi: 324 472 5167\n🔴 DaviPlata: @PLATA3244725167\n🟡 Dale!: @SGG04`;
+      const configuredPhone = (runtimeDB.settings?.photographerWhatsApp || process.env.PHOTOGRAPHER_WHATSAPP || '').trim();
+      replyText = `💳 *MEDIOS DE PAGO OFICIALES:*\n🟣 Nequi / DaviPlata${configuredPhone ? `: ${configuredPhone}` : ''}\n🟡 Dale!: @SGG04\n🌐 Pasarela segura en línea: https://sebastiang.app`;
     } else if (cleanMsg === '5' || cleanMsg.includes('humano') || cleanMsg.includes('sebastian')) {
       await sendOneSignalPush({
         title: '💬 Cliente solicita hablar contigo',
@@ -5169,8 +5328,30 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
     const colName = table;
     const clientIp = getClientIp(req);
     if (op === 'select') {
-      const docs = await findMongoDocs(colName, safeMatch);
-      return res.json({ success: true, data: (docs || []).map(({ _id, ...d }) => d) });
+      // Hallazgo #11 (P1-8): Paginación obligatoria (máximo 200 documentos) y registro de auditoría en lecturas de /api/admin/db
+      const rawLimit = Number(req.body?.limit);
+      const safeLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, Math.floor(rawLimit)) : 100;
+      const rawSkip = Number(req.body?.skip);
+      const safeSkip = Number.isFinite(rawSkip) && rawSkip >= 0 ? Math.floor(rawSkip) : 0;
+
+      const docs = await findMongoDocs(colName, safeMatch, { createdAt: -1 }, safeLimit + safeSkip);
+      const paginatedDocs = (docs || []).slice(safeSkip, safeSkip + safeLimit).map(({ _id, ...d }) => d);
+
+      await recordFinancialAuditLog({
+        action: 'admin_db_select',
+        actor: 'admin',
+        entityType: colName,
+        entityId: String(safeMatch.id || safeMatch.token || 'query'),
+        status: 'read',
+        ip: clientIp,
+        metadata: { table: colName, op: 'select', match: safeMatch, limit: safeLimit, skip: safeSkip, returned: paginatedDocs.length }
+      }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+
+      return res.json({
+        success: true,
+        data: paginatedDocs,
+        pagination: { limit: safeLimit, skip: safeSkip, count: paginatedDocs.length }
+      });
     } else if (op === 'upsert' || op === 'insert') {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para insertar/actualizar.' });

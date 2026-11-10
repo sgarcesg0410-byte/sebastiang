@@ -141,7 +141,9 @@ export function getRetabloSizes(settings = {}) {
   });
 }
 
+export const REQUIRED_BOOKING_DEPOSIT = 20000;
 export const LOYALTY_DISCOUNT_PERCENT = 15;
+export const REFERRAL_DISCOUNT_PERCENT = 15;
 
 export function resolveLoyaltyDiscountPercent(isLoyal, percent = LOYALTY_DISCOUNT_PERCENT) {
   return isLoyal ? (Number(percent) || LOYALTY_DISCOUNT_PERCENT) : 0;

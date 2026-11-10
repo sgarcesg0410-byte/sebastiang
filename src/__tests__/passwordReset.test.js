@@ -28,7 +28,7 @@ describe('Recuperación Segura de Contraseña de Administrador (Zoho SMTP)', () 
         adminPasswordVersion: 1
       }
     };
-    process.env.ADMIN_EMAIL = 'sgarcesg0410@gmail.com';
+    process.env.ADMIN_EMAIL = 'reservas@sebastiang.app';
     process.env.TRUST_PROXY = 'true';
   });
 
@@ -70,7 +70,7 @@ describe('Recuperación Segura de Contraseña de Administrador (Zoho SMTP)', () 
     expect(mockEmailSender).toHaveBeenCalledTimes(1);
 
     // Verificación crítica: el destinatario es el ADMIN_EMAIL del servidor, NO el del atacante
-    expect(capturedRecipient).toBe('sgarcesg0410@gmail.com');
+    expect(capturedRecipient).toBe('reservas@sebastiang.app');
     expect(capturedRecipient).not.toBe('atacante@evil.com');
     expect(capturedRecipient).not.toBe('hacker@malicious.org');
   });

@@ -213,7 +213,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
           </p>
         </div>
         <div style="text-align: center; margin-top: 25px;">
-          <a href="https://wa.me/573244725167" style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: bold; font-size: 14px; padding: 12px 24px; border-radius: 10px; text-decoration: none;">
+          <a href="${escapeHtml(process.env.PHOTOGRAPHER_WHATSAPP ? `https://wa.me/${String(process.env.PHOTOGRAPHER_WHATSAPP).replace(/\D/g, '')}` : 'https://sebastiang.app')}" style="display: inline-block; background-color: #059669; color: #ffffff; font-weight: bold; font-size: 14px; padding: 12px 24px; border-radius: 10px; text-decoration: none;">
             💬 Contactar a Sebastian G por WhatsApp
           </a>
         </div>
@@ -597,12 +597,12 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
 /**
  * 4. Envía código de autenticación de dos factores (2FA) al correo oficial del administrador
  */
-export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@gmail.com') {
+export async function sendTwoFactorCodeEmail(code, targetEmail = process.env.ADMIN_EMAIL || 'reservas@sebastiang.app') {
   const transporter = getTransporter();
   if (!transporter) return false;
 
   try {
-    const dest = (targetEmail || 'sgarcesg0410@gmail.com').trim();
+    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'reservas@sebastiang.app').trim();
     const html = wrapEmailTemplate(`
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
@@ -648,12 +648,12 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = 'sgarcesg0410@g
  * 5. Envía código de recuperación de contraseña al correo oficial del administrador
  *    Regla de seguridad: Fuga cero (NUNCA registrar el código en logs)
  */
-export async function sendPasswordResetCodeEmail(code, targetEmail = process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com') {
+export async function sendPasswordResetCodeEmail(code, targetEmail = process.env.ADMIN_EMAIL || 'reservas@sebastiang.app') {
   const transporter = getTransporter();
   if (!transporter) return false;
 
   try {
-    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com').trim();
+    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'reservas@sebastiang.app').trim();
     const html = wrapEmailTemplate(`
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 8px; margin-bottom: 20px;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
@@ -698,12 +698,12 @@ export async function sendPasswordResetCodeEmail(code, targetEmail = process.env
 /**
  * 6. Envía alerta de seguridad cuando la contraseña de administrador ha sido cambiada
  */
-export async function sendPasswordChangedAlertEmail(targetEmail = process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com', details = {}) {
+export async function sendPasswordChangedAlertEmail(targetEmail = process.env.ADMIN_EMAIL || 'reservas@sebastiang.app', details = {}) {
   const transporter = getTransporter();
   if (!transporter) return false;
 
   try {
-    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'sgarcesg0410@gmail.com').trim();
+    const dest = (targetEmail || process.env.ADMIN_EMAIL || 'reservas@sebastiang.app').trim();
     const timestamp = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
     const ip = details.ip ? `<p style="margin: 4px 0; color: #a8a29e; font-size: 13px;">🌐 Dirección IP: <strong>${escapeHtml(details.ip)}</strong></p>` : '';
 

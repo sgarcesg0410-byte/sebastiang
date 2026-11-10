@@ -31,7 +31,20 @@ import {
   getAdminAuthSecret,
   verifyAdminPinAsync,
   hashPinScryptAsync,
-  isAdminAccessTokenJtiRevoked
+  isAdminAccessTokenJtiRevoked,
+  isAllowedBiometricOrigin,
+  isAllowedBiometricRpId,
+  createReceiptToken,
+  verifyReceiptToken,
+  RECEIPT_TOKEN_BYTES,
+  BIO_REFRESH_TOKEN_TTL_MS,
+  APK_DEVICE_TOKEN_TTL_MS,
+  ADMIN_HOST_SESSION_COOKIE_NAME,
+  buildAdminSessionCookieHeader,
+  verifyCsrfForCookieAuth,
+  encryptBackupPayload,
+  decryptBackupPayload,
+  structuredLog
 } from '../../api/security.js';
 import {
   EXPECTED_MONGO_INDEXES,
@@ -47,9 +60,12 @@ import app, {
   sanitizeDbMatchFilter,
   DB_ALLOWED_TABLES,
   MAX_ACTIVE_BIO_CHALLENGES,
+  MAX_ADMIN_UPLOAD_BODY_BYTES,
+  buildOneSignalAdminPushPayload,
+  verifyBotWebhookSignature,
   runtimeDB
 } from '../../api/index.js';
-import { verifyWompiChecksum } from '../../api/payments/gateway.js';
+import { verifyWompiChecksum, DEFAULT_WOMPI_API_TIMEOUT_MS } from '../../api/payments/gateway.js';
 import { resolveBookingPrice } from '../../api/pricingGuard.js';
 import {
   getColombiaTodayIso,
@@ -60,7 +76,7 @@ import { getCachedImage, setCachedImage } from '../components/ProtectedCanvasIma
 import { DEMO_DEFAULT_BOOKINGS, REAL_DEFAULT_BOOKINGS, DEFAULT_PIN_HASH } from '../services/api.js';
 
 // Helper para invocar rutas de Express en memoria sin abrir puertos TCP
-async function invokeApp(method, url, { body = {}, headers = {} } = {}) {
+async function invokeApp(method, url, { body = {}, headers = {}, remoteAddress = '127.0.0.1' } = {}) {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url, 'http://localhost');
     const req = {
@@ -75,7 +91,7 @@ async function invokeApp(method, url, { body = {}, headers = {} } = {}) {
       body,
       query: Object.fromEntries(parsedUrl.searchParams.entries()),
       params: {},
-      socket: { remoteAddress: '127.0.0.1' },
+      socket: { remoteAddress },
       get(name) {
         return this.headers[String(name).toLowerCase()];
       }
@@ -125,6 +141,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
     delete process.env.ALLOW_MONGO_IN_TESTS;
     delete process.env.MONGODB_URI;
     process.env.ADMIN_AUTH_SECRET = 'test-secret-de-al-menos-32-caracteres-seguros-2026';
+    process.env.BACKUP_ENCRYPTION_KEY = 'test-backup-dedicated-key-de-32-caracteres-2026';
     process.env.WOMPI_INTEGRITY_SECRET = 'test_integrity_secret_2026';
     process.env.WOMPI_EVENTS_SECRET = 'test_events_secret_2026';
     if (runtimeDB?.settings) {
@@ -2886,6 +2903,234 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         'utf8'
       );
       expect(mainActivityKt).toContain('instanceFollowRedirects = false');
+    });
+  });
+
+  // =========================================================================
+  // 15. AUDITORÍA INTEGRAL DE SEGURIDAD (HALLAZGOS #1–#35 Y MEJORAS P0, P1, P2)
+  // =========================================================================
+  describe('15. Auditoría Integral de Seguridad (Hallazgos #1–#35 y Mejoras P0, P1 y P2)', () => {
+    it('P0-1 & P0-2 (#1, #2): elimina PII y OneSignal App ID hardcodeados del código fuente y bloquea HTTP plano en validateImagePayload', () => {
+      const emailServiceCode = fs.readFileSync(path.join(process.cwd(), 'api/emailService.js'), 'utf8');
+      const apiIndexCode = fs.readFileSync(path.join(process.cwd(), 'api/index.js'), 'utf8');
+      const oneSignalCode = fs.readFileSync(path.join(process.cwd(), 'src/services/onesignal.js'), 'utf8');
+
+      expect(emailServiceCode).not.toContain('sgarcesg0410@gmail.com');
+      expect(emailServiceCode).not.toContain('573244725167');
+      expect(apiIndexCode).not.toContain('bc62cb00-9782-4a8e-a344-e8cf031a211a');
+      expect(oneSignalCode).not.toContain('bc62cb00-9782-4a8e-a344-e8cf031a211a');
+
+      // P0-2: validateImagePayload bloquea HTTP plano y exige HTTPS para URLs remotas
+      expect(validateImagePayload('http://169.254.169.254/latest/meta-data/imagen.jpg').valid).toBe(false);
+      expect(validateImagePayload('http://sebastiang.app/foto.jpg').valid).toBe(false);
+      expect(validateImagePayload('https://sebastiang.app/foto.jpg').valid).toBe(true);
+    });
+
+    it('P0-3 (#3): isAllowedBiometricOrigin e isAllowedBiometricRpId eliminan el comodín *.vercel.app y exigen allowlist exacta', () => {
+      expect(isAllowedBiometricOrigin('https://sebastiang.app')).toBe(true);
+      expect(isAllowedBiometricOrigin('https://foto-reservas.vercel.app')).toBe(true);
+      expect(isAllowedBiometricOrigin('https://sebastiang-attacker.vercel.app')).toBe(false);
+      expect(isAllowedBiometricOrigin('https://foto-reservas-phishing.vercel.app')).toBe(false);
+
+      expect(isAllowedBiometricRpId('sebastiang.app')).toBe(true);
+      expect(isAllowedBiometricRpId('foto-reservas.vercel.app')).toBe(true);
+      expect(isAllowedBiometricRpId('sebastiang-attacker.vercel.app')).toBe(false);
+    });
+
+    it('P0-4 (#5): GET /api/health oculta diagnósticos internos a visitantes anónimos y GET /api/admin/health los entrega al admin', async () => {
+      const publicHealth = await invokeApp('GET', '/api/health');
+      expect(publicHealth.status).toBe(200);
+      expect(publicHealth.body.service).toBe('sebastiang-api');
+      expect(publicHealth.body.mongoError).toBeUndefined();
+      expect(publicHealth.body.mongoLatencyMs).toBeUndefined();
+      expect(publicHealth.body.smtpConfigured).toBeUndefined();
+      expect(publicHealth.body.pushConfigured).toBeUndefined();
+
+      const adminToken = createAdminToken({ pwd: 1 });
+      const adminHealth = await invokeApp('GET', '/api/admin/health', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(adminHealth.status).toBe(200);
+      expect(typeof adminHealth.body.smtpConfigured).toBe('boolean');
+      expect(typeof adminHealth.body.pushConfigured).toBe('boolean');
+      expect(typeof adminHealth.body.mongoConfigured).toBe('boolean');
+    });
+
+    it('P0-5 & P0-6 (#4, #6): checkPublicWriteRateLimit configura failClosed: isProd y /api/bot-webhook exige firma HMAC-SHA256 o secreto', async () => {
+      const apiIndexCode = fs.readFileSync(path.join(process.cwd(), 'api/index.js'), 'utf8');
+      expect(apiIndexCode).toContain('failClosed: isProd');
+
+      const prevSecret = process.env.WHATSAPP_BOT_WEBHOOK_SECRET;
+      try {
+        process.env.WHATSAPP_BOT_WEBHOOK_SECRET = 'bot-hmac-secret-2026';
+
+        // 1. Petición sin firma ni secreto -> 401
+        const unauthBot = await invokeApp('POST', '/api/bot-webhook', {
+          body: { message: '5', sender: 'Spambot' }
+        });
+        expect(unauthBot.status).toBe(401);
+        expect(unauthBot.body.code).toBe('BOT_WEBHOOK_UNAUTHORIZED');
+
+        // 2. Petición con firma HMAC-SHA256 válida -> 200
+        const bodyPayload = { message: '1', sender: 'Cliente Real' };
+        const sig = crypto
+          .createHmac('sha256', process.env.WHATSAPP_BOT_WEBHOOK_SECRET)
+          .update(JSON.stringify(bodyPayload))
+          .digest('hex');
+
+        const authBot = await invokeApp('POST', '/api/bot-webhook', {
+          headers: { 'x-bot-signature': `sha256=${sig}` },
+          body: bodyPayload
+        });
+        expect(authBot.status).toBe(200);
+        expect(authBot.body.success).toBe(true);
+      } finally {
+        if (prevSecret !== undefined) process.env.WHATSAPP_BOT_WEBHOOK_SECRET = prevSecret;
+        else delete process.env.WHATSAPP_BOT_WEBHOOK_SECRET;
+      }
+    });
+
+    it('P1-7, P1-9, P1-10, P1-11 & P1-13 (#7–#14): keyring separado de backup, OneSignal target admin, sin fallback telefónico en pagos, TTLs 7d/30d y reauth en restore', async () => {
+      // #7: No existe el literal SHA-256 de "0493" en api/security.js
+      const secCode = fs.readFileSync(path.join(process.cwd(), 'api/security.js'), 'utf8');
+      expect(secCode).not.toContain('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3');
+      expect(secCode).not.toContain('DEV_EPHEMERAL_SECRET');
+
+      // P1-7 (#9): Backup exige BACKUP_ENCRYPTION_KEY separado de ADMIN_AUTH_SECRET
+      const prevBackupKey = process.env.BACKUP_ENCRYPTION_KEY;
+      const prevV1 = process.env.BACKUP_ENCRYPTION_KEY_V1;
+      const prevV2 = process.env.BACKUP_ENCRYPTION_KEY_V2;
+      try {
+        process.env.BACKUP_ENCRYPTION_KEY = '';
+        delete process.env.BACKUP_ENCRYPTION_KEY_V1;
+        delete process.env.BACKUP_ENCRYPTION_KEY_V2;
+        expect(() => encryptBackupPayload({ test: true })).toThrow(/BACKUP_ENCRYPTION_KEY/);
+      } finally {
+        if (prevBackupKey !== undefined) process.env.BACKUP_ENCRYPTION_KEY = prevBackupKey;
+        else delete process.env.BACKUP_ENCRYPTION_KEY;
+        if (prevV1 !== undefined) process.env.BACKUP_ENCRYPTION_KEY_V1 = prevV1;
+        if (prevV2 !== undefined) process.env.BACKUP_ENCRYPTION_KEY_V2 = prevV2;
+      }
+
+      // P1-9 (#12): OneSignal dirige notificaciones exclusivamente al admin external_id y tag role=admin
+      const pushPayload = buildOneSignalAdminPushPayload({ title: 'Test', message: 'Body' });
+      expect(pushPayload.included_segments).toBeUndefined();
+      expect(pushPayload.include_aliases?.external_id).toContain('sebastiang_admin');
+      expect(pushPayload.filters).toEqual([{ field: 'tag', key: 'role', relation: '=', value: 'admin' }]);
+
+      // P1-10 (#13): paymentBelongsToBooking en backend NO vincula por sufijo telefónico de 8 dígitos
+      const bookingA = { id: 'book-a-100', clientWhatsApp: '+573105551234' };
+      const orphanPaySamePhone = { id: 'pay-orphan', clientWhatsApp: '+573105551234', amount: 20000 };
+      expect(paymentBelongsToBooking(orphanPaySamePhone, bookingA)).toBe(false);
+      expect(paymentBelongsToBooking({ ...orphanPaySamePhone, bookingId: 'book-a-100' }, bookingA)).toBe(true);
+
+      // P1-11 (#14): TTLs reducidos a 7 días (bio_refresh) y 30 días (apk_device)
+      expect(BIO_REFRESH_TOKEN_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000);
+      expect(APK_DEVICE_TOKEN_TTL_MS).toBe(30 * 24 * 60 * 60 * 1000);
+
+      // P1-13 (#10): En producción, POST /api/admin/backup/restore exige reauthPin o confirmRestore
+      const prevEnv = process.env.NODE_ENV;
+      const prevSecret = process.env.ADMIN_AUTH_SECRET;
+      try {
+        process.env.NODE_ENV = 'production';
+        process.env.ADMIN_AUTH_SECRET = 'prod-admin-auth-secret-min-32-chars-2026-test';
+        const activePwd = runtimeDB.settings?.adminPasswordVersion || 1;
+        const adminToken = createAdminToken({ pwd: activePwd });
+        const noReauthRes = await invokeApp('POST', '/api/admin/backup/restore', {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          body: { snapshot: { bookings: [] } }
+        });
+        expect(noReauthRes.status).toBe(403);
+        expect(noReauthRes.body.code).toBe('RESTORE_REAUTH_REQUIRED');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevSecret !== undefined) process.env.ADMIN_AUTH_SECRET = prevSecret;
+        else delete process.env.ADMIN_AUTH_SECRET;
+      }
+    });
+
+    it('P2-15 a P2-24 (#15–#35): rotación keyring ADMIN_AUTH_SECRET, cookie __Host- + CSRF, HSTS, network_security_config.xml, token recibo 128 bits, fidelidad 2 tokens y timeout Wompi 4.5s', async () => {
+      // P2-15 & P2-21 (#8): Rotación multi-llave con kid en ADMIN_AUTH_SECRET_V1 / V2
+      const prevKeyId = process.env.ADMIN_AUTH_SECRET_KEY_ID;
+      const prevV1 = process.env.ADMIN_AUTH_SECRET_V1;
+      const prevV2 = process.env.ADMIN_AUTH_SECRET_V2;
+      try {
+        process.env.ADMIN_AUTH_SECRET_V1 = 'secret-admin-key-version-1-min-32-chars-2025';
+        process.env.ADMIN_AUTH_SECRET_V2 = 'secret-admin-key-version-2-min-32-chars-2026';
+        process.env.ADMIN_AUTH_SECRET_KEY_ID = 'v1';
+        const tokV1 = createAdminToken({ pwd: 1 });
+        expect(verifyAdminToken(tokV1)?.kid).toBe('v1');
+
+        // Rotar a v2: el token firmado con v1 sigue siendo verificable gracias al keyring
+        process.env.ADMIN_AUTH_SECRET_KEY_ID = 'v2';
+        const tokV2 = createAdminToken({ pwd: 1 });
+        expect(verifyAdminToken(tokV2)?.kid).toBe('v2');
+        expect(verifyAdminToken(tokV1)?.kid).toBe('v1');
+      } finally {
+        if (prevKeyId !== undefined) process.env.ADMIN_AUTH_SECRET_KEY_ID = prevKeyId;
+        else delete process.env.ADMIN_AUTH_SECRET_KEY_ID;
+        if (prevV1 !== undefined) process.env.ADMIN_AUTH_SECRET_V1 = prevV1;
+        else delete process.env.ADMIN_AUTH_SECRET_V1;
+        if (prevV2 !== undefined) process.env.ADMIN_AUTH_SECRET_V2 = prevV2;
+        else delete process.env.ADMIN_AUTH_SECRET_V2;
+      }
+
+      // P2-16 (#16, #30): Cookie __Host-sg_admin_session en producción y defensa CSRF para mutaciones por cookie
+      expect(ADMIN_HOST_SESSION_COOKIE_NAME).toBe('__Host-sg_admin_session');
+      expect(buildAdminSessionCookieHeader('tok123', { isProd: true })).toContain('__Host-sg_admin_session=tok123');
+      expect(verifyCsrfForCookieAuth({ method: 'POST', headers: { origin: 'https://evil.example.com' } })).toBe(false);
+      expect(verifyCsrfForCookieAuth({ method: 'POST', headers: { 'x-requested-with': 'XMLHttpRequest' } })).toBe(true);
+
+      // P2-17 (#15, #29): Tope de 25 MB (413 Payload Too Large) y cabecera HSTS en Express
+      expect(MAX_ADMIN_UPLOAD_BODY_BYTES).toBe(25 * 1024 * 1024);
+      const oversizeRes = await invokeApp('POST', '/api/admin/catalog', {
+        headers: { 'content-length': String(30 * 1024 * 1024) },
+        body: {}
+      });
+      expect(oversizeRes.status).toBe(413);
+
+      // P2-18 (#31, #32): network_security_config.xml con pin-set y RemoteSigned en Instalar-SebastianG.bat
+      const netSecXml = fs.readFileSync(
+        path.join(process.cwd(), 'android/app/src/main/res/xml/network_security_config.xml'),
+        'utf8'
+      );
+      expect(netSecXml).toContain('<pin-set');
+      expect(netSecXml).toContain('cleartextTrafficPermitted="false"');
+      const batContent = fs.readFileSync(path.join(process.cwd(), 'Instalar-SebastianG.bat'), 'utf8');
+      expect(batContent).toContain('-ExecutionPolicy RemoteSigned');
+      expect(batContent).not.toContain('-ExecutionPolicy Bypass');
+
+      // P2-19 (#25): api/pricing.js re-exporta desde shared/pricing.js sin duplicación
+      const apiPricingCode = fs.readFileSync(path.join(process.cwd(), 'api/pricing.js'), 'utf8');
+      expect(apiPricingCode).toContain("from '../shared/pricing.js'");
+      expect(apiPricingCode.split('\n').length).toBeLessThan(35);
+
+      // P2-23 (#20): Receipt token de 128 bits (16 bytes = 22 chars base64url)
+      expect(RECEIPT_TOKEN_BYTES).toBe(16);
+      const rcptTok = createReceiptToken('book-entropy-128');
+      expect(verifyReceiptToken(rcptTok)).toBe('book-entropy-128');
+
+      // #18: /api/public/loyalty exige al menos 2 tokens cuando el nombre registrado tiene nombre y apellido
+      runtimeDB.bookings = [{
+        id: 'b-loyal-2tok',
+        clientName: 'Carolina Sepúlveda',
+        clientWhatsApp: '+573187776655',
+        status: 'completed'
+      }];
+      const singleWordAttempt = await invokeApp('GET', '/api/public/loyalty?phone=573187776655&clientName=Carolina', {
+        remoteAddress: '198.51.100.77'
+      });
+      expect(singleWordAttempt.body.isLoyal).toBe(false);
+      const fullMatchAttempt = await invokeApp('GET', '/api/public/loyalty?phone=573187776655&clientName=Carolina%20Sepulveda', {
+        remoteAddress: '198.51.100.77'
+      });
+      expect(fullMatchAttempt.body.isLoyal).toBe(true);
+
+      // #28 & #35: Token de galería exige >= 16 caracteres y timeout de Wompi API es 4500 ms
+      expect(isValidGalleryTokenFormat('corto-12345')).toBe(false);
+      expect(isValidGalleryTokenFormat('gal-token-valido-123456')).toBe(true);
+      expect(DEFAULT_WOMPI_API_TIMEOUT_MS).toBe(4500);
+      expect(typeof structuredLog).toBe('function');
     });
   });
 });

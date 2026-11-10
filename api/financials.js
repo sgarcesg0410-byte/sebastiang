@@ -5,9 +5,19 @@
 // Ubicado dentro de api/ para garantizar resolución nativa en Vercel Serverless.
 // ==============================================================================
 
-export const REQUIRED_BOOKING_DEPOSIT = 20000;
+import { escapeHtml } from './security.js';
+import { REQUIRED_BOOKING_DEPOSIT } from './pricing.js';
 
-export function paymentBelongsToBooking(payment, booking) {
+export { escapeHtml, REQUIRED_BOOKING_DEPOSIT };
+
+/**
+ * Vincula un pago a una reserva exclusivamente mediante identificadores inequívocos
+ * (`bookingId` o `sessionToken` vinculado a la reserva).
+ * Hallazgo #13 (P1-10): Se deshabilita por defecto el emparejamiento débil por sufijo telefónico
+ * de 8 dígitos para evitar que pagos de una reserva anterior del mismo cliente se acrediten
+ * erróneamente a una nueva reserva.
+ */
+export function paymentBelongsToBooking(payment, booking, { allowPhoneFallback = false } = {}) {
   if (!payment || !booking) return false;
 
   const bId = String(booking.id || '').trim();
@@ -23,24 +33,31 @@ export function paymentBelongsToBooking(payment, booking) {
     return false;
   }
 
-  // 2. Vinculación por sessionToken si coincide con el id de reserva
+  // 2. Vinculación por sessionToken si coincide con el id de reserva o el token de galería de la reserva
   const token = String(payment.sessionToken || '').trim();
   const tokenCleanId = token.replace(/^book-/, '');
+  const bookingGalleryToken = String(booking.sessionToken || booking.galleryToken || '').trim();
 
   if (token) {
-    if (token === bId || (bCleanId && tokenCleanId === bCleanId)) {
+    if (
+      token === bId ||
+      (bCleanId && tokenCleanId === bCleanId) ||
+      (bookingGalleryToken && token === bookingGalleryToken)
+    ) {
       return true;
     }
     return false;
   }
 
-  // 3. Fallback por teléfono del cliente
-  const pPhone = String(payment.clientWhatsApp || '').replace(/\D/g, '');
-  const bPhone = String(booking.clientWhatsApp || '').replace(/\D/g, '');
-  if (pPhone.length >= 7 && bPhone.length >= 7) {
-    const key = bPhone.slice(-8);
-    if (pPhone.endsWith(key) || key.endsWith(pPhone.slice(-8))) {
-      return true;
+  // 3. Fallback opcional por teléfono (desactivado por defecto en backend por P1-10)
+  if (allowPhoneFallback) {
+    const pPhone = String(payment.clientWhatsApp || '').replace(/\D/g, '');
+    const bPhone = String(booking.clientWhatsApp || '').replace(/\D/g, '');
+    if (pPhone.length >= 7 && bPhone.length >= 7) {
+      const key = bPhone.slice(-8);
+      if (pPhone.endsWith(key) || key.endsWith(pPhone.slice(-8))) {
+        return true;
+      }
     }
   }
 
@@ -140,14 +157,4 @@ export function computePortfolioBalance(bookings = [], payments = []) {
 
   const porCobrar = Math.max(0, total - cobrado);
   return { total, cobrado, porCobrar };
-}
-
-export function escapeHtml(str) {
-  if (str === null || str === undefined) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }

@@ -4,8 +4,8 @@
 > permitía fijar o leer el PIN con solo conocer un WhatsApp público. **Todo lo que se
 > implemente aquí debe respetar las 6 reglas de este documento sin excepciones.**
 >
-> Estado: **especificación cerrada, pendiente de implementar.**
-> Requisito previo: `ADMIN_EMAIL` definida en Vercel (por defecto `sgarcesg0410@gmail.com`).
+> Estado: **especificación cerrada, implementada en MongoDB Atlas.**
+> Requisito previo: `ADMIN_EMAIL` definida en Vercel (por defecto `reservas@sebastiang.app`).
 
 ---
 
@@ -18,7 +18,7 @@
 | Autenticación | **Ninguna** (el usuario ha olvidado la clave). Fuera del middleware de admin. |
 | Rate limit | **3 solicitudes / 15 min por IP** (reutilizar `getClientIp` + un limitador propio) |
 | Body | `{}` — se **ignora por completo** cualquier campo, en especial `email` |
-| Destinatario | **Solo del servidor**: `process.env.ADMIN_EMAIL \|\| 'sgarcesg0410@gmail.com'` |
+| Destinatario | **Solo del servidor**: `process.env.ADMIN_EMAIL \|\| 'reservas@sebastiang.app'` |
 | Respuesta | **Siempre** `{ success: true, message: 'Si el correo corresponde al administrador, se envió un código.' }` |
 | Prohibido | Devolver el código, registrarlo en logs, o incluir el destinatario en la respuesta |
 

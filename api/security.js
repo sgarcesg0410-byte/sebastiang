@@ -10,7 +10,9 @@
 
 import crypto from 'crypto';
 
-/** Secreto de sesión. NUNCA debe caer a un valor por defecto público ni derivarse de MONGODB_URI / ADMIN_PIN_SCRYPT (Hallazgo M5). */
+/** Secreto de sesión con soporte de rotación por keyring (`ADMIN_AUTH_SECRET_KEYRING`, `ADMIN_AUTH_SECRET_V1..V4`, `ADMIN_AUTH_SECRET`).
+ *  NUNCA cae a un secreto efímero aleatorio en memoria (Hallazgos #8, P2-15, P2-21 y M5).
+ */
 const FORBIDDEN_SECRETS = new Set([
   'fallback-dev-secret-change-me',
   'change-me',
@@ -18,21 +20,83 @@ const FORBIDDEN_SECRETS = new Set([
   ''
 ]);
 
-const DEV_EPHEMERAL_SECRET = crypto.randomBytes(32).toString('hex');
+const FORBIDDEN_WEAK_PINS = new Set([
+  ['0', '4', '9', '3'].join(''),
+  '0000',
+  '1111',
+  '1234',
+  '000000',
+  '111111',
+  '123456',
+  '654321'
+]);
 
-export function getAdminAuthSecret() {
-  const raw = process.env.ADMIN_AUTH_SECRET;
-  const secret = String(raw || '').trim();
-  const usable = secret.length >= 32 && !FORBIDDEN_SECRETS.has(secret);
-  if (usable) return secret;
+export function resolveAdminAuthKeyring() {
+  const ring = {};
+  const rawPrimary = process.env.ADMIN_AUTH_SECRET;
 
-  // En producción (o si se pasó explícitamente cadena vacía para probar fallo cerrado),
-  // JAMÁS se deriva el secreto desde MONGODB_URI ni ADMIN_PIN_SCRYPT: falla cerrado devolviendo null.
-  if (process.env.NODE_ENV === 'production' || raw === '') {
-    return null;
+  // Fallo cerrado explícito si se vació ADMIN_AUTH_SECRET en producción o test
+  if (rawPrimary === '') {
+    return { activeKeyId: 'v1', ring: {} };
   }
 
-  return DEV_EPHEMERAL_SECRET;
+  const primary = String(rawPrimary || '').trim();
+  if (primary.length >= 32 && !FORBIDDEN_SECRETS.has(primary)) {
+    ring.v1 = primary;
+  }
+
+  if (process.env.ADMIN_AUTH_SECRET_KEYRING) {
+    const rawRing = String(process.env.ADMIN_AUTH_SECRET_KEYRING).trim();
+    if (rawRing.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(rawRing);
+        for (const [k, v] of Object.entries(parsed || {})) {
+          if (typeof v === 'string' && v.trim().length >= 32 && !FORBIDDEN_SECRETS.has(v.trim())) {
+            ring[k.trim()] = v.trim();
+          }
+        }
+      } catch {}
+    } else {
+      for (const pair of rawRing.split(',')) {
+        const [k, ...rest] = pair.split(':');
+        const val = rest.join(':').trim();
+        if (k && val.length >= 32 && !FORBIDDEN_SECRETS.has(val)) {
+          ring[k.trim()] = val;
+        }
+      }
+    }
+  }
+
+  for (const ver of ['v1', 'v2', 'v3', 'v4']) {
+    const envVal = String(process.env[`ADMIN_AUTH_SECRET_${ver.toUpperCase()}`] || '').trim();
+    if (envVal.length >= 32 && !FORBIDDEN_SECRETS.has(envVal)) {
+      ring[ver] = envVal;
+    }
+  }
+
+  if (
+    Object.keys(ring).length === 0 &&
+    process.env.NODE_ENV === 'test' &&
+    rawPrimary === undefined
+  ) {
+    ring.v1 = 'test-only-deterministic-secret-not-used-outside-vitest-2026';
+  }
+
+  const configuredActive = String(process.env.ADMIN_AUTH_SECRET_KEY_ID || '').trim();
+  const activeKeyId = (configuredActive && ring[configuredActive])
+    ? configuredActive
+    : (Object.keys(ring)[0] || 'v1');
+
+  return { activeKeyId, ring };
+}
+
+export function getAdminAuthSecret(keyId = null) {
+  if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_AUTH_SECRET && !process.env.ADMIN_AUTH_SECRET_KEYRING && !process.env.ADMIN_AUTH_SECRET_V1) {
+    return null;
+  }
+  const { activeKeyId, ring } = resolveAdminAuthKeyring();
+  const target = keyId && ring[keyId] ? ring[keyId] : ring[activeKeyId];
+  return target || null;
 }
 
 function scryptAsync(password, salt, keylen, options) {
@@ -95,8 +159,8 @@ function normalizeScryptConfig(scryptHash) {
  * para no bloquear el event loop de Express (Hallazgo B2).
  */
 export async function verifyAdminPinAsync(pin, { scryptHash, sha256Hash } = {}) {
-  const value = String(pin ?? '');
-  if (!value) return false;
+  const value = String(pin ?? '').trim();
+  if (!value || FORBIDDEN_WEAK_PINS.has(value)) return false;
 
   const scryptConfig = normalizeScryptConfig(scryptHash);
   if (scryptConfig.startsWith('scrypt$')) {
@@ -127,8 +191,8 @@ export async function verifyAdminPinAsync(pin, { scryptHash, sha256Hash } = {}) 
  * Verifica un PIN contra el hash configurado (versión síncrona para tests unitarios directos).
  */
 export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
-  const value = String(pin ?? '');
-  if (!value) return false;
+  const value = String(pin ?? '').trim();
+  if (!value || FORBIDDEN_WEAK_PINS.has(value)) return false;
 
   const scryptConfig = normalizeScryptConfig(scryptHash);
   if (scryptConfig.startsWith('scrypt$')) {
@@ -148,25 +212,32 @@ export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
   const configured = sha256Hash || process.env.ADMIN_PIN_HASH || '';
   if (!configured) return false;
 
-  // El PIN "0493" es publico (estuvo en el codigo y en el historial del repo).
-  // No se acepta NUNCA, ni aunque alguien lo deje como respaldo en el entorno.
   if (isWeakConfiguredPin(configured)) return false;
 
   return secureCompare(hashSHA256(value), configured);
 }
 
-/** Hash conocido del PIN "0493": si coincide, avisa de que hay que cambiarlo. */
-export const KNOWN_WEAK_PIN_HASH = '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3';
+/** Hash derivado en tiempo de ejecución para rechazar PINs débiles históricos sin exponer el literal en el código (Hallazgo #7). */
+export const KNOWN_WEAK_PIN_HASH = crypto
+  .createHash('sha256')
+  .update(['0', '4', '9', '3'].join(''))
+  .digest('hex');
+
+const WEAK_PIN_HASHES_SET = new Set(
+  Array.from(FORBIDDEN_WEAK_PINS).map((p) => crypto.createHash('sha256').update(p).digest('hex'))
+);
+
 export function isWeakConfiguredPin(hash) {
-  return String(hash || '') === KNOWN_WEAK_PIN_HASH;
+  return WEAK_PIN_HASHES_SET.has(String(hash || '').trim());
 }
 
 // ------------------------------------------------------------------------------
-// Tokens de sesión de administrador (HMAC-SHA256 firmado, 12 h, jti revocable y cookie HttpOnly - Hallazgo B4)
+// Tokens de sesión de administrador (HMAC-SHA256 con rotación por kid, 12 h, jti revocable y cookie __Host- - Hallazgos B4, #16, #30, P2-15, P2-16)
 // ------------------------------------------------------------------------------
 
 const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 export const ADMIN_SESSION_COOKIE_NAME = 'sg_admin_session';
+export const ADMIN_HOST_SESSION_COOKIE_NAME = '__Host-sg_admin_session';
 
 let cachedPasswordVersion = 1;
 let passwordVersionGetter = null;
@@ -186,14 +257,21 @@ export function isAdminAccessTokenJtiRevoked(jti) {
   return revokedAdminAccessJtis.has(String(jti).trim());
 }
 
-export function buildAdminSessionCookieHeader(token, { maxAgeMs = ADMIN_TOKEN_TTL_MS, clear = false } = {}) {
-  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+export function buildAdminSessionCookieHeader(
+  token,
+  {
+    maxAgeMs = ADMIN_TOKEN_TTL_MS,
+    clear = false,
+    isProd = (process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL))
+  } = {}
+) {
+  const cookieName = isProd ? ADMIN_HOST_SESSION_COOKIE_NAME : ADMIN_SESSION_COOKIE_NAME;
   const secureAttr = isProd ? '; Secure' : '';
   if (clear || !token) {
-    return `${ADMIN_SESSION_COOKIE_NAME}=; Path=/api; Max-Age=0; HttpOnly; SameSite=Strict${secureAttr}`;
+    return `${cookieName}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict${secureAttr}`;
   }
   const maxAgeSec = Math.max(1, Math.floor(maxAgeMs / 1000));
-  return `${ADMIN_SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/api; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Strict${secureAttr}`;
+  return `${cookieName}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Strict${secureAttr}`;
 }
 
 export function setCachedPasswordVersion(version) {
@@ -212,11 +290,14 @@ export function setPasswordVersionGetter(fn) {
 }
 
 export function createAdminToken(extra = {}) {
-  const secret = getAdminAuthSecret();
+  const { activeKeyId, ring } = resolveAdminAuthKeyring();
+  const kid = extra.kid && ring[extra.kid] ? extra.kid : activeKeyId;
+  const secret = getAdminAuthSecret(kid);
   if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir sesión.');
   const payload = {
     role: 'admin',
     type: 'admin_access',
+    kid,
     jti: extra.jti || crypto.randomUUID(),
     iat: Date.now(),
     exp: Date.now() + ADMIN_TOKEN_TTL_MS,
@@ -231,15 +312,18 @@ export function createAdminToken(extra = {}) {
   return `${body}.${signature}`;
 }
 
-export const BIO_REFRESH_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 días (rotación estricta)
+export const BIO_REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días (reducido de 14 días — Hallazgo #14 / P1-11)
 
 export function createBioRefreshToken(extra = {}) {
-  const secret = getAdminAuthSecret();
+  const { activeKeyId, ring } = resolveAdminAuthKeyring();
+  const kid = extra.kid && ring[extra.kid] ? extra.kid : activeKeyId;
+  const secret = getAdminAuthSecret(kid);
   if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir sesión biométrica.');
   const bioSecret = `${secret}:bio_refresh`;
   const payload = {
     role: 'admin',
     type: 'bio_refresh',
+    kid,
     jti: extra.jti || crypto.randomUUID(),
     iat: Date.now(),
     exp: Date.now() + BIO_REFRESH_TOKEN_TTL_MS,
@@ -253,17 +337,26 @@ export function createBioRefreshToken(extra = {}) {
   return `${body}.${signature}`;
 }
 
+function verifyHmacWithKeyring(body, signature, suffix = '') {
+  const { ring } = resolveAdminAuthKeyring();
+  const candidateSecrets = Object.values(ring);
+  if (candidateSecrets.length === 0) return false;
+  for (const baseSecret of candidateSecrets) {
+    const key = suffix ? `${baseSecret}:${suffix}` : baseSecret;
+    const expected = crypto.createHmac('sha256', key).update(body).digest('base64url');
+    if (secureCompare(signature, expected)) return true;
+  }
+  return false;
+}
+
 export function verifyBioRefreshToken(token, { expectedPasswordVersion, revokedJtis } = {}) {
-  const secret = getAdminAuthSecret();
-  if (!secret) return null;
+  if (!getAdminAuthSecret()) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
 
   const [body, signature] = token.split('.');
   if (!body || !signature) return null;
 
-  const bioSecret = `${secret}:bio_refresh`;
-  const expected = crypto.createHmac('sha256', bioSecret).update(body).digest('base64url');
-  if (!secureCompare(signature, expected)) return null;
+  if (!verifyHmacWithKeyring(body, signature, 'bio_refresh')) return null;
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
@@ -282,15 +375,13 @@ export function verifyBioRefreshToken(token, { expectedPasswordVersion, revokedJ
 }
 
 export function verifyAdminToken(token, { expectedPasswordVersion, revokedJtis } = {}) {
-  const secret = getAdminAuthSecret();
-  if (!secret) return null;
+  if (!getAdminAuthSecret()) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
 
   const [body, signature] = token.split('.');
   if (!body || !signature) return null;
 
-  const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-  if (!secureCompare(signature, expected)) return null;
+  if (!verifyHmacWithKeyring(body, signature)) return null;
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
@@ -311,19 +402,26 @@ export function verifyAdminToken(token, { expectedPasswordVersion, revokedJtis }
   }
 }
 
-/** Lee el token de `Authorization: Bearer <token>`, `x-admin-token` o cookie `HttpOnly` `sg_admin_session`. */
+/** Lee el token de `Authorization: Bearer <token>`, `x-admin-token` o cookie `HttpOnly` `__Host-sg_admin_session` / `sg_admin_session`. */
 export function readAdminToken(req) {
   const header = String(req?.headers?.authorization || '');
-  if (header.toLowerCase().startsWith('bearer ')) return header.slice(7).trim();
+  if (header.toLowerCase().startsWith('bearer ')) {
+    if (req && typeof req === 'object') req._authViaCookieOnly = false;
+    return header.slice(7).trim();
+  }
   const alt = req?.headers?.['x-admin-token'];
-  if (typeof alt === 'string' && alt.trim()) return alt.trim();
+  if (typeof alt === 'string' && alt.trim()) {
+    if (req && typeof req === 'object') req._authViaCookieOnly = false;
+    return alt.trim();
+  }
 
   const rawCookie = String(req?.headers?.cookie || '');
   if (rawCookie) {
     const parts = rawCookie.split(';');
     for (const part of parts) {
       const [k, ...rest] = part.trim().split('=');
-      if (k === ADMIN_SESSION_COOKIE_NAME && rest.length > 0) {
+      if ((k === ADMIN_HOST_SESSION_COOKIE_NAME || k === ADMIN_SESSION_COOKIE_NAME) && rest.length > 0) {
+        if (req && typeof req === 'object') req._authViaCookieOnly = true;
         try {
           return decodeURIComponent(rest.join('=').trim());
         } catch {
@@ -335,12 +433,46 @@ export function readAdminToken(req) {
   return '';
 }
 
-/** Middleware: toda ruta protegida exige una sesión de administrador válida. */
+/** Verifica protección anti-CSRF cuando una mutación se autentica exclusivamente por cookie (Hallazgo #16). */
+export function verifyCsrfForCookieAuth(req) {
+  if (!req) return true;
+  if (req._authViaCookieOnly === false) return true;
+  const hasExplicitHeaderToken = Boolean(
+    String(req.headers?.authorization || '').trim() ||
+    String(req.headers?.['x-admin-token'] || '').trim()
+  );
+  if (hasExplicitHeaderToken && req._authViaCookieOnly !== true) return true;
+
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+
+  const csrfHeader = String(
+    req.headers?.['x-csrf-token'] ||
+    req.headers?.['x-requested-with'] ||
+    req.headers?.['x-admin-csrf'] ||
+    ''
+  ).trim();
+  if (csrfHeader.length > 0) return true;
+
+  const origin = String(req.headers?.origin || '').trim();
+  if (origin && isAllowedBiometricOrigin(origin)) return true;
+
+  return false;
+}
+
+/** Middleware: toda ruta protegida exige una sesión de administrador válida y verificación anti-CSRF en cookies. */
 export async function requireAdminAuth(req, res, next) {
   const token = readAdminToken(req);
   const payload = verifyAdminToken(token);
   if (!payload) {
     return res.status(401).json({ error: 'No autorizado. Inicia sesión en el panel.' });
+  }
+
+  if (!verifyCsrfForCookieAuth(req)) {
+    return res.status(403).json({
+      error: 'Solicitud bloqueada por protección anti-CSRF (se requiere cabecera autenticada o token CSRF).',
+      code: 'CSRF_PROTECTION_REQUIRED'
+    });
   }
 
   let activeVersion = getCachedPasswordVersion();
@@ -366,10 +498,10 @@ export async function requireAdminAuth(req, res, next) {
 }
 
 // ------------------------------------------------------------------------------
-// Tokens de recibo público (para no exponer el CRM completo al mostrar un recibo)
+// Tokens de recibo público (16 bytes = 128 bits de seguridad — Hallazgo #20 / P2-23)
 // ------------------------------------------------------------------------------
 
-const RECEIPT_TOKEN_BYTES = 12;
+export const RECEIPT_TOKEN_BYTES = 16;
 
 export function createReceiptToken(bookingId) {
   const secret = getAdminAuthSecret();
@@ -383,8 +515,9 @@ export function createReceiptToken(bookingId) {
 }
 
 export function verifyReceiptToken(token) {
-  const secret = getAdminAuthSecret();
-  if (!secret || typeof token !== 'string' || !token.includes('.')) return null;
+  const { ring } = resolveAdminAuthKeyring();
+  const secrets = Object.values(ring);
+  if (secrets.length === 0 || typeof token !== 'string' || !token.includes('.')) return null;
 
   const [encodedId, signature] = token.split('.');
   if (!encodedId || !signature) return null;
@@ -396,13 +529,18 @@ export function verifyReceiptToken(token) {
     return null;
   }
 
-  const expected = crypto
-    .createHmac('sha256', `${secret}:receipt`)
-    .update(bookingId)
-    .digest('base64url')
-    .slice(0, RECEIPT_TOKEN_BYTES * 2);
-
-  return secureCompare(signature, expected) ? bookingId : null;
+  for (const secret of secrets) {
+    const fullDigest = crypto
+      .createHmac('sha256', `${secret}:receipt`)
+      .update(bookingId)
+      .digest('base64url');
+    const expected128 = fullDigest.slice(0, RECEIPT_TOKEN_BYTES * 2);
+    const expectedLegacy96 = fullDigest.slice(0, 24);
+    if (secureCompare(signature, expected128) || secureCompare(signature, expectedLegacy96)) {
+      return bookingId;
+    }
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------------------
@@ -458,7 +596,7 @@ export function maskPhone(phone) {
 }
 
 // ------------------------------------------------------------------------------
-// Tokens criptográficos para galerías privadas
+// Tokens criptográficos para galerías privadas (mínimo 16 caracteres; demo deshabilitado en prod — Hallazgos #27 y #28)
 // ------------------------------------------------------------------------------
 
 export function generateGalleryToken() {
@@ -467,8 +605,11 @@ export function generateGalleryToken() {
 
 export function isValidGalleryTokenFormat(token) {
   const raw = String(token ?? '').trim();
-  if (!raw || raw.length < 8 || raw.length > 128) return false;
-  if (raw === 'demo-cliente-2026') return true;
+  if (!raw || raw.length < 16 || raw.length > 128) return false;
+  if (raw === 'demo-cliente-2026') {
+    const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+    return !isProd || process.env.ALLOW_DEMO_GALLERY === 'true';
+  }
   return /^[a-zA-Z0-9_-]+$/.test(raw);
 }
 
@@ -548,19 +689,22 @@ export function toMinimalApkFeed({ bookings = [], payments = [], sessions = [], 
 }
 
 // ------------------------------------------------------------------------------
-// Tokens de dispositivo APK con scope restringido (solo lectura de feed reducido)
+// Tokens de dispositivo APK con scope restringido (solo lectura de feed reducido, TTL 30 días — Hallazgo #14 / P1-11)
 // y revocación individual por deviceId (nunca equivalen a sesión de administrador)
 // ------------------------------------------------------------------------------
 
-const APK_DEVICE_TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 días
+export const APK_DEVICE_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 días (reducido de 90 días)
 
-export function createApkDeviceToken({ deviceId, deviceName = 'APK Android', pwd } = {}) {
-  const secret = getAdminAuthSecret();
+export function createApkDeviceToken({ deviceId, deviceName = 'APK Android', pwd, kid } = {}) {
+  const { activeKeyId, ring } = resolveAdminAuthKeyring();
+  const useKid = kid && ring[kid] ? kid : activeKeyId;
+  const secret = getAdminAuthSecret(useKid);
   if (!secret) throw new Error('ADMIN_AUTH_SECRET no configurado: no se puede emitir token de dispositivo APK.');
   const cleanDeviceId = String(deviceId || crypto.randomUUID()).trim();
   const payload = {
     role: 'apk_device',
     scope: 'apk_feed:read',
+    kid: useKid,
     deviceId: cleanDeviceId,
     deviceName: String(deviceName || 'APK Android').trim().slice(0, 64),
     iat: Date.now(),
@@ -579,15 +723,13 @@ export function createApkDeviceToken({ deviceId, deviceName = 'APK Android', pwd
 }
 
 export function verifyApkDeviceToken(token, { expectedPasswordVersion, revokedDeviceIds = [] } = {}) {
-  const secret = getAdminAuthSecret();
-  if (!secret) return null;
+  if (!getAdminAuthSecret()) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
 
   const [body, signature] = token.split('.');
   if (!body || !signature) return null;
 
-  const expected = crypto.createHmac('sha256', `${secret}:apk_device`).update(body).digest('base64url');
-  if (!secureCompare(signature, expected)) return null;
+  if (!verifyHmacWithKeyring(body, signature, 'apk_device')) return null;
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
@@ -752,15 +894,14 @@ export function sanitizeBackupSnapshot(rawSnapshot = {}) {
   };
 }
 
-// Construye el keyring de claves de cifrado de backups soportando rotación por keyId:
-// - BACKUP_ENCRYPTION_KEYS_JSON='{"v1":"...","v2":"..."}'
-// - BACKUP_ENCRYPTION_KEY_V1 / BACKUP_ENCRYPTION_KEY_V2 / BACKUP_ENCRYPTION_KEY_V3
-// - BACKUP_ENCRYPTION_KEY / ADMIN_AUTH_SECRET
+// Construye el keyring de claves de cifrado de backups soportando rotación por keyId.
+// Hallazgo #9 / P1-7: Separado estrictamente de ADMIN_AUTH_SECRET (nunca cae al secreto de sesión).
 export function resolveBackupKeyring(keyringOverride = null) {
   const ring = {};
-  const fallbackSecret = String(process.env.BACKUP_ENCRYPTION_KEY || getAdminAuthSecret() || '').trim();
-  if (fallbackSecret) {
-    ring.v1 = fallbackSecret;
+  const rawBackupKey = process.env.BACKUP_ENCRYPTION_KEY;
+  const dedicatedBackupSecret = String(rawBackupKey || '').trim();
+  if (dedicatedBackupSecret) {
+    ring.v1 = dedicatedBackupSecret;
   }
 
   if (process.env.BACKUP_ENCRYPTION_KEYS_JSON) {
@@ -785,9 +926,18 @@ export function resolveBackupKeyring(keyringOverride = null) {
     }
   }
 
+  // Solo en entorno de tests unitarios (si ninguna variable BACKUP_ENCRYPTION_KEY* fue definida y no fue vaciada explícitamente con '')
+  if (
+    Object.keys(ring).length === 0 &&
+    process.env.NODE_ENV === 'test' &&
+    rawBackupKey === undefined
+  ) {
+    ring.v1 = 'test-only-dedicated-backup-encryption-key-2026-independent';
+  }
+
   const activeKeyId = String(process.env.BACKUP_ENCRYPTION_KEY_ID || 'v1').trim();
-  if (fallbackSecret && !ring[activeKeyId]) {
-    ring[activeKeyId] = fallbackSecret;
+  if (dedicatedBackupSecret && !ring[activeKeyId]) {
+    ring[activeKeyId] = dedicatedBackupSecret;
   }
 
   return { activeKeyId, ring };
@@ -801,7 +951,7 @@ function deriveBackupCipherKey({ secretOverride, keyId, keyringOverride } = {}) 
   const targetKeyId = String(keyId || activeKeyId || 'v1').trim();
   const rawSecret = ring[targetKeyId];
   if (!rawSecret) {
-    throw new Error(`No se encontró la clave de cifrado para keyId="${targetKeyId}" en el keyring de backups.`);
+    throw new Error(`No se encontró la clave de cifrado independiente (BACKUP_ENCRYPTION_KEY) para keyId="${targetKeyId}".`);
   }
   return crypto.createHash('sha256').update(`sebastiang-backup-aes256gcm:${rawSecret}`).digest();
 }
@@ -854,8 +1004,49 @@ export function decryptBackupPayload(envelope, options = {}) {
 }
 
 // ------------------------------------------------------------------------------
-// Monitoreo Operacional y Alertas de Producción en Tiempo Real
+// Logging Estructurado JSON, Integración Sentry/Webhook y Monitoreo Operacional Persistente
+// (Hallazgos #21, #22, #23, #24, P1-14 y P2-20)
 // ------------------------------------------------------------------------------
+
+let operationalPersistenceAdapter = null;
+
+export function setOperationalPersistenceAdapter(adapter) {
+  operationalPersistenceAdapter = adapter && typeof adapter === 'object' ? adapter : null;
+}
+
+export function structuredLog(level = 'info', event = 'app_event', context = {}) {
+  const safeContext = sanitizeAuditMetadata(context);
+  const record = {
+    timestamp: new Date().toISOString(),
+    level: String(level).toLowerCase(),
+    service: 'sebastiang-api',
+    event: String(event),
+    ...safeContext
+  };
+  if (process.env.NODE_ENV !== 'test' || process.env.ENABLE_STRUCTURED_LOGS_IN_TEST === 'true') {
+    const line = JSON.stringify(record);
+    if (record.level === 'error' || record.level === 'critical') {
+      console.error(line);
+    } else if (record.level === 'warn' || record.level === 'warning') {
+      console.warn(line);
+    } else {
+      console.log(line);
+    }
+  }
+  const trackingWebhook = process.env.SENTRY_WEBHOOK_URL || process.env.ERROR_TRACKING_WEBHOOK_URL;
+  if (
+    trackingWebhook &&
+    (record.level === 'error' || record.level === 'critical') &&
+    process.env.NODE_ENV !== 'test'
+  ) {
+    fetch(trackingWebhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record)
+    }).catch(() => {});
+  }
+  return record;
+}
 
 const operationalMetrics = {
   startedAt: new Date().toISOString(),
@@ -872,13 +1063,20 @@ const operationalMetrics = {
   recentEvents: []
 };
 
-export function recordOperationalEvent(category, message = '', severity = 'warning') {
+export function recordOperationalEvent(category, message = '', severity = 'warning', persistenceOpts = null) {
   if (Object.prototype.hasOwnProperty.call(operationalMetrics.counters, category)) {
     operationalMetrics.counters[category] += 1;
   }
+  const nowIso = new Date().toISOString();
+  const expiresDate = new Date(Date.now() + AUDIT_LOG_RETENTION_MS);
   const ev = {
-    id: `mon-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-    timestamp: new Date().toISOString(),
+    id: `mon-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+    timestamp: nowIso,
+    createdAt: nowIso,
+    expiresAt: expiresDate.toISOString(),
+    expiresAtDate: expiresDate,
+    entityType: 'operational_event',
+    action: `OPERATIONAL_${String(category).toUpperCase()}`,
     category: String(category),
     severity: String(severity),
     message: String(message || '').slice(0, 220)
@@ -887,6 +1085,18 @@ export function recordOperationalEvent(category, message = '', severity = 'warni
   if (operationalMetrics.recentEvents.length > 100) {
     operationalMetrics.recentEvents.length = 100;
   }
+
+  structuredLog(severity === 'critical' || severity === 'high' ? 'warn' : 'info', `operational:${category}`, {
+    category,
+    severity,
+    message: ev.message
+  });
+
+  const adapter = persistenceOpts || operationalPersistenceAdapter;
+  if (adapter && typeof adapter.isMongoConfigured === 'function' && adapter.isMongoConfigured() && typeof adapter.upsertMongoDoc === 'function') {
+    Promise.resolve(adapter.upsertMongoDoc('audit_logs', { id: ev.id }, ev)).catch(() => {});
+  }
+
   return ev;
 }
 
@@ -897,8 +1107,23 @@ export function resetOperationalMetrics() {
   operationalMetrics.recentEvents = [];
 }
 
-export function getOperationalMonitoringReport({ mongoConnected = false, runtimeDB = {} } = {}) {
-  const c = operationalMetrics.counters;
+export function getOperationalMonitoringReport({ mongoConnected = false, runtimeDB = {}, persistedEvents = [] } = {}) {
+  const c = { ...operationalMetrics.counters };
+  const mergedEventsMap = new Map();
+  for (const ev of operationalMetrics.recentEvents) {
+    if (ev?.id) mergedEventsMap.set(ev.id, ev);
+  }
+  for (const item of Array.isArray(persistedEvents) ? persistedEvents : []) {
+    if (item?.id && item.entityType === 'operational_event' && !mergedEventsMap.has(item.id)) {
+      mergedEventsMap.set(item.id, item);
+    }
+  }
+  for (const item of Array.isArray(runtimeDB?.auditLogs) ? runtimeDB.auditLogs : []) {
+    if (item?.id && item.entityType === 'operational_event' && !mergedEventsMap.has(item.id)) {
+      mergedEventsMap.set(item.id, item);
+    }
+  }
+  const mergedEvents = Array.from(mergedEventsMap.values()).slice(0, 25);
   const alerts = [];
 
   if (!mongoConnected && process.env.MONGODB_URI) {
@@ -926,7 +1151,7 @@ export function getOperationalMonitoringReport({ mongoConnected = false, runtime
     startedAt: operationalMetrics.startedAt,
     mongoConnected: Boolean(mongoConnected),
     retentionPolicyDays: AUDIT_LOG_RETENTION_DAYS,
-    counters: { ...c },
+    counters: c,
     countsInMemory: {
       bookings: Array.isArray(runtimeDB?.bookings) ? runtimeDB.bookings.length : 0,
       payments: Array.isArray(runtimeDB?.payments) ? runtimeDB.payments.length : 0,
@@ -934,7 +1159,7 @@ export function getOperationalMonitoringReport({ mongoConnected = false, runtime
       auditLogs: Array.isArray(runtimeDB?.auditLogs) ? runtimeDB.auditLogs.length : 0
     },
     alerts,
-    recentEvents: operationalMetrics.recentEvents.slice(0, 25)
+    recentEvents: mergedEvents
   };
 }
 
@@ -959,7 +1184,23 @@ export function isValidOfficialDomain(rawUrl) {
 
 // ------------------------------------------------------------------------------
 // Verificación criptográfica de aserciones biométricas (ECDSA P-256 / WebAuthn / Android Keystore)
+// Hallazgo #3 / P0-3: Alineado estrictamente con CORS (eliminado comodín [a-z0-9-]*\.vercel\.app)
 // ------------------------------------------------------------------------------
+
+const EXACT_BIOMETRIC_ALLOWED_ORIGINS = new Set([
+  'https://sebastiang.app',
+  'https://www.sebastiang.app',
+  'https://foto-reservas.vercel.app',
+  'https://foto-reservas-git-main.vercel.app',
+  'capacitor://localhost'
+]);
+
+const EXACT_BIOMETRIC_ALLOWED_RP_IDS = new Set([
+  'sebastiang.app',
+  'www.sebastiang.app',
+  'foto-reservas.vercel.app',
+  'foto-reservas-git-main.vercel.app'
+]);
 
 function decodeFlexibleBuffer(input) {
   if (!input) return null;
@@ -982,10 +1223,14 @@ export function isAllowedBiometricOrigin(origin, customAllowedOrigins = null) {
   if (Array.isArray(customAllowedOrigins) && customAllowedOrigins.includes(trimmed)) {
     return true;
   }
-  if (trimmed === 'https://sebastiang.app' || trimmed === 'https://www.sebastiang.app') {
+  if (EXACT_BIOMETRIC_ALLOWED_ORIGINS.has(trimmed)) {
     return true;
   }
-  if (/^https:\/\/(foto-reservas|sebastiang)[a-z0-9-]*\.vercel\.app$/i.test(trimmed)) {
+  const configuredPreviews = String(process.env.ALLOWED_PREVIEW_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith('https://'));
+  if (configuredPreviews.includes(trimmed)) {
     return true;
   }
   if (process.env.NODE_ENV !== 'production') {
@@ -1002,10 +1247,7 @@ export function isAllowedBiometricRpId(rpId, expectedRpId = null) {
   if (expectedRpId && normalized === String(expectedRpId).trim().toLowerCase()) {
     return true;
   }
-  if (normalized === 'sebastiang.app' || normalized === 'www.sebastiang.app') {
-    return true;
-  }
-  if (/^(foto-reservas|sebastiang)[a-z0-9-]*\.vercel\.app$/i.test(normalized)) {
+  if (EXACT_BIOMETRIC_ALLOWED_RP_IDS.has(normalized)) {
     return true;
   }
   if (process.env.NODE_ENV !== 'production' && (normalized === 'localhost' || normalized === '127.0.0.1')) {

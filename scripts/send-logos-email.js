@@ -197,10 +197,11 @@ const htmlContent = `
 `;
 
 async function main() {
-  console.log('Sending logos email to sgarcesg0410@gmail.com and reservas@sebastiang.app...');
+  const adminTarget = (process.env.ADMIN_EMAIL || 'reservas@sebastiang.app').trim();
+  console.log(`Sending logos email to ${adminTarget}...`);
   const info = await transporter.sendMail({
     from: '"Sebastian G • Fotografía" <reservas@sebastiang.app>',
-    to: 'sgarcesg0410@gmail.com',
+    to: adminTarget,
     cc: 'reservas@sebastiang.app',
     subject: '📸 Tus Logos Oficiales para Perfil de WhatsApp - Sebastian G',
     html: htmlContent,

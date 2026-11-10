@@ -88,6 +88,7 @@ const VALID_PNG_DATA_URL =
 describe('Suite E2E de Operación Segura y Producción Definitiva', () => {
   beforeEach(() => {
     process.env.ADMIN_AUTH_SECRET = 'e2e-production-secret-key-2026-sebastiang-studio';
+    process.env.BACKUP_ENCRYPTION_KEY = 'e2e-dedicated-backup-encryption-key-2026-sebastiang';
     process.env.WOMPI_INTEGRITY_SECRET = 'e2e_wompi_integrity_secret';
     process.env.WOMPI_EVENTS_SECRET = 'e2e_wompi_events_secret';
     setCachedPasswordVersion(1);

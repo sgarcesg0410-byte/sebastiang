@@ -322,12 +322,12 @@ export function validateImagePayload(inputUrl, { maxBytes = DEFAULT_MAX_IMAGE_BY
     return { valid: true, kind: 'relative-path', mime: null, sizeBytes: 0 };
   }
 
-  // Caso 3: URL remota HTTPS
+  // Caso 3: URL remota HTTPS exclusivamente (bloquea HTTP plano y esquemas peligrosos)
   if (allowRemoteHttps) {
     try {
       const parsed = new URL(raw);
-      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        return { valid: false, error: 'Solo se permiten URLs de imagen con protocolo HTTP/HTTPS.' };
+      if (parsed.protocol !== 'https:') {
+        return { valid: false, error: 'Solo se permiten URLs de imagen seguras con protocolo HTTPS.' };
       }
       return { valid: true, kind: 'remote-url', mime: null, sizeBytes: 0 };
     } catch {

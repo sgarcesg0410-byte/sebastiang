@@ -9,12 +9,13 @@
 // ==============================================================================
 
 import { phoneKey } from './pricingGuard.js';
+import { REFERRAL_DISCOUNT_PERCENT } from './pricing.js';
 
-export const REFERRAL_DISCOUNT_PERCENT = 15;
+export { REFERRAL_DISCOUNT_PERCENT };
 
 /**
  * Normaliza cualquier entrada de código a dígitos limpios.
- * Acepta formatos como: "3244725167", "+573244725167", "REF-3244725167".
+ * Acepta formatos como: "3000000000", "+573000000000", "REF-3000000000".
  */
 export function extractReferralDigits(code) {
   return String(code || '').replace(/\D/g, '');
