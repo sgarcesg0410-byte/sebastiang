@@ -4138,7 +4138,7 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   }
 
   const activeScrypt = await getActiveAdminScryptHash();
-  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || (!activeScrypt ? KNOWN_WEAK_PIN_HASH : '');
+  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || '';
 
   const currentOk = await verifyAdminPinAsync(cleanCurrent, {
     scryptHash: activeScrypt,

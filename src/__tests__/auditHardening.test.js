@@ -3186,6 +3186,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
     it('SAST Gate & Higiene Final: valida detector de regresiones SAST, limpieza de código muerto y especificación MongoDB sin referencias a Supabase', async () => {
       const secExports = await import('../../api/security.js');
       expect(secExports.KNOWN_WEAK_PIN_HASH).toBeUndefined();
+      expect(secExports.isWeakConfiguredPin).toBeUndefined();
 
       const runInlineSastGate = ({ apiSec, apiIdx, emailSvc }) => {
         if (apiSec.includes('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3')) {
@@ -3240,6 +3241,27 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const specDoc = fs.readFileSync(path.join(process.cwd(), 'docs/recuperacion_contrasena_spec.md'), 'utf8');
       expect(specDoc).toContain('MongoDB Atlas');
       expect(specDoc).not.toContain('Supabase');
+
+      // 5. POST /api/admin/pin/change no lanza ReferenceError cuando activeScrypt está ausente
+      const prevScrypt = process.env.ADMIN_PIN_SCRYPT;
+      const prevDbScrypt = runtimeDB.settings?.adminPinScrypt;
+      try {
+        delete process.env.ADMIN_PIN_SCRYPT;
+        if (runtimeDB.settings) delete runtimeDB.settings.adminPinScrypt;
+        const adminTok = createAdminToken({ pwd: runtimeDB.settings?.adminPasswordVersion || 1 });
+        const pinChangeAttempt = await invokeApp('POST', '/api/admin/pin/change', {
+          headers: { Authorization: `Bearer ${adminTok}` },
+          body: {
+            currentPin: 'cualquier-pin-incorrecto',
+            newPin: 'NuevaClaveSuperSegura2026!'
+          }
+        });
+        expect(pinChangeAttempt.status).toBe(401);
+        expect(pinChangeAttempt.body.error).toContain('contraseña actual no es correcta');
+      } finally {
+        if (prevScrypt) process.env.ADMIN_PIN_SCRYPT = prevScrypt;
+        if (prevDbScrypt && runtimeDB.settings) runtimeDB.settings.adminPinScrypt = prevDbScrypt;
+      }
     });
   });
 });

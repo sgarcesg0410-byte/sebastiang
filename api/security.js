@@ -221,14 +221,6 @@ export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
   return secureCompare(hashSHA256(value), configured);
 }
 
-/**
- * @deprecated Función conservada como no-op para retrocompatibilidad.
- * La protección contra PINs débiles se ejecuta directamente en verifyAdminPinAsync con FORBIDDEN_WEAK_PINS.
- */
-export function isWeakConfiguredPin() {
-  return false;
-}
-
 // ------------------------------------------------------------------------------
 // Tokens de sesión de administrador (HMAC-SHA256 con rotación por kid, 12 h, jti revocable y cookie __Host- - Hallazgos B4, #16, #30, P2-15, P2-16)
 // ------------------------------------------------------------------------------
