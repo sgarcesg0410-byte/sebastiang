@@ -69,6 +69,7 @@ describe('Seguridad y Criptografía de Administrador', () => {
       '3023696513',
       'bc62cb00-9782-4a8e-a344-e8cf031a211a',
       '5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3',
+      '0493',
       'DEV_EPHEMERAL_SECRET'
     ];
 

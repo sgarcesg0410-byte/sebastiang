@@ -49,6 +49,9 @@ jobs:
             if (apiSec.includes('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3')) {
               throw new Error('SAST: Hardcoded weak PIN SHA-256 hash found in api/security.js');
             }
+            if (apiSec.includes('0493')) {
+              throw new Error('SAST: Direct literal weak PIN \"0493\" found in api/security.js');
+            }
             if (emailSvc.includes('sgarcesg0410@gmail.com') || apiIdx.includes('bc62cb00-9782-4a8e-a344-e8cf031a211a')) {
               throw new Error('SAST: Hardcoded personal email or OneSignal App ID found in backend');
             }

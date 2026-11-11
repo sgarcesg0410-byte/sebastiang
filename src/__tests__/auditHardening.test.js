@@ -3183,13 +3183,16 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(pubReviewsVisible.body.some(r => r.id === revId)).toBe(true);
     });
 
-    it('SAST Gate & Higiene Final: valida detector de regresiones SAST, KNOWN_WEAK_PIN_HASH privado y especificación MongoDB sin referencias a Supabase', async () => {
+    it('SAST Gate & Higiene Final: valida detector de regresiones SAST, limpieza de código muerto y especificación MongoDB sin referencias a Supabase', async () => {
       const secExports = await import('../../api/security.js');
       expect(secExports.KNOWN_WEAK_PIN_HASH).toBeUndefined();
 
       const runInlineSastGate = ({ apiSec, apiIdx, emailSvc }) => {
         if (apiSec.includes('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3')) {
           throw new Error('SAST: Hardcoded weak PIN SHA-256 hash found in api/security.js');
+        }
+        if (apiSec.includes('0493')) {
+          throw new Error('SAST: Direct literal weak PIN "0493" found in api/security.js');
         }
         if (emailSvc.includes('sgarcesg0410@gmail.com') || apiIdx.includes('bc62cb00-9782-4a8e-a344-e8cf031a211a')) {
           throw new Error('SAST: Hardcoded personal email or OneSignal App ID found in backend');
@@ -3215,13 +3218,25 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
 
       expect(() =>
         runInlineSastGate({
+          apiSec: realSec + '\nconst leakDirect = "0493";',
+          apiIdx: realIdx,
+          emailSvc: realEmail
+        })
+      ).toThrow(/SAST: Direct literal weak PIN/);
+
+      expect(() =>
+        runInlineSastGate({
           apiSec: realSec,
           apiIdx: realIdx,
           emailSvc: realEmail + '\nconst leakEmail = "sgarcesg0410@gmail.com";'
         })
       ).toThrow(/SAST: Hardcoded personal email/);
 
-      // 3. docs/recuperacion_contrasena_spec.md documenta MongoDB Atlas (colección security) y no referencia Supabase
+      // 3. ci.yml contiene la regla activa contra el literal directo "0493"
+      const ciWorkflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+      expect(ciWorkflow).toContain("apiSec.includes('0493')");
+
+      // 4. docs/recuperacion_contrasena_spec.md documenta MongoDB Atlas (colección security) y no referencia Supabase
       const specDoc = fs.readFileSync(path.join(process.cwd(), 'docs/recuperacion_contrasena_spec.md'), 'utf8');
       expect(specDoc).toContain('MongoDB Atlas');
       expect(specDoc).not.toContain('Supabase');

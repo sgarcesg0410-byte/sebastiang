@@ -12,7 +12,6 @@ import {
   hashPinScryptAsync,
   buildAdminSessionCookieHeader,
   revokeAdminAccessTokenJti,
-  isWeakConfiguredPin,
   createReceiptToken,
   readAdminToken,
   verifyAdminToken,
@@ -2049,10 +2048,10 @@ app.post('/api/admin/auth', async (req, res) => {
 
   // Verificación asíncrona del PIN en el SERVIDOR (sin bloquear el event loop - Hallazgo B2).
   const activeScrypt = await getActiveAdminScryptHash();
-  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || '';
+  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || '';
   const hasConfiguredPin = Boolean(activeScrypt || effectiveSha);
 
-  if (!hasConfiguredPin || isWeakConfiguredPin(effectiveSha)) {
+  if (!hasConfiguredPin) {
     console.warn('⚠️ [Seguridad] No se ha configurado un PIN robusto aún. Usa ADMIN_PIN_SCRYPT o cámbialo en el Dashboard.');
   }
 
