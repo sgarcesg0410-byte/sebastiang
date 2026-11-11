@@ -20,6 +20,14 @@ out/
 # Allow example file
 !.env.example
 
+# Keystores, certificates and private keys (Hallazgo #27)
+*.keystore
+*.jks
+*.p12
+*.key
+*.pem
+*-service-account*.json
+
 # Editor / IDE
 .vscode/
 .idea/

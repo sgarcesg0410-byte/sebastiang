@@ -151,7 +151,8 @@ import {
   getPrintSizes,
   getRetabloSizes,
   calculateRetablosFinancials,
-  DEFAULT_RETABLO_COSTS
+  DEFAULT_RETABLO_COSTS,
+  clearAdminSession
 } from '../services/api';
 import { computeBookingPaymentStatus } from '../services/financials';
 
@@ -1997,6 +1998,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const handleLogout = () => {
     if (confirm('¿Deseas cerrar la sesión del panel?')) {
       forgetTrustedDevice();
+      clearAdminSession();
+      try {
+        fetch('/api/admin/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+      } catch (e) {}
       setIsAuthenticated(false);
       setPinInput('');
       setIsTwoFactorStep(false);

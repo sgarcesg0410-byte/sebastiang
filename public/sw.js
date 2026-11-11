@@ -66,11 +66,23 @@ self.addEventListener('notificationclick', (event) => {
 
   const action = event.action;
   const notifData = event.notification.data || {};
-  let targetUrl = notifData.url || '/?mode=admin';
+  let targetUrl = '/?mode=admin';
 
-  if (action === 'whatsapp' && notifData.whatsappUrl) {
-    targetUrl = notifData.whatsappUrl;
-  }
+  const candidateUrl = (action === 'whatsapp' && notifData.whatsappUrl)
+    ? notifData.whatsappUrl
+    : (notifData.url || '/?mode=admin');
+
+  try {
+    const parsed = new URL(candidateUrl, self.location.origin);
+    const isAllowedHost = parsed.origin === self.location.origin ||
+      parsed.hostname === 'wa.me' ||
+      parsed.hostname === 'api.whatsapp.com' ||
+      parsed.hostname === 'sebastiang.app' ||
+      parsed.hostname === 'www.sebastiang.app';
+    if (isAllowedHost) {
+      targetUrl = parsed.href;
+    }
+  } catch (e) {}
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

@@ -259,14 +259,16 @@ export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSen
   // REGLA 1: Email 100% en el servidor. Ignora completamente req.body.email.
   const targetEmail = getAdminEmail();
 
-  // REGLA 2: Código de 6 dígitos efímero y seguro con crypto.randomInt (NUNCA Math.random)
+  // REGLA 2: Código de 6 dígitos efímero y seguro con crypto.randomInt (NUNCA Math.random) y salting criptográfico (Hallazgo #36)
   const codeInt = crypto.randomInt(100000, 1000000);
   const code = String(codeInt);
-  const codeHash = hashSHA256(code);
+  const salt = crypto.randomBytes(16).toString('hex');
+  const codeHash = hashSHA256(`${code}:${salt}`);
 
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutos
   const challenge = {
     codeHash,
+    salt,
     expiresAt,
     used: false,
     attempts: 0,
@@ -371,8 +373,11 @@ export async function handlePasswordResetConfirm(req, res, {
     return res.status(400).json({ error: 'Código inválido o expirado.' });
   }
 
-  // 3. Verificación en tiempo constante (crypto.timingSafeEqual / secureCompare)
-  const isMatch = secureCompare(hashSHA256(cleanCode), challenge.codeHash);
+  // 3. Verificación en tiempo constante (crypto.timingSafeEqual / secureCompare con salt)
+  const expectedHash = challenge.salt
+    ? hashSHA256(`${cleanCode}:${challenge.salt}`)
+    : hashSHA256(cleanCode);
+  const isMatch = secureCompare(expectedHash, challenge.codeHash);
 
   if (!isMatch) {
     challenge.attempts = (challenge.attempts || 0) + 1;

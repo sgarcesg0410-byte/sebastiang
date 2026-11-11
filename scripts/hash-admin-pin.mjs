@@ -36,6 +36,7 @@ function generateHash(password) {
 const argPassword = process.argv[2];
 
 if (argPassword) {
+  console.warn('⚠️ AVISO DE HIGIENE: Pasar la contraseña como argumento CLI la expone en logs de SO y ps aux. Se recomienda el modo interactivo sin argumentos.');
   generateHash(argPassword);
 } else {
   const rl = readline.createInterface({

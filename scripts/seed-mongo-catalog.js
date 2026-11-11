@@ -82,6 +82,13 @@ const DEMO_BOOKINGS = [
 const REAL_BOOKINGS = DEMO_BOOKINGS;
 
 async function seed() {
+  const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const hasForce = process.argv.includes('--force');
+  if (isProd && !hasForce) {
+    console.error('⛔ [Seguridad] No se permite ejecutar seed-mongo-catalog en PRODUCCIÓN sin el flag explícito --force.');
+    process.exit(1);
+  }
+
   if (!isMongoConfigured()) {
     console.error('❌ MONGODB_URI no está configurado.');
     process.exit(1);

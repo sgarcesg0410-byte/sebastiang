@@ -1694,18 +1694,20 @@ if (typeof window !== 'undefined' && !window.__sgAdminFetchPatched) {
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
     const url = typeof input === 'string' ? input : (input && input.url) || '';
-    // La sesión viaja a toda la API salvo las rutas públicas y el propio login.
-    // El servidor decide qué habilita esa sesión (por ejemplo, verificar un pago).
-    const needsAuth = url.includes('/api/')
+    // Aislamiento cross-origin: el token solo se adjunta a llamadas locales del mismo origen (Hallazgo #5)
+    const isSameOrigin = !url.startsWith('http://') && !url.startsWith('https://')
+      ? true
+      : (typeof window !== 'undefined' && url.startsWith(window.location.origin));
+    const needsAuth = isSameOrigin && url.includes('/api/')
       && !url.includes('/api/public/')
       && !url.includes('/api/admin/auth')
       && !url.includes('/api/admin/password/');
     const token = needsAuth ? getAdminSessionToken() : '';
+    const headers = { ...(init.headers || {}) };
     if (token) {
-      const headers = { ...(init.headers || {}), Authorization: `Bearer ${token}` };
-      return originalFetch(input, { ...init, headers });
+      headers.Authorization = `Bearer ${token}`;
     }
-    return originalFetch(input, init);
+    return originalFetch(input, { ...init, headers, credentials: init.credentials || 'include' });
   };
   window.__sgAdminFetchPatched = true;
 }

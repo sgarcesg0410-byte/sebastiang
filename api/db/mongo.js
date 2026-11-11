@@ -119,36 +119,39 @@ async function deduplicateCollectionByField(database, collectionName, fieldName)
  * - Índices TTL nativos en `audit_logs` (90 días), `slot_locks` y `rate_limits`.
  */
 export const EXPECTED_MONGO_INDEXES = [
-  // 1–3. Índices de Reservas (bookings)
+  // 1–4. Índices de Reservas (bookings)
   { col: 'bookings', spec: { id: 1 }, opts: { unique: true, name: 'uniq_bookings_id', background: true } },
   { col: 'bookings', spec: { dateTime: 1, status: 1 }, opts: { name: 'idx_bookings_datetime_status', background: true } },
   { col: 'bookings', spec: { createdAt: -1 }, opts: { name: 'idx_bookings_created_desc', background: true } },
+  { col: 'bookings', spec: { clientWhatsApp: 1 }, opts: { name: 'idx_bookings_client_whatsapp', background: true } },
 
-  // 4–7. Índices de Pagos y Anti-Replay de Pasarela (payments)
+  // 5–9. Índices de Pagos y Anti-Replay de Pasarela (payments)
   { col: 'payments', spec: { id: 1 }, opts: { unique: true, name: 'uniq_payments_id', background: true } },
   { col: 'payments', spec: { reference: 1 }, opts: { unique: true, sparse: true, name: 'uniq_payments_reference', background: true } },
   { col: 'payments', spec: { transactionId: 1 }, opts: { unique: true, sparse: true, name: 'uniq_payments_txid', background: true } },
   { col: 'payments', spec: { bookingId: 1 }, opts: { name: 'idx_payments_booking_id', background: true } },
+  { col: 'payments', spec: { sessionToken: 1 }, opts: { sparse: true, name: 'idx_payments_session_token', background: true } },
 
-  // 8–10. Índices de Galerías Privadas (sessions)
+  // 10–13. Índices de Galerías Privadas (sessions)
   { col: 'sessions', spec: { id: 1 }, opts: { unique: true, name: 'uniq_sessions_id', background: true } },
   { col: 'sessions', spec: { token: 1 }, opts: { unique: true, name: 'uniq_sessions_token', background: true } },
+  { col: 'sessions', spec: { bookingId: 1 }, opts: { sparse: true, name: 'idx_sessions_booking_id', background: true } },
   { col: 'sessions', spec: { expiresAt: 1 }, opts: { name: 'idx_sessions_expires_at', background: true } },
 
-  // 11–12. Índices de Reseñas Verificadas y Unicidad por Galería (reviews)
+  // 14–15. Índices de Reseñas Verificadas y Unicidad por Galería (reviews)
   { col: 'reviews', spec: { id: 1 }, opts: { unique: true, name: 'uniq_reviews_id', background: true } },
   { col: 'reviews', spec: { galleryToken: 1 }, opts: { unique: true, sparse: true, name: 'uniq_reviews_gallery_token', background: true } },
 
-  // 13–15. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
+  // 16–18. Índices de Auditoría Financiera + TTL automático de 90 días (audit_logs)
   { col: 'audit_logs', spec: { id: 1 }, opts: { unique: true, name: 'uniq_audit_logs_id', background: true } },
   { col: 'audit_logs', spec: { createdAt: -1 }, opts: { name: 'idx_audit_logs_created_desc', background: true } },
   { col: 'audit_logs', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_audit_logs_ttl_90d', background: true } },
 
-  // 16–17. Índices de Bloqueo Distribuido de Horarios (slot_locks)
+  // 19–20. Índices de Bloqueo Distribuido de Horarios (slot_locks)
   { col: 'slot_locks', spec: { lockKey: 1 }, opts: { unique: true, name: 'uniq_slot_locks_key', background: true } },
   { col: 'slot_locks', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_slot_locks_ttl', background: true } },
 
-  // 18–19. Índices de Rate Limiting Distribuido (rate_limits)
+  // 21–22. Índices de Rate Limiting Distribuido (rate_limits)
   { col: 'rate_limits', spec: { key: 1 }, opts: { unique: true, name: 'uniq_rate_limits_key', background: true } },
   { col: 'rate_limits', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true } }
 ];

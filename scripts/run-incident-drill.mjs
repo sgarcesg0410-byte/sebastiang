@@ -88,10 +88,10 @@ async function runDrill() {
     process.env.ADMIN_AUTH_SECRET = 'drill-ephemeral-secret-' + crypto.randomBytes(16).toString('hex');
   }
   if (!process.env.WOMPI_INTEGRITY_SECRET) {
-    process.env.WOMPI_INTEGRITY_SECRET = 'drill_wompi_integrity_secret';
+    process.env.WOMPI_INTEGRITY_SECRET = crypto.randomBytes(32).toString('hex');
   }
   if (!process.env.WOMPI_EVENTS_SECRET) {
-    process.env.WOMPI_EVENTS_SECRET = 'drill_wompi_events_secret';
+    process.env.WOMPI_EVENTS_SECRET = crypto.randomBytes(32).toString('hex');
   }
 
   setCachedPasswordVersion(1);

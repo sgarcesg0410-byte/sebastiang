@@ -2098,19 +2098,22 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(reuseOldBioToken.status).toBe(401);
     });
 
-    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 19 índices BSON (unicidad, compuesto dateTime+status, expiresAt, reseñas y TTL)', () => {
+    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 22 índices BSON (unicidad, compuesto dateTime+status, expiresAt, reseñas, TTL y optimización de consultas)', () => {
       const rootDir = process.cwd();
       const mongoJs = fs.readFileSync(path.join(rootDir, 'api/db/mongo.js'), 'utf8');
       const readmeMd = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
 
-      expect(EXPECTED_MONGO_INDEXES.length).toBe(19);
+      expect(EXPECTED_MONGO_INDEXES.length).toBe(22);
       expect(mongoJs).toContain("name: 'uniq_bookings_id'");
       expect(mongoJs).toContain("name: 'idx_bookings_datetime_status'");
+      expect(mongoJs).toContain("name: 'idx_bookings_client_whatsapp'");
       expect(mongoJs).toContain("name: 'uniq_payments_id'");
       expect(mongoJs).toContain("name: 'uniq_payments_reference'");
       expect(mongoJs).toContain("name: 'uniq_payments_txid'");
+      expect(mongoJs).toContain("name: 'idx_payments_session_token'");
       expect(mongoJs).toContain("name: 'uniq_sessions_id'");
       expect(mongoJs).toContain("name: 'uniq_sessions_token'");
+      expect(mongoJs).toContain("name: 'idx_sessions_booking_id'");
       expect(mongoJs).toContain("name: 'idx_sessions_expires_at'");
       expect(mongoJs).toContain("name: 'uniq_reviews_id'");
       expect(mongoJs).toContain("name: 'uniq_reviews_gallery_token'");
@@ -2118,7 +2121,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(mongoJs).toContain("name: 'idx_audit_logs_ttl_90d'");
       expect(mongoJs).toContain("name: 'uniq_slot_locks_key'");
       expect(mongoJs).toContain("name: 'uniq_rate_limits_key'");
-      expect(readmeMd).toContain('19 índices BSON');
+      expect(readmeMd).toContain('22 índices BSON');
     });
 
     it('P1-2.5: GET /api/admin/backup cifra por defecto en producción (AES-256-GCM)', async () => {
@@ -2418,7 +2421,7 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       ]);
     });
 
-    it('P1-2.2 & 3.3: ensureMongoIndexes verifica realmente listIndexes() para los 19 índices y falla cerrado si un índice no existe o carece de unique/TTL', async () => {
+    it('P1-2.2 & 3.3: ensureMongoIndexes verifica realmente listIndexes() para los 22 índices y falla cerrado si un índice no existe o carece de unique/TTL', async () => {
       // Simulacro de base MongoDB donde un índice crítico (uniq_payments_reference) perdió unique: true
       const fakeCollections = new Map();
       for (const item of EXPECTED_MONGO_INDEXES) {
@@ -2466,8 +2469,8 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const verifiedReport = await ensureMongoIndexes(buildMockDb());
       expect(verifiedReport.ok).toBe(true);
       expect(verifiedReport.verified).toBe(true);
-      expect(verifiedReport.verifiedCount).toBe(19);
-      expect(verifiedReport.expectedCount).toBe(19);
+      expect(verifiedReport.verifiedCount).toBe(22);
+      expect(verifiedReport.expectedCount).toBe(22);
       expect(verifiedReport.missingOrInvalid.length).toBe(0);
     });
 

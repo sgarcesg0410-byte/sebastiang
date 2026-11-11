@@ -322,12 +322,29 @@ export function validateImagePayload(inputUrl, { maxBytes = DEFAULT_MAX_IMAGE_BY
     return { valid: true, kind: 'relative-path', mime: null, sizeBytes: 0 };
   }
 
-  // Caso 3: URL remota HTTPS exclusivamente (bloquea HTTP plano y esquemas peligrosos)
+function isPrivateOrLocalHost(hostname) {
+  const host = String(hostname || '').trim().toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '169.254.169.254') {
+    return true;
+  }
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) {
+    return true;
+  }
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) {
+    return true;
+  }
+  return false;
+}
+
+  // Caso 3: URL remota HTTPS exclusivamente (bloquea HTTP plano, SSRF y esquemas peligrosos)
   if (allowRemoteHttps) {
     try {
       const parsed = new URL(raw);
       if (parsed.protocol !== 'https:') {
         return { valid: false, error: 'Solo se permiten URLs de imagen seguras con protocolo HTTPS.' };
+      }
+      if (isPrivateOrLocalHost(parsed.hostname)) {
+        return { valid: false, error: 'URLs de hosts locales o privados no permitidas.' };
       }
       return { valid: true, kind: 'remote-url', mime: null, sizeBytes: 0 };
     } catch {

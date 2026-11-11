@@ -1,6 +1,12 @@
 import nodemailer from 'nodemailer';
 import { escapeHtml, maskEmail } from './security.js';
 
+function safeErrorMessage(err) {
+  if (!err) return 'Error desconocido';
+  const raw = typeof err === 'string' ? err : (err?.message || String(err));
+  return raw.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]');
+}
+
 // ==============================================================================
 // CONFIGURACIÓN SMTP CON ZOHO MAIL
 // ==============================================================================
@@ -185,7 +191,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
     results.adminSent = true;
     console.log('✓ Correo de nueva reserva enviado al fotógrafo (reservas@sebastiang.app)');
   } catch (errAdmin) {
-    console.error('Error enviando correo al fotógrafo:', errAdmin);
+    console.error('Error enviando correo al fotógrafo:', safeErrorMessage(errAdmin));
   }
 
   // B) Correo de confirmación de recepción para el Cliente (si dejó correo)
@@ -228,7 +234,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
       results.clientSent = true;
       console.log('✓ Correo de bienvenida enviado al cliente:', maskEmail(booking.clientEmail));
     } catch (errClient) {
-      console.error('Error enviando correo al cliente:', errClient);
+      console.error('Error enviando correo al cliente:', safeErrorMessage(errClient));
     }
   }
 
@@ -388,8 +394,8 @@ export async function sendPaymentReceiptEmail({
     console.log(`✓ Comprobante oficial enviado por correo a ${maskEmail(booking.clientEmail)} (${voucherNum})`);
     return { sent: true, voucherNum };
   } catch (err) {
-    console.error('Error enviando comprobante de pago por correo:', err);
-    return { sent: false, error: err.message };
+    console.error('Error enviando comprobante de pago por correo:', safeErrorMessage(err));
+    return { sent: false, error: safeErrorMessage(err) };
   }
 }
 
@@ -456,7 +462,7 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
     console.log('✓ Confirmación de cita enviada por correo al cliente:', maskEmail(booking.clientEmail));
     return true;
   } catch (err) {
-    console.error('Error enviando confirmación de cita por correo:', err);
+    console.error('Error enviando confirmación de cita por correo:', safeErrorMessage(err));
     return false;
   }
 }
@@ -524,7 +530,7 @@ export async function sendSessionCompletedEmail(booking, customNotes = '') {
     console.log('✓ Correo de sesión realizada enviado al cliente:', maskEmail(booking.clientEmail));
     return true;
   } catch (err) {
-    console.error('Error enviando correo de sesión realizada:', err);
+    console.error('Error enviando correo de sesión realizada:', safeErrorMessage(err));
     return false;
   }
 }
@@ -589,7 +595,7 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
     console.log('✓ Entrega de fotos enviada por correo al cliente:', maskEmail(clientEmail));
     return true;
   } catch (err) {
-    console.error('Error enviando entrega de fotos por correo:', err);
+    console.error('Error enviando entrega de fotos por correo:', safeErrorMessage(err));
     return false;
   }
 }
@@ -639,7 +645,7 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = process.env.ADM
     console.log('✓ Código 2FA enviado por correo a:', maskEmail(dest));
     return true;
   } catch (err) {
-    console.error('Error enviando código 2FA por correo:', err);
+    console.error('Error enviando código 2FA por correo:', safeErrorMessage(err));
     return false;
   }
 }
@@ -690,7 +696,7 @@ export async function sendPasswordResetCodeEmail(code, targetEmail = process.env
     console.log('✓ Código de recuperación enviado por correo a:', maskEmail(dest));
     return true;
   } catch (err) {
-    console.error('Error enviando código de recuperación por correo:', err);
+    console.error('Error enviando código de recuperación por correo:', safeErrorMessage(err));
     return false;
   }
 }
@@ -739,7 +745,7 @@ export async function sendPasswordChangedAlertEmail(targetEmail = process.env.AD
     console.log('✓ Alerta de seguridad (contraseña cambiada) enviada por correo a:', maskEmail(dest));
     return true;
   } catch (err) {
-    console.error('Error enviando alerta de cambio de contraseña por correo:', err);
+    console.error('Error enviando alerta de cambio de contraseña por correo:', safeErrorMessage(err));
     return false;
   }
 }

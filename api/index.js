@@ -136,6 +136,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  }
   next();
 });
 app.use(cors({
@@ -2082,6 +2086,13 @@ app.post('/api/admin/auth', async (req, res) => {
   // Login exitoso: token firmado (HMAC-SHA256) con passwordVersion activa + cookie HttpOnly (Hallazgo B4)
   resetLoginAttempts(ip);
   try {
+    // Rotar sesión previa si existía un token activo para revocarlo en re-login (Hallazgo #15)
+    const priorToken = readAdminToken(req);
+    const priorPayload = verifyAdminToken(priorToken);
+    if (priorPayload?.jti) {
+      revokeAdminAccessTokenJti(priorPayload.jti);
+    }
+
     const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
     const token = createAdminToken({ pwd: activeVersion });
     const bioRefreshToken = createBioRefreshToken({ pwd: activeVersion });
@@ -3841,7 +3852,8 @@ app.post('/api/admin/sessions/:id/reopen', async (req, res) => {
   const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
-  const newExpires = new Date(Date.now() + additionalDays * 24 * 60 * 60 * 1000);
+  const safeDays = Math.max(-30, Math.min(30, Number(additionalDays) || 3));
+  const newExpires = new Date(Date.now() + safeDays * 24 * 60 * 60 * 1000);
   const candidate = {
     ...session,
     expiresAt: newExpires.toISOString(),
@@ -3924,10 +3936,22 @@ app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
 
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
+  const cleanDeliveryUrl = String(finalDeliveryUrl || '').trim();
+  if (cleanDeliveryUrl) {
+    try {
+      const parsedDelivery = new URL(cleanDeliveryUrl);
+      if (parsedDelivery.protocol !== 'https:') {
+        return res.status(400).json({ error: 'La URL de entrega final debe ser un enlace seguro con HTTPS.' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'La URL de entrega final no tiene un formato válido.' });
+    }
+  }
+
   const candidate = {
     ...session,
     status: 'delivered',
-    finalDeliveryUrl: (finalDeliveryUrl || '').trim(),
+    finalDeliveryUrl: cleanDeliveryUrl,
     deliveryService,
     deliveryNotes: (deliveryNotes || '').trim(),
     deliveredAt: new Date().toISOString()
@@ -5171,7 +5195,7 @@ app.delete('/api/admin/reviews/:id', async (req, res) => {
 // WEBHOOK BOT WHATSAPP (AUTENTICACIÓN HMAC-SHA256 / SECRETO OBLIGATORIO EN PROD)
 // ==============================================================================
 export function verifyBotWebhookSignature(req) {
-  const secret = String(process.env.WHATSAPP_BOT_WEBHOOK_SECRET || '').trim();
+  const secret = String(process.env.BOT_WEBHOOK_SECRET || process.env.WHATSAPP_BOT_WEBHOOK_SECRET || '').trim();
   const isProd = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
 
   if (!secret) {
@@ -5379,6 +5403,11 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para insertar/actualizar.' });
       }
+      for (const [pk, pv] of Object.entries(payload)) {
+        if (typeof pv === 'string' && (pv.trim().toLowerCase().startsWith('javascript:') || pv.trim().toLowerCase().startsWith('data:text/html'))) {
+          return res.status(400).json({ error: `Contenido peligroso no permitido en el campo "${pk}".` });
+        }
+      }
       const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
       const filter = (docToSave && typeof docToSave.id === 'string' && docToSave.id.trim())
         ? { id: docToSave.id.trim() }
@@ -5401,6 +5430,11 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
     } else if (op === 'update') {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para actualizar.' });
+      }
+      for (const [pk, pv] of Object.entries(payload)) {
+        if (typeof pv === 'string' && (pv.trim().toLowerCase().startsWith('javascript:') || pv.trim().toLowerCase().startsWith('data:text/html'))) {
+          return res.status(400).json({ error: `Contenido peligroso no permitido en el campo "${pk}".` });
+        }
       }
       const docToSave = table === 'bookings' ? (normalizeBookingDoc(payload) || payload) : payload;
       const ok = await upsertMongoDoc(colName, safeMatch, docToSave, { throwOnError: true });
