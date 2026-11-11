@@ -3012,11 +3012,16 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
         if (prevV2 !== undefined) process.env.BACKUP_ENCRYPTION_KEY_V2 = prevV2;
       }
 
-      // P1-9 (#12): OneSignal dirige notificaciones exclusivamente al admin external_id y tag role=admin
+      // P1-9 (#12): OneSignal usa exclusivamente include_aliases (external_id) por defecto sin mezclar filters simultáneos
       const pushPayload = buildOneSignalAdminPushPayload({ title: 'Test', message: 'Body' });
       expect(pushPayload.included_segments).toBeUndefined();
       expect(pushPayload.include_aliases?.external_id).toContain('sebastiang_admin');
-      expect(pushPayload.filters).toEqual([{ field: 'tag', key: 'role', relation: '=', value: 'admin' }]);
+      expect(pushPayload.filters).toBeUndefined();
+
+      // Si se solicita targetMode: 'filter', usa filters sin include_aliases
+      const filterPayload = buildOneSignalAdminPushPayload({ title: 'Test', message: 'Body', targetMode: 'filter' });
+      expect(filterPayload.include_aliases).toBeUndefined();
+      expect(filterPayload.filters).toEqual([{ field: 'tag', key: 'role', relation: '=', value: 'admin' }]);
 
       // P1-10 (#13): paymentBelongsToBooking en backend NO vincula por sufijo telefónico de 8 dígitos
       const bookingA = { id: 'book-a-100', clientWhatsApp: '+573105551234' };
@@ -3176,6 +3181,50 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(unhideRes.body.review.hidden).toBe(false);
       const pubReviewsVisible = await invokeApp('GET', '/api/reviews');
       expect(pubReviewsVisible.body.some(r => r.id === revId)).toBe(true);
+    });
+
+    it('SAST Gate & Higiene Final: valida detector de regresiones SAST, KNOWN_WEAK_PIN_HASH privado y especificación MongoDB sin referencias a Supabase', async () => {
+      const secExports = await import('../../api/security.js');
+      expect(secExports.KNOWN_WEAK_PIN_HASH).toBeUndefined();
+
+      const runInlineSastGate = ({ apiSec, apiIdx, emailSvc }) => {
+        if (apiSec.includes('5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3')) {
+          throw new Error('SAST: Hardcoded weak PIN SHA-256 hash found in api/security.js');
+        }
+        if (emailSvc.includes('sgarcesg0410@gmail.com') || apiIdx.includes('bc62cb00-9782-4a8e-a344-e8cf031a211a')) {
+          throw new Error('SAST: Hardcoded personal email or OneSignal App ID found in backend');
+        }
+        return true;
+      };
+
+      const realSec = fs.readFileSync(path.join(process.cwd(), 'api/security.js'), 'utf8');
+      const realIdx = fs.readFileSync(path.join(process.cwd(), 'api/index.js'), 'utf8');
+      const realEmail = fs.readFileSync(path.join(process.cwd(), 'api/emailService.js'), 'utf8');
+
+      // 1. Pasa con los archivos reales del repositorio
+      expect(runInlineSastGate({ apiSec: realSec, apiIdx: realIdx, emailSvc: realEmail })).toBe(true);
+
+      // 2. Rechaza afirmativamente si alguien reintroduce el hash débil o PII
+      expect(() =>
+        runInlineSastGate({
+          apiSec: realSec + '\nconst leak = "5eb11bf58cb9eb8ad63d3dcac1e264ecda98bd97d56b4d16ea19b73d0d7584c3";',
+          apiIdx: realIdx,
+          emailSvc: realEmail
+        })
+      ).toThrow(/SAST: Hardcoded weak PIN SHA-256 hash/);
+
+      expect(() =>
+        runInlineSastGate({
+          apiSec: realSec,
+          apiIdx: realIdx,
+          emailSvc: realEmail + '\nconst leakEmail = "sgarcesg0410@gmail.com";'
+        })
+      ).toThrow(/SAST: Hardcoded personal email/);
+
+      // 3. docs/recuperacion_contrasena_spec.md documenta MongoDB Atlas (colección security) y no referencia Supabase
+      const specDoc = fs.readFileSync(path.join(process.cwd(), 'docs/recuperacion_contrasena_spec.md'), 'utf8');
+      expect(specDoc).toContain('MongoDB Atlas');
+      expect(specDoc).not.toContain('Supabase');
     });
   });
 });

@@ -224,15 +224,20 @@ export function verifyAdminPin(pin, { scryptHash, sha256Hash } = {}) {
   return secureCompare(hashSHA256(value), configured);
 }
 
-/** Hash derivado en tiempo de ejecución para rechazar PINs débiles históricos sin exponer el literal en el código (Hallazgo #7). */
-export const KNOWN_WEAK_PIN_HASH = crypto
+/**
+ * @private
+ * Hash derivado internamente en tiempo de ejecución para rechazar PINs débiles históricos
+ * sin exponer el literal en el código ni en la API pública del módulo (Hallazgo #7).
+ */
+const KNOWN_WEAK_PIN_HASH = crypto
   .createHash('sha256')
   .update(['0', '4', '9', '3'].join(''))
   .digest('hex');
 
-const WEAK_PIN_HASHES_SET = new Set(
-  Array.from(FORBIDDEN_WEAK_PINS).map((p) => crypto.createHash('sha256').update(p).digest('hex'))
-);
+const WEAK_PIN_HASHES_SET = new Set([
+  KNOWN_WEAK_PIN_HASH,
+  ...Array.from(FORBIDDEN_WEAK_PINS).map((p) => crypto.createHash('sha256').update(p).digest('hex'))
+]);
 
 export function isWeakConfiguredPin(hash) {
   return WEAK_PIN_HASHES_SET.has(String(hash || '').trim());

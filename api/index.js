@@ -16,7 +16,6 @@ import {
   createReceiptToken,
   readAdminToken,
   verifyAdminToken,
-  KNOWN_WEAK_PIN_HASH,
   setPasswordVersionGetter,
   generateGalleryToken,
   isValidGalleryTokenFormat,
@@ -216,16 +215,31 @@ if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
   );
 }
 
-export function buildOneSignalAdminPushPayload({ title, message, url = 'https://sebastiang.app/?mode=admin', data = {} }) {
+export function buildOneSignalAdminPushPayload({
+  title,
+  message,
+  url = 'https://sebastiang.app/?mode=admin',
+  data = {},
+  targetMode = 'alias'
+}) {
+  // Recomendación oficial de OneSignal: usar include_aliases (external_id) O filters,
+  // nunca ambos simultáneamente para evitar que dispositivos sin el tag pierdan la notificación.
+  const targeting = (targetMode === 'filter' || !ONESIGNAL_ADMIN_EXTERNAL_ID)
+    ? {
+        filters: [
+          { field: 'tag', key: 'role', relation: '=', value: 'admin' }
+        ]
+      }
+    : {
+        include_aliases: {
+          external_id: [ONESIGNAL_ADMIN_EXTERNAL_ID]
+        }
+      };
+
   return {
     app_id: ONESIGNAL_APP_ID,
     target_channel: 'push',
-    include_aliases: {
-      external_id: [ONESIGNAL_ADMIN_EXTERNAL_ID]
-    },
-    filters: [
-      { field: 'tag', key: 'role', relation: '=', value: 'admin' }
-    ],
+    ...targeting,
     headings: { es: title, en: title },
     contents: { es: message, en: message },
     url,
@@ -2035,8 +2049,8 @@ app.post('/api/admin/auth', async (req, res) => {
 
   // Verificación asíncrona del PIN en el SERVIDOR (sin bloquear el event loop - Hallazgo B2).
   const activeScrypt = await getActiveAdminScryptHash();
-  const hasConfiguredPin = Boolean(activeScrypt || process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash);
-  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || (!hasConfiguredPin ? KNOWN_WEAK_PIN_HASH : '');
+  const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings.adminPinHash || '';
+  const hasConfiguredPin = Boolean(activeScrypt || effectiveSha);
 
   if (!hasConfiguredPin || isWeakConfiguredPin(effectiveSha)) {
     console.warn('⚠️ [Seguridad] No se ha configurado un PIN robusto aún. Usa ADMIN_PIN_SCRYPT o cámbialo en el Dashboard.');

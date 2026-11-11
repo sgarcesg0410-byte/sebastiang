@@ -25,10 +25,12 @@
 Pasos, en este orden:
 1. Generar el código: `crypto.randomInt(100000, 999999)` — **nunca `Math.random()`**.
 2. Calcular `codeHash = sha256(code)`.
-3. Guardar/actualizar en Supabase (con `service_role`) la fila `catalog` `id = 'system_admin_reset_challenge'`:
+3. Guardar/actualizar en **MongoDB Atlas** dentro de la colección dedicada `security` el documento `id = 'admin_reset_challenge'`:
 
 ```json
 {
+  "id": "admin_reset_challenge",
+  "key": "admin_reset_challenge",
   "codeHash": "<sha256 hex>",
   "expiresAt": "<ISO, ahora + 10 minutos>",
   "used": false,
@@ -37,63 +39,69 @@ Pasos, en este orden:
 }
 ```
 
-La fila debe quedar en `category: 'security_data'` para que la política RLS la oculte al público (misma protección que `system_admin_pin_hash`, ya verificada: **ni legible ni escribible con la clave anónima**).
+La colección `security` está excluida de cualquier endpoint público y de `/api/admin/db` (`DB_ALLOWED_TABLES`), garantizando que ni el reto ni el hash del PIN administrativo sean legibles ni modificables fuera de los módulos de seguridad del servidor.
 
-4. Enviar el correo real con el transporte Zoho ya existente (`sendTwoFactorCodeEmail` en `api/emailService.js`, o una plantilla nueva `sendPasswordResetEmail`).
+4. Enviar el correo real con el transporte Zoho ya existente (`sendPasswordResetCodeEmail` en `api/emailService.js`).
 5. Responder el mensaje genérico.
 
 ### 1.2 `POST /api/admin/password/reset-confirm` (público)
 
 | Aspecto | Definición |
 |---|---|
-| Rate limit | **5 intentos / 15 min por IP** |
+| Rate limit | **5 intentos / 15 min por IP** (respaldado en la colección `rate_limits` de MongoDB Atlas) |
 | Body | `{ code, newPassword }` — `newPassword` mínimo **8 caracteres** |
 | Mensaje de error | Genérico siempre: `'Código inválido o expirado.'` |
 
 Validaciones, **en este orden**, todas antes de tocar la contraseña:
-1. La fila existe y `used === false`.
+1. El documento existe en `security` y `used === false`.
 2. `Date.now() < new Date(expiresAt).getTime()`.
 3. `attempts < 5`.
-4. `secureCompare(sha256(code), codeHash)` — **comparación en tiempo constante** (`api/security.js` ya exporta `secureCompare` y `hashSHA256`).
+4. `secureCompare(sha256(code), codeHash)` — **comparación en tiempo constante** (`api/security.js` exporta `secureCompare` y `hashSHA256`).
 
 Comportamiento ante fallo:
 - Incrementar `attempts`. Si llega a **5**, marcar `used: true` (el código queda quemado: 6 dígitos = 10⁶ combinaciones, con 5 intentos es inalcanzable).
 
 Comportamiento ante éxito (todo o nada):
 1. Marcar `used: true`.
-2. Escribir la nueva clave en `catalog` `id = 'system_admin_pin_hash'`:
+2. Escribir la nueva clave en la colección `security` de MongoDB Atlas (`id = 'system_admin_pin_hash'`):
    ```json
-   { "hash": "scrypt$<sal>$<hash>", "passwordVersion": <actual + 1>, "updatedAt": "<ISO>" }
+   {
+     "id": "system_admin_pin_hash",
+     "key": "admin_pin_hash",
+     "scryptHash": "scrypt$<sal>$<hash>",
+     "passwordVersion": "<actual + 1>",
+     "updatedAt": "<ISO>"
+   }
    ```
 3. Enviar correo de aviso a `ADMIN_EMAIL`: *"Tu contraseña de administrador fue cambiada."*
 4. Responder `{ success: true }`.
 
 ### 1.3 Ajuste en `POST /api/admin/auth`
 
-- Lee `passwordVersion` de la fila del hash (por defecto `1` si no existe).
+- Lee `passwordVersion` del documento `system_admin_pin_hash` en la colección `security` de MongoDB Atlas (por defecto `1` si no existe).
 - Incluye `pwd: <passwordVersion>` en el payload del token (`createAdminToken({ pwd })`).
 
 ---
 
-## 2. ⚠️ `passwordVersion`: la decisión que hay que tomar conscientemente
+## 2. ⚠️ `passwordVersion`: revocación global inmediata de sesiones
 
-Revocar sesiones activas al cambiar la clave **exige consultar la versión en cada petición autenticada**. Hay tres opciones y ninguna es gratis:
+Revocar sesiones activas al cambiar la clave **exige consultar la versión en cada petición autenticada**.
 
-| Opción | Cómo | Coste | Riesgo |
+| Opción | Cómo | Coste | Seguridad |
 |---|---|---|---|
-| **A** (recomendada) | `requireAdminAuth` lee `passwordVersion` de Supabase y la compara con el `pwd` del token | **Una lectura a Supabase por cada petición admin** | Modo de fallo nuevo: si Supabase no responde, el panel deja de funcionar |
-| **B** | No implementar nada | Cero | Un token robado sigue vivo **hasta 12 h**; cambiar la clave no expulsa a nadie |
-| **C** | Guardar `revokedBefore` y comparar con el `iat` del token | Misma lectura (o caché en memoria, no fiable en serverless) | Igual que A |
+| **A (implementada)** | `requireAdminAuth` lee `passwordVersion` de la colección `security` en MongoDB Atlas y la compara con el `pwd` del token | Una lectura ligera por petición admin | Revocación global inmediata en todos los dispositivos |
+| **B** | No validar versión en servidor | Cero | Un token robado seguiría vivo hasta su expiración |
+| **C** | Guardar `revokedBefore` y comparar con `iat` | Misma lectura en MongoDB Atlas | Equivalente a A |
 
-**Recomendación: A**, porque el objetivo declarado es *"si me roban la sesión, al cambiar la clave los echo"*. Pero hay que aceptar explícitamente el coste: **una consulta por petición** y que el panel dependa de que Supabase responda. Si se elige B, debe quedar escrito que cambiar la contraseña **no** cierra sesiones activas.
+**Implementación activa: Opción A**, porque garantiza que al cambiar la contraseña todas las sesiones previas (`admin_access`, `bio_refresh` y `apk_device`) queden invalidadas de forma instantánea.
 
-> Regla de seguridad al elegir A: si la lectura falla, **fallar cerrado** (401), pero con un mensaje que permita distinguir "sesión revocada" de "servicio no disponible", para no confundir un corte de Supabase con un token robado.
+> Regla de seguridad en producción: si la lectura en MongoDB Atlas falla, **fallar cerrado** (401), con un mensaje claro (`Error de verificación de sesión (servicio de autenticación no disponible)`) que distingue una caída de red de una sesión revocada.
 
 ---
 
 ## 3. Tests exigidos (definen el contrato)
 
-Archivo: `src/__tests__/passwordReset.test.js` (mockear el transporte de correo y Supabase).
+Archivo: `src/__tests__/passwordReset.test.js`.
 
 | # | Caso | Aserción |
 |---|---|---|
@@ -134,10 +142,8 @@ Y en vivo, una vez desplegado:
 
 ---
 
-## 6. Red de seguridad mientras esto no exista
+## 6. Red de seguridad de emergencia (Break-Glass)
 
-Si se olvida la contraseña **hoy**, la recuperación raíz (no depende de recordar nada) es:
+Si se olvida la contraseña y no se tiene acceso temporal al correo, la recuperación raíz (no depende de recordar nada) es:
 
-> Vercel → `node scripts/hash-admin-pin.mjs "NuevaClave"` → reemplazar `ADMIN_PIN_SCRYPT` → guardar y redesplegar.
-
-Borrar la fila `system_admin_pin_hash` en Supabase activa el respaldo del entorno, pero **solo sirve si se conoce ese valor**. Por eso la vía de Vercel es la buena: siempre se puede sobrescribir con uno nuevo.
+> Vercel → `node scripts/hash-admin-pin.mjs "NuevaClaveSegura"` → reemplazar `ADMIN_PIN_SCRYPT` → eliminar o actualizar el documento `system_admin_pin_hash` en la colección `security` de MongoDB Atlas → redesplegar.
