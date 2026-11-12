@@ -16,8 +16,6 @@ export {
   getRetabloSizes,
   resolveLoyaltyDiscountPercent,
   normalizePrintedSizes,
-  calculatePrintBreakdowns,
-  calculateBookingTotal,
   calculateBookingPriceBand,
   validateOrEnforcePrice
 } from '../shared/pricing.js';
