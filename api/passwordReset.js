@@ -17,7 +17,8 @@ import {
   setCachedPasswordVersion,
   getCachedPasswordVersion,
   getTrustedClientIp,
-  hashPinScryptAsync
+  hashPinScryptAsync,
+  recordFinancialAuditLog
 } from './security.js';
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
 import {
@@ -25,18 +26,42 @@ import {
   upsertMongoDoc,
   updateMongoDoc,
   findMongoDocs,
+  findMongoDoc,
   checkDistributedRateLimit
 } from './db/mongo.js';
 
 // Rate limiters en memoria por IP (respaldados en MongoDB Atlas cuando está configurado - Hallazgo A2)
 const resetRequestAttempts = new Map(); // ip -> { count, windowStart }
 const resetConfirmAttempts = new Map(); // ip -> { count, windowStart }
+const emergencyResetAttempts = new Map(); // ip -> { count, resetAt }
 
 const RESET_REQUEST_MAX = 3;
 const RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
 
 const RESET_CONFIRM_MAX = 5;
 const RESET_CONFIRM_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
+
+const EMERGENCY_RESET_MAX = 3;
+const EMERGENCY_RESET_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
+
+function checkEmergencyResetRateLimit(ip) {
+  const now = Date.now();
+  const entry = emergencyResetAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    emergencyResetAttempts.set(ip, { count: 1, resetAt: now + EMERGENCY_RESET_WINDOW_MS });
+    return { allowed: true };
+  }
+  if (entry.count >= EMERGENCY_RESET_MAX) {
+    const retryAfterMs = Math.max(0, entry.resetAt - now);
+    return {
+      allowed: false,
+      retryAfterMin: Math.max(1, Math.ceil(retryAfterMs / 60000)),
+      retryAfterMs
+    };
+  }
+  entry.count += 1;
+  return { allowed: true };
+}
 
 export function getClientIp(req) {
   return getTrustedClientIp(req);
@@ -102,6 +127,7 @@ export function checkResetConfirmRateLimit(ip) {
 export function clearRateLimiters() {
   resetRequestAttempts.clear();
   resetConfirmAttempts.clear();
+  emergencyResetAttempts.clear();
 }
 
 /**
@@ -284,12 +310,11 @@ export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSen
     });
   }
 
-  // REGLA 4: Fuga cero: enviar por correo sin loguear el código
-  try {
-    await emailSender(code, targetEmail);
-  } catch (err) {
-    console.error('[Seguridad] Error enviando correo de reseteo:', err?.message || err);
-  }
+  // REGLA 4: Fuga cero: enviar por correo sin loguear el código (SMTP fire-and-forget para respuesta inmediata < 2s)
+  Promise.resolve(emailSender(code, targetEmail))
+    .catch(err => {
+      console.error('[Seguridad] Error enviando correo de reseteo:', err?.message || err);
+    });
 
   // Respuesta genérica estricta (sin código, sin revelar correo)
   return res.json({
@@ -437,16 +462,175 @@ export async function handlePasswordResetConfirm(req, res, {
     return res.status(500).json({ error: 'Error persistiendo nueva contraseña en la base de datos central.' });
   }
 
-  // 4. Enviar alerta de seguridad por correo vía Zoho a ADMIN_EMAIL
+  // 4. Enviar alerta de seguridad por correo vía Zoho a ADMIN_EMAIL (fire-and-forget para respuesta inmediata < 2s)
   const targetEmail = getAdminEmail();
-  try {
-    await alertSender(targetEmail, { ip });
-  } catch (err) {
-    console.error('[Seguridad] Error enviando alerta de cambio de contraseña:', err?.message || err);
-  }
+  Promise.resolve(alertSender(targetEmail, { ip }))
+    .catch(err => {
+      console.error('[Seguridad] Error enviando alerta de cambio de contraseña:', err?.message || err);
+    });
 
   return res.json({
     success: true,
     message: '✓ Contraseña restablecida con éxito. Inicia sesión con tu nueva contraseña.'
+  });
+}
+
+/**
+ * Endpoint 3: POST /api/admin/password/emergency-reset
+ * Reseteo break-glass de un solo uso mediante ADMIN_EMERGENCY_RESET_TOKEN cuando Zoho SMTP está caído.
+ */
+export async function handleEmergencyPasswordReset(req, res, { runtimeDB } = {}) {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  const ip = getClientIp(req);
+
+  // 1. Rate limiting (3 intentos / 15 min / IP)
+  const rate = checkEmergencyResetRateLimit(ip);
+  if (!rate.allowed) {
+    return res.status(429).json({
+      error: `Demasiados intentos de reseteo de emergencia. Intenta en ${rate.retryAfterMin} minutos.`,
+      retryAfterMs: rate.retryAfterMs
+    });
+  }
+
+  if (isMongoConfigured()) {
+    const distRate = await checkDistributedRateLimit({
+      key: `pw_emergency_reset_${ip}`,
+      maxAttempts: EMERGENCY_RESET_MAX,
+      windowMs: EMERGENCY_RESET_WINDOW_MS,
+      failClosed: isProduction
+    });
+    if (!distRate.allowed) {
+      const retryAfterMs = distRate.retryAfterMs || EMERGENCY_RESET_WINDOW_MS;
+      return res.status(429).json({
+        error: `Demasiados intentos de reseteo de emergencia. Intenta en ${Math.max(1, Math.ceil(retryAfterMs / 60000))} minutos.`,
+        retryAfterMs
+      });
+    }
+  }
+
+  // 2. Token de emergencia configurado en el entorno
+  const configuredEmergencyToken = (process.env.ADMIN_EMERGENCY_RESET_TOKEN || '').trim();
+  if (!configuredEmergencyToken || configuredEmergencyToken.length < 32) {
+    return res.status(503).json({
+      error: 'Reseteo de emergencia no configurado o token inválido en el servidor.'
+    });
+  }
+
+  const { token, newPassword } = req.body || {};
+
+  // 3. Validación de nueva contraseña (mínimo 8 caracteres)
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 8) {
+    return res.status(400).json({
+      error: 'La nueva contraseña debe tener al menos 8 caracteres.'
+    });
+  }
+
+  const cleanToken = String(token || '').trim();
+  if (!cleanToken) {
+    return res.status(400).json({ error: 'Token de emergencia requerido.' });
+  }
+
+  // 4. Verificación en tiempo constante (timing-safe)
+  const isMatch = secureCompare(cleanToken, configuredEmergencyToken);
+  if (!isMatch) {
+    return res.status(401).json({ error: 'Token de emergencia inválido.' });
+  }
+
+  // 5. Protección One-Shot: Verificar si este token específico ya fue consumido
+  const tokenHash = hashSHA256(configuredEmergencyToken);
+  let isAlreadyUsed = false;
+
+  if (isMongoConfigured()) {
+    try {
+      const existingDoc = await findMongoDoc('security', {
+        $or: [
+          { id: `emergency_token_${tokenHash}` },
+          { key: `emergency_token_${tokenHash}` },
+          { emergencyTokenHash: tokenHash, used: true }
+        ]
+      });
+      if (existingDoc && existingDoc.used === true) {
+        isAlreadyUsed = true;
+      }
+    } catch (eMongo) {
+      if (isProduction) {
+        return res.status(500).json({ error: 'Fallo al verificar el estado del token en la base de datos central.' });
+      }
+    }
+  }
+
+  if (runtimeDB?.settings?.usedEmergencyTokens?.includes(tokenHash)) {
+    isAlreadyUsed = true;
+  }
+
+  if (isAlreadyUsed) {
+    return res.status(400).json({
+      error: 'Este token de emergencia ya fue utilizado. Genera uno nuevo con scripts/generate-emergency-token.mjs y actualízalo en Vercel.'
+    });
+  }
+
+  // 6. Quemar el token (one-shot) de forma atómica en MongoDB y memoria
+  if (isMongoConfigured()) {
+    try {
+      const ok = await upsertMongoDoc('security', {
+        id: `emergency_token_${tokenHash}`
+      }, {
+        id: `emergency_token_${tokenHash}`,
+        key: `emergency_token_${tokenHash}`,
+        emergencyTokenHash: tokenHash,
+        used: true,
+        consumedAt: new Date().toISOString(),
+        consumedIp: ip
+      }, { throwOnError: isProduction });
+
+      if (!ok && isProduction) {
+        return res.status(500).json({ error: 'Fallo al invalidar el token de emergencia en MongoDB Atlas.' });
+      }
+    } catch (eMongo) {
+      if (isProduction) {
+        return res.status(500).json({ error: 'Error al persistir la invalidación del token en MongoDB Atlas.' });
+      }
+    }
+  }
+
+  if (runtimeDB) {
+    runtimeDB.settings = runtimeDB.settings || {};
+    runtimeDB.settings.usedEmergencyTokens = runtimeDB.settings.usedEmergencyTokens || [];
+    runtimeDB.settings.usedEmergencyTokens.push(tokenHash);
+  }
+
+  // 7. Derivar hash scrypt bancario asíncrono
+  const cleanNew = newPassword.trim();
+  const newScryptHash = await hashPinScryptAsync(cleanNew);
+
+  // 8. Incrementar passwordVersion para revocar todas las sesiones previas
+  const currentVersion = await getActivePasswordVersionFromStore({ runtimeDB });
+  const newVersion = (currentVersion || 1) + 1;
+
+  try {
+    await updateAdminPasswordInStore({ runtimeDB, newScryptHash, newVersion });
+  } catch (eStore) {
+    console.error('❌ [PasswordReset] Fallo actualizando contraseña en store:', eStore?.message || eStore);
+    return res.status(500).json({ error: 'Error persistiendo nueva contraseña en la base de datos central.' });
+  }
+
+  // 9. Registrar en audit_log con action: 'admin_password_emergency_reset'
+  try {
+    await recordFinancialAuditLog({
+      action: 'admin_password_emergency_reset',
+      actor: 'emergency_token',
+      entityType: 'admin_auth',
+      entityId: 'admin_pin',
+      ip,
+      status: 'success',
+      details: { note: 'Password reset via emergency break-glass token' }
+    }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
+  } catch (eLog) {
+    console.warn('[AuditLog] No se pudo registrar evento de auditoría:', eLog?.message || eLog);
+  }
+
+  return res.json({
+    success: true,
+    message: '✓ Contraseña restablecida con éxito mediante token de emergencia. Todas las sesiones previas han sido revocadas. Recuerda generar un nuevo token en Vercel para futuras emergencias.'
   });
 }

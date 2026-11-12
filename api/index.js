@@ -60,6 +60,7 @@ import {
 import {
   handlePasswordResetRequest,
   handlePasswordResetConfirm,
+  handleEmergencyPasswordReset,
   getActivePasswordVersionFromStore,
   updateAdminPasswordInStore,
   getAdminEmail
@@ -2444,6 +2445,10 @@ app.post('/api/admin/password/reset-request', async (req, res) => {
 
 app.post('/api/admin/password/reset-confirm', async (req, res) => {
   return handlePasswordResetConfirm(req, res, { runtimeDB });
+});
+
+app.post('/api/admin/password/emergency-reset', async (req, res) => {
+  return handleEmergencyPasswordReset(req, res, { runtimeDB });
 });
 
 // ==============================================================================

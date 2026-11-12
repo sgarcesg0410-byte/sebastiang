@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import {
   handlePasswordResetRequest,
   handlePasswordResetConfirm,
+  handleEmergencyPasswordReset,
   clearRateLimiters,
   getAdminEmail
 } from '../../api/passwordReset.js';
@@ -373,5 +374,93 @@ describe('Recuperación Segura de Contraseña de Administrador (Zoho SMTP)', () 
 
     expect(status4).toBe(429);
     expect(data4.error).toContain('Demasiadas solicitudes');
+  });
+
+  // --------------------------------------------------------------------------
+  // TEST 9: Emergency Reset (Break-Glass One-Shot Token)
+  // --------------------------------------------------------------------------
+  it('9. Emergency Reset: reseteo exitoso con token de emergencia one-shot, incrementa passwordVersion e invalida sesiones previas', async () => {
+    const emergencyToken = '8ef90908554077ad112233445566778899aabbccddeeff001122334455667788';
+    process.env.ADMIN_EMERGENCY_RESET_TOKEN = emergencyToken;
+
+    // 1. Emitir token admin en versión 1
+    const tokenV1 = createAdminToken({ pwd: 1 });
+    let authPassed = false;
+    await requireAdminAuth({ headers: { authorization: `Bearer ${tokenV1}` } }, { status: vi.fn().mockReturnThis(), json: vi.fn() }, () => { authPassed = true; });
+    expect(authPassed).toBe(true);
+
+    // 2. Ejecutar emergency reset
+    let resStatus = 200, resData = null;
+    const req = {
+      headers: { 'x-forwarded-for': '198.51.100.99' },
+      body: {
+        token: emergencyToken,
+        newPassword: 'NuevaPasswordEmergencia2026'
+      }
+    };
+    const res = {
+      status(c) { resStatus = c; return this; },
+      json(d) { resData = d; return this; }
+    };
+
+    await handleEmergencyPasswordReset(req, res, { runtimeDB: mockRuntimeDB });
+
+    expect(resStatus).toBe(200);
+    expect(resData.success).toBe(true);
+    expect(mockRuntimeDB.settings.adminPasswordVersion).toBe(2);
+    expect(mockRuntimeDB.settings.adminPinScrypt).toMatch(/^scrypt\$/);
+
+    // 3. Token V1 queda invalidado
+    authPassed = false;
+    let authStatus = 200, authBody = null;
+    await requireAdminAuth(
+      { headers: { authorization: `Bearer ${tokenV1}` } },
+      { status(c) { authStatus = c; return this; }, json(d) { authBody = d; return this; } },
+      () => { authPassed = true; }
+    );
+    expect(authPassed).toBe(false);
+    expect(authStatus).toBe(401);
+
+    // 4. One-shot: intentar reusar el mismo token debe ser rechazado
+    let reuseStatus = 200, reuseData = null;
+    await handleEmergencyPasswordReset(req, {
+      status(c) { reuseStatus = c; return this; },
+      json(d) { reuseData = d; return this; }
+    }, { runtimeDB: mockRuntimeDB });
+
+    expect(reuseStatus).toBe(400);
+    expect(reuseData.error).toContain('ya fue utilizado');
+  });
+
+  it('10. Emergency Reset: rechaza token incorrecto (401), contraseña corta (400) y entorno no configurado (503)', async () => {
+    delete process.env.ADMIN_EMERGENCY_RESET_TOKEN;
+
+    // Sin configurar -> 503
+    let s503 = 200;
+    await handleEmergencyPasswordReset(
+      { headers: { 'x-forwarded-for': '198.51.100.101' }, body: { token: 'abc', newPassword: 'ValidaPassword123' } },
+      { status(c) { s503 = c; return this; }, json() { return this; } },
+      { runtimeDB: mockRuntimeDB }
+    );
+    expect(s503).toBe(503);
+
+    // Configurado pero contraseña corta -> 400
+    process.env.ADMIN_EMERGENCY_RESET_TOKEN = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+    let s400 = 200;
+    await handleEmergencyPasswordReset(
+      { headers: { 'x-forwarded-for': '198.51.100.102' }, body: { token: process.env.ADMIN_EMERGENCY_RESET_TOKEN, newPassword: '123' } },
+      { status(c) { s400 = c; return this; }, json() { return this; } },
+      { runtimeDB: mockRuntimeDB }
+    );
+    expect(s400).toBe(400);
+
+    // Token incorrecto -> 401
+    let s401 = 200;
+    await handleEmergencyPasswordReset(
+      { headers: { 'x-forwarded-for': '198.51.100.103' }, body: { token: 'token-atacante-incorrecto-longitud-suficiente-123456789', newPassword: 'ValidaPassword123' } },
+      { status(c) { s401 = c; return this; }, json() { return this; } },
+      { runtimeDB: mockRuntimeDB }
+    );
+    expect(s401).toBe(401);
   });
 });
