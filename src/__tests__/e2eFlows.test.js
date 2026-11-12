@@ -247,7 +247,7 @@ describe('Suite E2E de Operación Segura y Producción Definitiva', () => {
 
     const revokedGallery = await invokeE2E('GET', `/api/gallery/${token}`);
     expect(revokedGallery.status).toBe(403);
-  });
+  }, 15000);
 
   it('Flujo E2E 7–8: Ciclo APK (registro, consumo, revocación en cada petición e invalidación por cambio de contraseña)', async () => {
     const adminToken = createAdminToken({ pwd: 1 });

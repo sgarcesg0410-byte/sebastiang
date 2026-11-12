@@ -643,12 +643,16 @@ export async function authenticateWithBiometrics() {
         serverChallenge,
         'webauthn.get'
       );
+      const authData = assertion.response?.authenticatorData
+        ? bufferToBase64(assertion.response.authenticatorData)
+        : null;
       const renewed = await refreshServerSessionViaBiometrics({
         challenge: serverChallenge,
         biometricProof: {
           credentialId: vaultRecord.credentialId || storedCredId,
           clientDataJSON: signedAssertion.clientDataJSON,
-          signature: signedAssertion.signature
+          signature: signedAssertion.signature,
+          authenticatorData: authData
         }
       });
       if (!renewed) {
