@@ -98,7 +98,7 @@ export default function PublicReviewView({ onBackToHome }) {
     }
   };
 
-  const photogWhatsApp = (settings.photographerWhatsApp || '+573244725167').replace(/\D/g, '');
+  const photogWhatsApp = String(settings.photographerWhatsApp || '').replace(/\D/g, '');
   const starsString = '⭐'.repeat(rating);
   const waShareMsg = encodeURIComponent(
     `🌟 *¡Hola Sebastian G! Acabo de calificar mi experiencia con tu servicio de fotografía:*\n\n` +

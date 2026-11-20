@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Exponer únicamente comprobantes PDF temporales para compartir mediante Intent.ACTION_SEND -->
+    <cache-path name="shared_pdfs" path="shared_pdfs/" />
+</paths>

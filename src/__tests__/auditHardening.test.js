@@ -2098,12 +2098,12 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(reuseOldBioToken.status).toBe(401);
     });
 
-    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 22 índices BSON (unicidad, compuesto dateTime+status, expiresAt, reseñas, TTL y optimización de consultas)', () => {
+    it('P1-2.4: api/db/mongo.js y README.md están 100% alineados en los 23 índices BSON (unicidad, compuesto dateTime+status, expiresAt, reseñas, TTL, seguridad y optimización de consultas)', () => {
       const rootDir = process.cwd();
       const mongoJs = fs.readFileSync(path.join(rootDir, 'api/db/mongo.js'), 'utf8');
       const readmeMd = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
 
-      expect(EXPECTED_MONGO_INDEXES.length).toBe(22);
+      expect(EXPECTED_MONGO_INDEXES.length).toBe(23);
       expect(mongoJs).toContain("name: 'uniq_bookings_id'");
       expect(mongoJs).toContain("name: 'idx_bookings_datetime_status'");
       expect(mongoJs).toContain("name: 'idx_bookings_client_whatsapp'");
@@ -2121,7 +2121,8 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       expect(mongoJs).toContain("name: 'idx_audit_logs_ttl_90d'");
       expect(mongoJs).toContain("name: 'uniq_slot_locks_key'");
       expect(mongoJs).toContain("name: 'uniq_rate_limits_key'");
-      expect(readmeMd).toContain('22 índices BSON');
+      expect(mongoJs).toContain("name: 'uniq_security_id'");
+      expect(readmeMd).toContain('23 índices BSON');
     });
 
     it('P1-2.5: GET /api/admin/backup cifra por defecto en producción (AES-256-GCM)', async () => {
@@ -2469,8 +2470,8 @@ describe('Auditoría de Seguridad, Subidas, Galerías Privadas y Webhooks', () =
       const verifiedReport = await ensureMongoIndexes(buildMockDb());
       expect(verifiedReport.ok).toBe(true);
       expect(verifiedReport.verified).toBe(true);
-      expect(verifiedReport.verifiedCount).toBe(22);
-      expect(verifiedReport.expectedCount).toBe(22);
+      expect(verifiedReport.verifiedCount).toBe(23);
+      expect(verifiedReport.expectedCount).toBe(23);
       expect(verifiedReport.missingOrInvalid.length).toBe(0);
     });
 

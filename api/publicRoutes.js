@@ -12,7 +12,7 @@
 import { createReceiptToken, verifyReceiptToken, toPublicBooking, getTrustedClientIp } from './security.js';
 import { computeBookingPaymentStatus } from './financials.js';
 import { validateReferralCode } from './referrals.js';
-import { isMongoConfigured, findMongoDocs, checkDistributedRateLimit } from './db/mongo.js';
+import { isMongoConfigured, findMongoDocs, findMongoDoc, checkDistributedRateLimit } from './db/mongo.js';
 
 const MAX_PUBLIC_RATE_LIMIT_ENTRIES = 2000;
 
@@ -77,32 +77,147 @@ function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000, keySelec
  */
 export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   const publicLimiter = createPublicRateLimiter();
+  const scheduleLimiter = createPublicRateLimiter({
+    max: 30,
+    windowMs: 10 * 60 * 1000,
+    distributedScope: 'schedule'
+  });
+
+  const INACTIVE_SCHEDULE_STATUSES = ['cancelled', 'canceled', 'cancelada', 'anulada', 'rejected'];
+  const SCHEDULE_MAX_SLOTS = 500;
 
   /**
-   * Trae las reservas desde MongoDB Atlas (fuente única de verdad).
+   * Consulta en MongoDB únicamente los campos mínimos para la agenda pública (`dateTime`, `status`),
+   * excluyendo reservas canceladas desde el motor de base de datos y acotando el tamaño de respuesta.
    */
-  async function fetchCloudBookings() {
-    if (isMongoConfigured()) {
-      try {
-        const mongoBookings = await findMongoDocs('bookings', {});
-        if (mongoBookings && mongoBookings.length > 0) {
-          return mongoBookings;
-        }
-      } catch (e) {
-        console.warn('[Público] No se pudo leer bookings de MongoDB:', e?.message || e);
+  async function getScheduleBookings() {
+    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
+    const merged = new Map();
+    const inactiveSet = new Set(INACTIVE_SCHEDULE_STATUSES);
+
+    for (const b of Array.isArray(db.bookings) ? db.bookings : []) {
+      if (b?.id && b.dateTime && !inactiveSet.has(String(b.status || '').toLowerCase())) {
+        merged.set(b.id, { id: b.id, dateTime: b.dateTime, status: b.status || 'pending' });
       }
     }
-    return [];
-  }
 
-  /** Pagos registrados en MongoDB Atlas o memoria. */
-  async function getPayments() {
-    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
-    const inMem = Array.isArray(db.payments) ? [...db.payments] : [];
     if (isMongoConfigured()) {
       try {
-        const mongoPayments = await findMongoDocs('payments', {});
-        if (mongoPayments && mongoPayments.length > 0) {
+        const mongoSlots = await findMongoDocs(
+          'bookings',
+          {
+            dateTime: { $exists: true, $nin: [null, ''] },
+            status: { $nin: INACTIVE_SCHEDULE_STATUSES }
+          },
+          { createdAt: -1 },
+          SCHEDULE_MAX_SLOTS,
+          { projection: { id: 1, dateTime: 1, status: 1, _id: 0 } }
+        );
+        if (Array.isArray(mongoSlots)) {
+          for (const b of mongoSlots) {
+            if (b?.dateTime) {
+              const key = b.id || `${b.dateTime}:${b.status || 'pending'}`;
+              merged.set(key, { dateTime: b.dateTime, status: b.status || 'pending' });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[Público] No se pudo leer agenda acotada de MongoDB:', e?.message || e);
+      }
+    }
+
+    return [...merged.values()].slice(0, SCHEDULE_MAX_SLOTS);
+  }
+
+  /**
+   * Consulta acotada por sufijo de teléfono (máx. 50 registros con proyección mínima)
+   * para verificación de fidelidad y referidos sin descargar la colección completa.
+   */
+  async function getCustomerRecordsByPhoneSuffix(phoneSuffix = '') {
+    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
+    const inMemBookings = Array.isArray(db.bookings) ? [...db.bookings] : [];
+    const inMemSessions = Array.isArray(db.sessions) ? [...db.sessions] : [];
+
+    const safeDigits = String(phoneSuffix || '').replace(/\D/g, '').slice(-10);
+    if (!isMongoConfigured() || safeDigits.length < 7) {
+      return { bookings: inMemBookings, sessions: inMemSessions };
+    }
+
+    const suffix8 = safeDigits.slice(-8);
+    // Patrón seguro de solo dígitos: permite coincidencia con formato +57 / espacios / guiones
+    const digitsRegex = suffix8.split('').join('[^0-9]*') + '$';
+    const bookingMap = new Map();
+    for (const b of inMemBookings) {
+      if (b?.id) bookingMap.set(b.id, b);
+    }
+    const sessionMap = new Map();
+    for (const s of inMemSessions) {
+      if (s?.token) sessionMap.set(s.token, s);
+    }
+
+    try {
+      const [mongoBookings, mongoSessions] = await Promise.all([
+        findMongoDocs(
+          'bookings',
+          { clientWhatsApp: { $regex: digitsRegex }, status: { $nin: INACTIVE_SCHEDULE_STATUSES } },
+          { createdAt: -1 },
+          50,
+          { projection: { id: 1, clientName: 1, client_name: 1, clientWhatsApp: 1, status: 1, _id: 0 } }
+        ),
+        findMongoDocs(
+          'sessions',
+          { clientWhatsApp: { $regex: digitsRegex } },
+          { createdAt: -1 },
+          50,
+          { projection: { id: 1, token: 1, clientName: 1, client_name: 1, clientWhatsApp: 1, status: 1, _id: 0 } }
+        )
+      ]);
+      for (const b of Array.isArray(mongoBookings) ? mongoBookings : []) {
+        if (b?.id) bookingMap.set(b.id, { ...(bookingMap.get(b.id) || {}), ...b });
+      }
+      for (const s of Array.isArray(mongoSessions) ? mongoSessions : []) {
+        if (s?.token) sessionMap.set(s.token, { ...(sessionMap.get(s.token) || {}), ...s });
+      }
+    } catch (e) {
+      console.warn('[Público] No se pudo consultar historial acotado por teléfono:', e?.message || e);
+    }
+
+    return { bookings: [...bookingMap.values()], sessions: [...sessionMap.values()] };
+  }
+
+  /** Obtiene una sola reserva por ID (memoria o MongoDB puntual, sin escanear la colección). */
+  async function getSingleBookingById(bookingId) {
+    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
+    const inMem = (Array.isArray(db.bookings) ? db.bookings : []).find(b => b && String(b.id) === String(bookingId));
+    if (isMongoConfigured()) {
+      try {
+        const mongoDoc = await findMongoDoc('bookings', { id: String(bookingId) });
+        if (mongoDoc) {
+          return inMem ? { ...inMem, ...mongoDoc } : mongoDoc;
+        }
+      } catch (e) {
+        console.warn('[Público] No se pudo leer reserva puntual en MongoDB:', e?.message || e);
+      }
+    }
+    return inMem || null;
+  }
+
+  /** Pagos asociados puntualmente a una reserva (sin descargar todos los pagos del estudio). */
+  async function getPaymentsForBooking(bookingId) {
+    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
+    const targetId = String(bookingId || '');
+    const inMem = (Array.isArray(db.payments) ? db.payments : []).filter(
+      p => p && (String(p.bookingId || '') === targetId || String(p.sessionToken || '') === targetId)
+    );
+    if (isMongoConfigured() && targetId) {
+      try {
+        const mongoPayments = await findMongoDocs(
+          'payments',
+          { $or: [{ bookingId: targetId }, { sessionToken: targetId }] },
+          { createdAt: -1 },
+          100
+        );
+        if (Array.isArray(mongoPayments) && mongoPayments.length > 0) {
           const map = new Map();
           [...inMem, ...mongoPayments].forEach((p) => {
             if (p?.id) map.set(p.id, p);
@@ -110,59 +225,23 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
           return [...map.values()];
         }
       } catch (e) {
-        console.warn('[Público] No se pudo leer payments de MongoDB:', e?.message || e);
+        console.warn('[Público] No se pudo leer payments puntuales de MongoDB:', e?.message || e);
       }
     }
     return inMem;
-  }
-
-  /** Reservas combinando la caché en memoria y MongoDB Atlas. */
-  async function getAllBookings() {
-    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
-    const merged = new Map();
-    for (const b of Array.isArray(db.bookings) ? db.bookings : []) {
-      if (b?.id) merged.set(b.id, b);
-    }
-    for (const b of await fetchCloudBookings()) {
-      if (b?.id) merged.set(b.id, { ...(merged.get(b.id) || {}), ...b });
-    }
-    return [...merged.values()];
-  }
-
-  /** Sesiones (galerías) combinando memoria y MongoDB Atlas. */
-  async function getAllSessions() {
-    const db = (typeof getRuntimeDB === 'function' ? getRuntimeDB() : null) || {};
-    const sessions = [...(Array.isArray(db.sessions) ? db.sessions : [])];
-
-    if (isMongoConfigured()) {
-      try {
-        const mongoSessions = await findMongoDocs('sessions', {});
-        if (mongoSessions && mongoSessions.length > 0) {
-          const map = new Map();
-          [...sessions, ...mongoSessions].forEach(s => {
-            if (s?.token) map.set(s.token, s);
-          });
-          return [...map.values()];
-        }
-      } catch (e) {
-        console.warn('[Público] No se pudo leer sessions de MongoDB:', e?.message || e);
-      }
-    }
-
-    return sessions;
   }
 
   // ----------------------------------------------------------------------------
   // 1. CUPOS OCUPADOS DEL CALENDARIO (sin ningún dato personal ni IDs internos)
   // ----------------------------------------------------------------------------
   // Devuelve solo lo necesario para pintar el calendario: cuándo y estado.
-  // Protege la privacidad omitiendo por completo los IDs internos de las reservas.
-  app.get('/api/public/schedule', publicLimiter, async (req, res) => {
+  // Protege la privacidad omitiendo por completo los IDs internos y aplicando proyección + límite en MongoDB.
+  app.get('/api/public/schedule', scheduleLimiter, async (req, res) => {
     try {
-      const bookings = await getAllBookings();
+      const bookings = await getScheduleBookings();
       const slots = bookings
         .filter(b => b && b.dateTime)
-        .filter(b => !['cancelled', 'cancelada', 'anulada'].includes(String(b.status || '').toLowerCase()))
+        .filter(b => !INACTIVE_SCHEDULE_STATUSES.includes(String(b.status || '').toLowerCase()))
         .map(b => ({ dateTime: b.dateTime, status: b.status || 'pending' }));
 
       res.setHeader('Cache-Control', 'public, max-age=60');
@@ -223,7 +302,7 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
     };
 
     try {
-      const [bookings, sessions] = await Promise.all([getAllBookings(), getAllSessions()]);
+      const { bookings, sessions } = await getCustomerRecordsByPhoneSuffix(phone);
       const isLoyal = bookings.some(matches) || sessions.some(matches);
       // Nunca devolvemos el nombre ni el historial: solo si aplica el descuento.
       return res.json({ isLoyal, discountPercent: isLoyal ? 15 : 0 });
@@ -242,7 +321,7 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
     const clientPhone = String(req.query.clientPhone || '');
 
     try {
-      const [bookings, sessions] = await Promise.all([getAllBookings(), getAllSessions()]);
+      const { bookings, sessions } = await getCustomerRecordsByPhoneSuffix(code);
       const result = validateReferralCode({ code, clientPhone, bookings, sessions });
       return res.json(result);
     } catch (e) {
@@ -263,14 +342,13 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
     }
 
     try {
-      const bookings = await getAllBookings();
-      const booking = bookings.find(b => String(b.id) === String(bookingId));
+      const booking = await getSingleBookingById(bookingId);
       if (!booking) {
         return res.status(404).json({ error: 'Comprobante no encontrado.' });
       }
 
       // El importe abonado se calcula aquí (nunca se acepta del navegador).
-      const payments = await getPayments();
+      const payments = await getPaymentsForBooking(booking.id);
       const { totalPaid } = computeBookingPaymentStatus(booking, payments);
 
       res.setHeader('Cache-Control', 'no-store');

@@ -5,8 +5,14 @@ import path from 'path';
 import app, {
   HARDENED_CONTENT_SECURITY_POLICY,
   clearApiRateLimiters,
+  extractPublicSettings,
+  resolveOneSignalRestApiKey,
   runtimeDB
 } from '../../api/index.js';
+import {
+  EXPECTED_MONGO_INDEXES,
+  claimOneShotEmergencyToken
+} from '../../api/db/mongo.js';
 import {
   ADMIN_SESSION_COOKIE_NAME,
   createAdminToken,
@@ -588,6 +594,216 @@ describe('Pre-External Audit Hardening & Bug-Fix Regression Suite', () => {
 
       const bookingModal = fs.readFileSync(path.join(rootDir, 'src/components/BookingModal.jsx'), 'utf8');
       expect(bookingModal).toContain("parsedCheckout.hostname === 'checkout.wompi.co'");
+    });
+  });
+
+  describe('6. Plan de Remediación de Auditoría Externa (P0, P1, P2 y P3)', () => {
+    it('SEC-01: EXPECTED_MONGO_INDEXES incluye índice único uniq_security_id y claimOneShotEmergencyToken es seguro ante concurrencia', async () => {
+      const secIdx = EXPECTED_MONGO_INDEXES.find(i => i.col === 'security' && i.opts?.name === 'uniq_security_id');
+      expect(secIdx).toBeTruthy();
+      expect(secIdx.spec).toEqual({ id: 1 });
+      expect(secIdx.opts.unique).toBe(true);
+
+      // Simulación de colección MongoDB con índice único real sobre `id` (dispara E11000 en colisión concurrente)
+      const docsById = new Map();
+      const mockDb = {
+        collection(name) {
+          expect(name).toBe('security');
+          return {
+            async updateOne(filter, update, opts) {
+              // Ceder el event loop para simular 2 lambdas ejecutando concurrentemente
+              await Promise.resolve();
+              const existing = docsById.get(filter.id);
+              if (existing) {
+                if (existing.used === true) {
+                  if (opts?.upsert) {
+                    const err = new Error('E11000 duplicate key error collection: security index: uniq_security_id');
+                    err.code = 11000;
+                    throw err;
+                  }
+                  return { acknowledged: true, matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
+                }
+                docsById.set(filter.id, { ...existing, ...update.$set });
+                return { acknowledged: true, matchedCount: 1, modifiedCount: 1, upsertedCount: 0 };
+              }
+              docsById.set(filter.id, { ...update.$set });
+              return { acknowledged: true, matchedCount: 0, modifiedCount: 0, upsertedCount: 1 };
+            }
+          };
+        }
+      };
+
+      const docId = 'emergency_token_concurrent_test';
+      const [r1, r2, r3] = await Promise.all([
+        claimOneShotEmergencyToken({ docId, tokenHash: 'hashA', usedByIp: '198.51.100.1', targetDb: mockDb }),
+        claimOneShotEmergencyToken({ docId, tokenHash: 'hashA', usedByIp: '198.51.100.2', targetDb: mockDb }),
+        claimOneShotEmergencyToken({ docId, tokenHash: 'hashA', usedByIp: '198.51.100.3', targetDb: mockDb })
+      ]);
+      const claimedCount = [r1, r2, r3].filter(r => r.claimed).length;
+      expect(claimedCount).toBe(1);
+
+      // Segundo uso posterior siempre rechazado
+      const reuse = await claimOneShotEmergencyToken({ docId, tokenHash: 'hashA', usedByIp: '198.51.100.4', targetDb: mockDb });
+      expect(reuse.claimed).toBe(false);
+
+      // Token distinto (renovado) puede reclamarse correctamente una sola vez
+      const distinct = await claimOneShotEmergencyToken({ docId: 'emergency_token_v2', tokenHash: 'hashB', usedByIp: '198.51.100.5', targetDb: mockDb });
+      expect(distinct.claimed).toBe(true);
+
+      // Sin MongoDB disponible falla cerrado reportando dbUnavailable
+      const noDb = await claimOneShotEmergencyToken({ docId: 'emergency_no_db', tokenHash: 'hashC', usedByIp: '198.51.100.6' });
+      expect(noDb.claimed).toBe(false);
+      expect(noDb.dbUnavailable).toBe(true);
+    });
+
+    it('DUP-01, CONF-03 y BUG-01: Android elimina styles.xml duplicado, usa gradle.properties + signingConfig fail-closed y FileProvider en sharePdfFile', () => {
+      const rootDir = process.cwd();
+      expect(fs.existsSync(path.join(rootDir, 'android/app/src/main/res/values/styles.xml'))).toBe(false);
+      expect(fs.existsSync(path.join(rootDir, 'android/app/src/main/res/values/themes.xml'))).toBe(true);
+      expect(fs.existsSync(path.join(rootDir, 'android/gradle.properties'))).toBe(true);
+      expect(fs.readFileSync(path.join(rootDir, 'android/gradle.properties'), 'utf8')).toContain('android.useAndroidX=true');
+
+      const gradleKts = fs.readFileSync(path.join(rootDir, 'android/app/build.gradle.kts'), 'utf8');
+      expect(gradleKts).toContain('ANDROID_KEYSTORE_PATH');
+      expect(gradleKts).toContain('GradleException');
+      expect(gradleKts).not.toContain('debug.keystore');
+
+      const manifest = fs.readFileSync(path.join(rootDir, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+      expect(manifest).toContain('androidx.core.content.FileProvider');
+      expect(manifest).toContain('@xml/file_paths');
+      expect(fs.existsSync(path.join(rootDir, 'android/app/src/main/res/xml/file_paths.xml'))).toBe(true);
+
+      const bridge = fs.readFileSync(
+        path.join(rootDir, 'android/app/src/main/java/app/sebastiang/studio/bridge/AndroidNotificationBridge.kt'),
+        'utf8'
+      );
+      expect(bridge).toContain('Intent.ACTION_SEND');
+      expect(bridge).toContain('FileProvider.getUriForFile');
+      expect(bridge).toContain('Intent.EXTRA_STREAM');
+    });
+
+    it('SEC-02, BUG-04 y SEC-08: cero teléfonos/llaves hardcodeados en src/, galería demo sin teléfono personal y server/db/schema.sql eliminado', () => {
+      const rootDir = process.cwd();
+      expect(fs.existsSync(path.join(rootDir, 'server/db/schema.sql'))).toBe(false);
+      expect(fs.existsSync(path.join(rootDir, 'public/.htaccess'))).toBe(false);
+      expect(fs.existsSync(path.join(rootDir, 'docs/legacy/htaccess-apache.txt'))).toBe(true);
+
+      const forbiddenWalletRegex = /(324[\s-]?472[\s-]?5167|302[\s-]?369[\s-]?6513|@PLATA3244725167|@SGG04)/i;
+      function walkSrc(dir) {
+        const out = [];
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, e.name);
+          if (e.isDirectory() && e.name !== '__tests__') out.push(...walkSrc(p));
+          else if (/\.(js|jsx|ts|tsx)$/.test(e.name)) out.push(p);
+        }
+        return out;
+      }
+      for (const file of walkSrc(path.join(rootDir, 'src'))) {
+        const content = fs.readFileSync(file, 'utf8');
+        expect(forbiddenWalletRegex.test(content), `Literal comercial hardcodeado en ${path.relative(rootDir, file)}`).toBe(false);
+      }
+
+      const apiJs = fs.readFileSync(path.join(rootDir, 'src/services/api.js'), 'utf8');
+      expect(apiJs).toContain('clientWhatsApp: ""');
+      expect(apiJs).toContain("from '../../shared/pricing.js'");
+
+      // extractPublicSettings deriva llaves públicas dinámicamente desde configuración del servidor
+      const pubSettings = extractPublicSettings({
+        photographerWhatsApp: '+573001112233',
+        daleKey: '@TESTKEY'
+      });
+      expect(pubSettings.nequiNumber).toBe('3001112233');
+      expect(pubSettings.daviplataKey).toBe('@PLATA3001112233');
+      expect(pubSettings.daleKey).toBe('@TESTKEY');
+    });
+
+    it('SEC-10: GET /api/public/schedule devuelve solo dateTime/status, omite canceladas y aplica proyección + límite en MongoDB', async () => {
+      runtimeDB.bookings = [
+        {
+          id: 'book-sched-1',
+          clientName: 'Nombre Privado',
+          clientWhatsApp: '+573110001111',
+          clientEmail: 'privado@example.com',
+          dateTime: '30/12/2026 a las 4:00 p. m.',
+          status: 'confirmed',
+          totalPrice: 75000
+        },
+        {
+          id: 'book-sched-2',
+          clientName: 'Cancelado',
+          dateTime: '30/12/2026 a las 5:00 p. m.',
+          status: 'cancelled'
+        }
+      ];
+
+      const res = await invokeApp('GET', '/api/public/schedule', { remoteAddress: '198.51.100.77' });
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.slots)).toBe(true);
+      expect(res.body.slots).toHaveLength(1);
+      expect(Object.keys(res.body.slots[0]).sort()).toEqual(['dateTime', 'status']);
+      expect(res.body.slots[0].dateTime).toBe('30/12/2026 a las 4:00 p. m.');
+
+      const pubRoutesCode = fs.readFileSync(path.join(process.cwd(), 'api/publicRoutes.js'), 'utf8');
+      expect(pubRoutesCode).toContain('projection: { id: 1, dateTime: 1, status: 1, _id: 0 }');
+      expect(pubRoutesCode).toContain('SCHEDULE_MAX_SLOTS');
+    });
+
+    it('SEC-04, SEC-06, CONF-05, ARCH-08, BUG-02, BUG-05 y CONF-01: OneSignal estricto, CSP sin wildcard/Unsplash, /api/admin/db cerrado en prod y .env.example completo', async () => {
+      // SEC-04: OneSignal solo acepta os_v2_ (plano o base64 válido)
+      const validB64 = Buffer.from('os_v2_app_demo_key_123456', 'utf8').toString('base64');
+      expect(resolveOneSignalRestApiKey('os_v2_app_direct_key')).toBe('os_v2_app_direct_key');
+      expect(resolveOneSignalRestApiKey(validB64)).toBe('os_v2_app_demo_key_123456');
+      expect(resolveOneSignalRestApiKey('cualquier_cadena_larga_invalida_de_mas_de_20_caracteres')).toBe('');
+
+      // SEC-06 & CONF-05: CSP sin *.wompi.co ni images.unsplash.com
+      expect(HARDENED_CONTENT_SECURITY_POLICY).not.toContain('*.wompi.co');
+      expect(HARDENED_CONTENT_SECURITY_POLICY).not.toContain('images.unsplash.com');
+      expect(HARDENED_CONTENT_SECURITY_POLICY).toContain('https://production.wompi.co');
+      const vercelJson = fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8');
+      expect(vercelJson).not.toContain('*.wompi.co');
+      expect(vercelJson).not.toContain('images.unsplash.com');
+
+      // ARCH-08: POST /api/admin/db deshabilitado en producción por defecto
+      const prevEnv = process.env.NODE_ENV;
+      const prevProxy = process.env.ADMIN_DB_PROXY_ENABLED;
+      try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.ADMIN_DB_PROXY_ENABLED;
+        const adminToken = createAdminToken({ pwd: 1 });
+        const blocked = await invokeApp('POST', '/api/admin/db', {
+          headers: { Authorization: `Bearer ${adminToken}` },
+          body: { table: 'bookings', op: 'select', match: {} }
+        });
+        expect(blocked.status).toBe(403);
+        expect(blocked.body.code).toBe('ADMIN_DB_PROXY_DISABLED');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevProxy !== undefined) process.env.ADMIN_DB_PROXY_ENABLED = prevProxy;
+      }
+
+      // BUG-02 & BUG-05: sin pagos fantasma offlinePendingSync y con reintento en logoutAdminSession
+      const apiJs = fs.readFileSync(path.join(process.cwd(), 'src/services/api.js'), 'utf8');
+      expect(apiJs).not.toContain('offlinePendingSync');
+      expect(apiJs).toContain('for (let attempt = 0; attempt < 2; attempt++)');
+
+      // CONF-01: .env.example documenta todas las variables críticas
+      const envEx = fs.readFileSync(path.join(process.cwd(), '.env.example'), 'utf8');
+      for (const k of [
+        'WOMPI_PRIVATE_KEY',
+        'ADMIN_EMERGENCY_RESET_TOKEN',
+        'ADMIN_PIN_HASH',
+        'ADMIN_AUTH_SECRET_KEYRING',
+        'BACKUP_ENCRYPTION_KEY',
+        'APK_FEED_SECRET',
+        'ALLOWED_PREVIEW_ORIGINS',
+        'ALLOW_DEMO_GALLERY',
+        'SENTRY_WEBHOOK_URL',
+        'ERROR_TRACKING_WEBHOOK_URL',
+        'CI_PRODUCTION',
+        'ANDROID_KEYSTORE_PATH'
+      ]) {
+        expect(envEx, `Variable faltante en .env.example: ${k}`).toContain(k + '=');
+      }
     });
   });
 });

@@ -8,6 +8,10 @@ dist/
 build/
 release/
 out/
+.gradle/
+android/local.properties
+android/build/
+android/app/build/
 
 # Environment variables (NUNCA subir secretos)
 .env

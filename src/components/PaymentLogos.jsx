@@ -126,6 +126,7 @@ export function WalletAccountCard({
   const isDaviplata = walletType === 'daviplata';
   const isDale = walletType === 'dale';
 
+  const cleanCopyNumber = String(number || '').replace(/\s+/g, '');
   const config = {
     nequi: {
       name: 'Nequi',
@@ -135,8 +136,8 @@ export function WalletAccountCard({
       accent: 'text-[#ff007a]',
       glow: 'shadow-[0_8px_30px_rgba(255,0,122,0.15)]',
       label: 'Número de Celular:',
-      value: number || '324 472 5167',
-      copyValue: '3244725167',
+      value: number || 'Sin configurar',
+      copyValue: cleanCopyNumber,
       logo: <NequiLogo className="w-8 h-8" showText={true} />
     },
     daviplata: {
@@ -147,8 +148,8 @@ export function WalletAccountCard({
       accent: 'text-[#ed1c24]',
       glow: 'shadow-[0_8px_30px_rgba(237,28,36,0.15)]',
       label: 'Llave Transfiya / Celular:',
-      value: number || '@PLATA3244725167',
-      copyValue: '@PLATA3244725167',
+      value: number || 'Sin configurar',
+      copyValue: cleanCopyNumber,
       logo: <DaviPlataLogo className="w-8 h-8" showText={true} />
     },
     dale: {
@@ -159,8 +160,8 @@ export function WalletAccountCard({
       accent: 'text-[#ffdd00]',
       glow: 'shadow-[0_8px_30px_rgba(255,221,0,0.15)]',
       label: 'Llave Transfiya / Celular:',
-      value: number || '@SGG04',
-      copyValue: '@SGG04',
+      value: number || 'Sin configurar',
+      copyValue: cleanCopyNumber,
       logo: <DaleLogo className="w-8 h-8" showText={true} />
     }
   }[walletType] || {

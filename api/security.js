@@ -509,6 +509,18 @@ export async function requireAdminAuth(req, res, next) {
     }
   }
 
+  // Si la versión del token difiere del valor cacheado, forzar una lectura fresca para tolerar rotación multi-instancia
+  if (payload.pwd !== activeVersion && typeof passwordVersionGetter === 'function') {
+    try {
+      const refreshed = await passwordVersionGetter({ forceRefresh: true });
+      if (refreshed !== undefined && refreshed !== null) {
+        activeVersion = Number(refreshed) || activeVersion;
+      }
+    } catch {
+      return res.status(401).json({ error: 'Error de verificación de sesión (servicio de autenticación no disponible).' });
+    }
+  }
+
   // Si la versión del token no coincide con la versión activa, sesión revocada
   if (payload.pwd !== activeVersion) {
     return res.status(401).json({ error: 'Sesión revocada. Por favor, inicia sesión de nuevo.' });

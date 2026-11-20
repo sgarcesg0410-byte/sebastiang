@@ -27,6 +27,12 @@ import {
   validateSessionToken,
   DEFAULT_PIN_HASH
 } from './auth/adminSecurity';
+import {
+  DEFAULT_PAPER_PRINT_SIZES,
+  DEFAULT_RETABLO_SIZES,
+  getPaperPrintSizes,
+  getRetabloSizes
+} from '../../shared/pricing.js';
 
 export {
   hashStringSHA256,
@@ -39,7 +45,11 @@ export {
   savePinHash,
   generateSessionToken,
   validateSessionToken,
-  DEFAULT_PIN_HASH
+  DEFAULT_PIN_HASH,
+  DEFAULT_PAPER_PRINT_SIZES,
+  DEFAULT_RETABLO_SIZES,
+  getPaperPrintSizes,
+  getRetabloSizes
 };
 
 export const API_BASE = (typeof window !== 'undefined' && window.location.protocol === 'file:')
@@ -236,151 +246,11 @@ export function addDeletedCatalogId(id) {
   } catch (e) {}
 }
 
-export const DEFAULT_PAPER_PRINT_SIZES = [
-  {
-    id: '10x15',
-    dimensions: '10x15 cm',
-    label: '10x15 cm',
-    price: 7000,
-    category: 'foto_papel',
-    type: 'Foto Impresa en Papel',
-    desc: 'Papel fotográfico profesional de laboratorio • Formato estándar para álbum o bolsillo',
-    tag: 'Estándar'
-  },
-  {
-    id: '15x20',
-    dimensions: '15x20 cm',
-    label: '15x20 cm',
-    price: 8000,
-    category: 'foto_papel',
-    type: 'Foto Impresa en Papel',
-    desc: 'Papel fotográfico profesional de laboratorio • Formato ideal para portarretratos de mesa',
-    tag: 'Portarretrato'
-  }
-];
-
-export const DEFAULT_RETABLO_SIZES = [
-  {
-    id: '20x30',
-    dimensions: '20x30 cm',
-    label: '20x30 cm',
-    cost: 15000,
-    price: 30000,
-    category: 'retablo',
-    type: 'Cuadro en Retablo',
-    desc: 'Cuadro en retablo de madera • Acabado laminado y bordes pulidos',
-    tag: 'Retablo HD'
-  },
-  {
-    id: '30x45',
-    dimensions: '30x45 cm',
-    label: '30x45 cm',
-    cost: 30000,
-    price: 60000,
-    category: 'retablo',
-    type: 'Cuadro en Retablo',
-    desc: 'Cuadro en retablo de madera • Medida ideal para salas o dormitorios',
-    tag: 'Retablo Mediano'
-  },
-  {
-    id: '40x50',
-    dimensions: '40x50 cm',
-    label: '40x50 cm',
-    cost: 55000,
-    price: 85000,
-    category: 'retablo',
-    type: 'Cuadro en Retablo',
-    desc: 'Cuadro en retablo de madera • Formato de galería con alta presencia decorativa',
-    tag: 'Retablo Galería'
-  },
-  {
-    id: '50x70',
-    dimensions: '50x70 cm',
-    label: '50x70 cm',
-    cost: 80000,
-    price: 110000,
-    category: 'retablo',
-    type: 'Cuadro en Retablo',
-    desc: 'Cuadro en retablo de gran formato vertical • Alto impacto visual',
-    tag: 'Retablo Gran Formato'
-  },
-  {
-    id: '70x50',
-    dimensions: '70x50 cm',
-    label: '70x50 cm',
-    cost: 80000,
-    price: 120000,
-    category: 'retablo',
-    type: 'Cuadro en Retablo Panorámico',
-    desc: 'Cuadro en retablo horizontal panorámico de lujo para sala principal',
-    tag: 'Retablo Panorámico'
-  },
-  {
-    id: '70x100',
-    dimensions: '70x100 cm',
-    label: '70x100 cm',
-    cost: 150000,
-    price: 200000,
-    category: 'retablo',
-    type: 'Cuadro en Retablo Gigante (1m)',
-    desc: 'Cuadro en retablo gigante de 1 metro • Máximo lujo fotográfico',
-    tag: 'Retablo Gigante (1m)'
-  }
-];
-
-export const DEFAULT_RETABLO_COSTS = {
-  '20x30': 15000,
-  '30x45': 30000,
-  '40x50': 55000,
-  '50x70': 80000,
-  '70x50': 80000,
-  '70x100': 150000
-};
+export const DEFAULT_RETABLO_COSTS = Object.fromEntries(
+  DEFAULT_RETABLO_SIZES.map((item) => [item.id, item.cost])
+);
 
 export const DEFAULT_PRINT_SIZES = [...DEFAULT_PAPER_PRINT_SIZES, ...DEFAULT_RETABLO_SIZES];
-
-export function getPaperPrintSizes(settings = {}) {
-  return DEFAULT_PAPER_PRINT_SIZES.map(item => {
-    let p = item.price;
-    if (item.id === '10x15' && settings.printedPhotoPrice) p = Number(settings.printedPhotoPrice);
-    if (item.id === '15x20' && settings.printedPhoto15x20Price) p = Number(settings.printedPhoto15x20Price);
-    return { ...item, price: p };
-  });
-}
-
-export function getRetabloSizes(settings = {}) {
-  return DEFAULT_RETABLO_SIZES.map(item => {
-    let p = item.price;
-    let c = item.cost;
-    if (item.id === '20x30') {
-      if (settings.printedPhoto20x30Price) p = Number(settings.printedPhoto20x30Price);
-      if (settings.retabloCost20x30 !== undefined && settings.retabloCost20x30 !== null) c = Number(settings.retabloCost20x30);
-    }
-    if (item.id === '30x45') {
-      if (settings.printedPhoto30x45Price) p = Number(settings.printedPhoto30x45Price);
-      if (settings.retabloCost30x45 !== undefined && settings.retabloCost30x45 !== null) c = Number(settings.retabloCost30x45);
-    }
-    if (item.id === '40x50') {
-      if (settings.printedPhoto40x50Price) p = Number(settings.printedPhoto40x50Price);
-      if (settings.retabloCost40x50 !== undefined && settings.retabloCost40x50 !== null) c = Number(settings.retabloCost40x50);
-    }
-    if (item.id === '50x70') {
-      if (settings.printedPhoto50x70Price) p = Number(settings.printedPhoto50x70Price);
-      if (settings.retabloCost50x70 !== undefined && settings.retabloCost50x70 !== null) c = Number(settings.retabloCost50x70);
-    }
-    if (item.id === '70x50') {
-      if (settings.printedPhoto70x50Price) p = Number(settings.printedPhoto70x50Price);
-      if (settings.retabloCost70x50 !== undefined && settings.retabloCost70x50 !== null) c = Number(settings.retabloCost70x50);
-    }
-    if (item.id === '70x100') {
-      if (settings.printedPhoto70x100Price) p = Number(settings.printedPhoto70x100Price);
-      if (settings.retabloCost70x100 !== undefined && settings.retabloCost70x100 !== null) c = Number(settings.retabloCost70x100);
-    }
-    const profit = Math.max(0, p - c);
-    const marginPercent = p > 0 ? Math.round((profit / p) * 100) : 0;
-    return { ...item, price: p, cost: c, profit, marginPercent };
-  });
-}
 
 export function calculateRetablosFinancials(bookingOrSizes, settings = {}) {
   const catalog = getRetabloSizes(settings);
@@ -469,8 +339,11 @@ export function formatPrintedPhotosSummary(bookingOrSizes, sizesCatalog = DEFAUL
 
 export const DEFAULT_SETTINGS = {
   photographerName: "Sebastian G",
-  photographerWhatsApp: "+573244725167",
-  photographerWhatsApp2: "+573023696513",
+  photographerWhatsApp: "",
+  photographerWhatsApp2: "",
+  nequiNumber: "",
+  daviplataKey: "",
+  daleKey: "",
   googleBusinessUrl: "https://maps.google.com/?q=Sebastian+G+Fotografia+San+Antero+Covenas",
   outOfSanAnteroSurcharge: 10000,
   currencySymbol: "$",
@@ -495,6 +368,65 @@ export const DEFAULT_SETTINGS = {
   retabloCost70x100: 150000,
   printSizes: DEFAULT_PRINT_SIZES
 };
+
+export function getCachedSettings() {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(LOCAL_SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return { ...DEFAULT_SETTINGS, ...parsed };
+        }
+      }
+    }
+  } catch {}
+  return { ...DEFAULT_SETTINGS };
+}
+
+export function formatColombiaPhoneDisplay(rawPhone = '') {
+  const digits = String(rawPhone || '').replace(/\D/g, '');
+  const local10 = digits.length === 12 && digits.startsWith('57') ? digits.slice(2) : digits;
+  if (local10.length === 10) {
+    return `${local10.slice(0, 3)} ${local10.slice(3, 6)} ${local10.slice(6)}`;
+  }
+  return String(rawPhone || '').trim();
+}
+
+/**
+ * Resuelve los canales públicos comerciales (WhatsApp y llaves de billeteras digitales)
+ * dinámicamente desde /api/settings sin literales personales hardcodeados en el bundle JS.
+ */
+export function getPaymentWalletHandles(settingsObj = null) {
+  const st = (settingsObj && typeof settingsObj === 'object' && Object.keys(settingsObj).length > 0)
+    ? { ...getCachedSettings(), ...settingsObj }
+    : getCachedSettings();
+  const wa1Raw = String(st.photographerWhatsApp || '').trim();
+  const wa2Raw = String(st.photographerWhatsApp2 || '').trim();
+  const wa1Digits = wa1Raw.replace(/\D/g, '');
+  const wa2Digits = wa2Raw.replace(/\D/g, '');
+  const wa1Local = wa1Digits.length === 12 && wa1Digits.startsWith('57') ? wa1Digits.slice(2) : wa1Digits;
+  const wa2Local = wa2Digits.length === 12 && wa2Digits.startsWith('57') ? wa2Digits.slice(2) : wa2Digits;
+
+  const nequiNumber = String(st.nequiNumber || wa1Local || '').replace(/\s+/g, '');
+  const daviplataKey = String(st.daviplataKey || (nequiNumber ? `@PLATA${nequiNumber}` : '')).trim();
+  const daleKey = String(st.daleKey || '').trim();
+
+  return {
+    wa1Raw,
+    wa2Raw,
+    wa1Digits,
+    wa2Digits,
+    wa1Display: formatColombiaPhoneDisplay(wa1Raw),
+    wa2Display: formatColombiaPhoneDisplay(wa2Raw),
+    wa1Intl: wa1Local.length === 10 ? `+57 ${formatColombiaPhoneDisplay(wa1Local)}` : wa1Raw,
+    wa2Intl: wa2Local.length === 10 ? `+57 ${formatColombiaPhoneDisplay(wa2Local)}` : wa2Raw,
+    nequiNumber,
+    nequiDisplay: formatColombiaPhoneDisplay(nequiNumber),
+    daviplataKey,
+    daleKey
+  };
+}
 
 // Helpers de almacenamiento local de respaldo
 function getLocalCatalog() {
@@ -1283,20 +1215,26 @@ export async function createBooking(data) {
       };
     }
   } catch (err) {
-    console.warn('Server offline o error al reservar en API Vercel:', err);
+    console.warn('Error de red al crear reserva en servidor:', err);
+    return {
+      success: false,
+      offline: true,
+      error: 'Sin conexión con el servidor para confirmar tu cupo. Verifica tu internet e intenta nuevamente.',
+      code: 'NETWORK_OFFLINE'
+    };
   }
 
-  // Objeto de reserva definitivo (solo si el servidor la creó o en modo offline defensivo)
-  const newBooking = serverBooking || {
-    id: `book-${Date.now()}`,
-    ...data,
-    totalPrice: data.totalPrice || 75000,
-    createdAt: new Date().toISOString(),
-    status: 'pending',
-    offlinePendingSync: true
-  };
+  if (!serverBooking) {
+    return {
+      success: false,
+      error: 'El servidor no devolvió confirmación de la reserva. Intenta nuevamente.',
+      code: 'EMPTY_SERVER_RESPONSE'
+    };
+  }
 
-  // 1. Guardar localmente
+  const newBooking = serverBooking;
+
+  // 1. Guardar copia local del registro confirmado en servidor
   saveLocalBooking(newBooking);
 
   // 2. Notificación instantánea entre pestañas / ventanas en el mismo equipo
@@ -1310,8 +1248,9 @@ export async function createBooking(data) {
   } catch (e) {}
 
   if (!directWhatsAppUrl) {
-    const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
-    const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+    const handles = getPaymentWalletHandles();
+    const p1 = handles.wa1Digits;
+    const p2 = handles.wa2Digits;
     let printedDetails = '';
     const paperSummary = formatPaperPhotosSummary(newBooking);
     const retabloSummary = formatRetablosSummary(newBooking);
@@ -1387,13 +1326,13 @@ export async function getGalleryByToken(token) {
     console.warn('Error conectando con servidor para galería, consultando respaldo local:', err);
   }
 
-  // 2. Si es la demostración pública para visitantes, proveer datos limpios
+  // 2. Si es la demostración pública para visitantes, proveer datos limpios (sin teléfono personal precargado ni URLs externas)
   if (token === 'demo-cliente-2026') {
     return {
       id: "sess-demo",
       token: "demo-cliente-2026",
       clientName: "Demostración de Selección",
-      clientWhatsApp: "+573244725167",
+      clientWhatsApp: "",
       packageTitle: "8 Fotos Digitales (+ 2 Fotos Gratis)",
       maxPhotosAllowed: 10,
       createdAt: new Date().toISOString(),
@@ -1405,12 +1344,12 @@ export async function getGalleryByToken(token) {
       isDelivered: false,
       timeRemainingMs: 30 * 24 * 60 * 60 * 1000,
       photos: [
-        { id: "photo-1", title: "Foto 001 - Retrato Principal", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-2", title: "Foto 002 - Luz Natural & Detalle", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-3", title: "Foto 003 - Sonrisa Espontánea", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-4", title: "Foto 004 - Encuadre Dinámico", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-5", title: "Foto 005 - Plano Entero", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-6", title: "Foto 006 - Composición Artística", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
+        { id: "photo-1", title: "Foto 001 - Retrato Principal", url: "/catalog/verano-salsero.jpg", selected: false, clientComment: "" },
+        { id: "photo-2", title: "Foto 002 - Luz Natural & Detalle", url: "/catalog/cat-1789878355199.jpg", selected: false, clientComment: "" },
+        { id: "photo-3", title: "Foto 003 - Sonrisa Espontánea", url: "/catalog/cat-1789902452640.jpg", selected: false, clientComment: "" },
+        { id: "photo-4", title: "Foto 004 - Encuadre Dinámico", url: "/catalog/cat-1789916075257.jpg", selected: false, clientComment: "" },
+        { id: "photo-5", title: "Foto 005 - Plano Entero", url: "/catalog/cat-1789916145830.jpg", selected: false, clientComment: "" },
+        { id: "photo-6", title: "Foto 006 - Composición Artística", url: "/catalog/cat-1789916197806.jpg", selected: false, clientComment: "" }
       ],
       watermarkSettings: {
         watermarkText: DEFAULT_SETTINGS.watermarkText,
@@ -1647,21 +1586,40 @@ export function clearAdminSession() {
 
 /**
  * Cierra la sesión administrativa enviando el token activo + cookie HttpOnly + cabecera CSRF
- * al servidor ANTES de limpiar el estado local, garantizando revocación distribuida del jti.
+ * al servidor ANTES de limpiar el estado local, con 1 reintento automático (backoff 400 ms)
+ * ante fallos transitorios de red para garantizar revocación distribuida del jti (Hallazgo BUG-05).
  */
 export async function logoutAdminSession() {
   const token = getAdminSessionToken();
-  try {
-    await fetch(`${API_BASE}/admin/auth/logout`, {
-      method: 'POST',
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      credentials: 'include'
-    });
-  } catch (e) {}
+  const headers = {
+    'X-Requested-With': 'XMLHttpRequest',
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+  let revokedOnServer = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/admin/auth/logout`, {
+        method: 'POST',
+        headers,
+        credentials: 'include'
+      });
+      if (res.ok || (res.status >= 400 && res.status < 500)) {
+        revokedOnServer = res.ok;
+        break;
+      }
+    } catch (e) {
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        continue;
+      }
+      console.warn('[Auth] No se pudo confirmar la revocación remota del logout tras reintento:', e?.message || 'network_error');
+    }
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
   clearAdminSession();
+  return { success: true, revokedOnServer };
 }
 
 // ------------------------------------------------------------------------------
@@ -2140,29 +2098,23 @@ export async function createPayment(paymentData) {
       };
     }
   } catch (err) {
-    console.warn('Creando pago con respaldo local:', err);
+    console.warn('Error de red al registrar pago en servidor:', err);
+    return {
+      success: false,
+      offline: true,
+      error: 'Sin conexión con el servidor para registrar el pago. Verifica tu internet e intenta nuevamente.'
+    };
   }
 
-  // Fallback local garantizado (status SIEMPRE pending por defecto, nunca verified sin confirmación del servidor)
-  const newPayment = serverResult?.payment || {
-    id: `pay-${Date.now()}`,
-    clientName: (paymentData.clientName || 'Cliente').trim(),
-    clientWhatsApp: (paymentData.clientWhatsApp || '').trim(),
-    sessionToken: paymentData.sessionToken || '',
-    packageTitle: paymentData.packageTitle || 'Sesión Fotográfica',
-    amount: Number(paymentData.amount) || 0,
-    method: paymentData.method || 'nequi',
-    reference: (paymentData.reference || '').trim(),
-    voucherUrl: paymentData.voucherUrl || null,
-    extraPhotosCount: Number(paymentData.extraPhotosCount) || 0,
-    printedPhotosCount: Number(paymentData.printedPhotosCount) || 0,
-    printedPhotos10x15Count: Number(paymentData.printedPhotos10x15Count) || 0,
-    printedPhotos15x20Count: Number(paymentData.printedPhotos15x20Count) || 0,
-    concept: paymentData.concept || 'Sesión Fotográfica',
-    status: (serverResult?.payment?.status === 'verified') ? 'verified' : 'pending',
-    offlinePendingSync: !serverResult?.payment,
-    createdAt: new Date().toISOString()
-  };
+  // Fail-closed: jamás fabricar pagos fantasma locales sin confirmación del servidor (Hallazgo BUG-02)
+  if (!serverResult?.payment) {
+    return {
+      success: false,
+      error: 'El servidor no confirmó el registro del pago. Intenta nuevamente.'
+    };
+  }
+
+  const newPayment = serverResult.payment;
   saveLocalPayment(newPayment);
 
   // Notificación exclusiva de ingresos de fotografía en Android APK
@@ -2187,12 +2139,13 @@ export async function createPayment(paymentData) {
     localStorage.setItem('sebastian_g_payments_last_sync', Date.now().toString());
   } catch (e) {}
 
-  const p1 = (DEFAULT_SETTINGS.photographerWhatsApp).replace(/\D/g, '');
-  const p2 = (DEFAULT_SETTINGS.photographerWhatsApp2).replace(/\D/g, '');
+  const handles = getPaymentWalletHandles();
+  const p1 = handles.wa1Digits;
+  const p2 = handles.wa2Digits;
   const methodNames = {
-    nequi: 'Nequi (3244725167)',
-    daviplata: 'DaviPlata (Llave @PLATA3244725167)',
-    dale: 'Dale! (Llave @SGG04)'
+    nequi: handles.nequiNumber ? `Nequi (${handles.nequiNumber})` : 'Nequi',
+    daviplata: handles.daviplataKey ? `DaviPlata (Llave ${handles.daviplataKey})` : 'DaviPlata',
+    dale: handles.daleKey ? `Dale! (Llave ${handles.daleKey})` : 'Dale!'
   };
   const methodName = methodNames[newPayment.method] || newPayment.method;
 

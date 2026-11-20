@@ -39,10 +39,11 @@ jobs:
       - name: Security audit (production dependencies)
         run: npm audit --omit=dev --audit-level=high
 
-      - name: SAST & Secret Hardening Gate (Zero PII / Zero Weak Secrets)
+      - name: SAST & Secret Hardening Gate (Zero PII / Zero Weak Secrets / Zero Legacy SQL)
         run: |
           node -e "
             const fs = require('fs');
+            const path = require('path');
             const apiSec = fs.readFileSync('api/security.js', 'utf8');
             const apiIdx = fs.readFileSync('api/index.js', 'utf8');
             const emailSvc = fs.readFileSync('api/emailService.js', 'utf8');
@@ -52,12 +53,40 @@ jobs:
             if (apiSec.includes('0493')) {
               throw new Error('SAST: Direct literal weak PIN \"0493\" found in api/security.js');
             }
+            // Detectar construcción ofuscada ['0','4','9','3'] fuera de la lista negra FORBIDDEN_WEAK_PINS (Hallazgo SEC-03)
+            const secWithoutForbidden = apiSec.replace(/const\s+FORBIDDEN_WEAK_PINS\s*=\s*new\s+Set\(\[[\s\S]*?\]\);/m, '');
+            if (/\[\s*['\"]0['\"]\s*,\s*['\"]4['\"]\s*,\s*['\"]9['\"]\s*,\s*['\"]3['\"]\s*\]/.test(secWithoutForbidden) || /KNOWN_WEAK_PIN_HASH/.test(apiSec)) {
+              throw new Error('SAST: Obfuscated weak PIN 0493 or KNOWN_WEAK_PIN_HASH detected outside FORBIDDEN_WEAK_PINS');
+            }
             if (emailSvc.includes('sgarcesg0410@gmail.com') || apiIdx.includes('bc62cb00-9782-4a8e-a344-e8cf031a211a')) {
               throw new Error('SAST: Hardcoded personal email or OneSignal App ID found in backend');
             }
             const frontApi = fs.readFileSync('src/services/api.js', 'utf8');
             if (frontApi.includes('laura-vanesa-maza') || frontApi.includes('jennifer-vasquez')) {
               throw new Error('SAST: Hardcoded customer PII found in frontend bundle');
+            }
+            // Bloquear teléfonos personales y llaves Nequi/DaviPlata/Dale hardcodeados en src/ (Hallazgo SEC-02)
+            const walkSrc = (dir) => {
+              const out = [];
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  if (entry.name !== '__tests__') out.push(...walkSrc(full));
+                } else if (/\.(js|jsx|ts|tsx)$/.test(entry.name)) {
+                  out.push(full);
+                }
+              }
+              return out;
+            };
+            const forbiddenWalletRegex = /(324[\s-]?472[\s-]?5167|302[\s-]?369[\s-]?6513|@PLATA3244725167|@SGG04)/i;
+            for (const f of walkSrc('src')) {
+              if (forbiddenWalletRegex.test(fs.readFileSync(f, 'utf8'))) {
+                throw new Error('SAST: Hardcoded personal phone or payment wallet key found in ' + f);
+              }
+            }
+            // Bloquear reintroducción de esquemas SQL inseguros de Supabase fuera de docs/legacy/ (Hallazgo SEC-08)
+            if (fs.existsSync('server/db/schema.sql')) {
+              throw new Error('SAST: Legacy insecure Supabase schema server/db/schema.sql must not exist');
             }
             const publicFiles = fs.readdirSync('public');
             if (publicFiles.some(f => f.toLowerCase().endsWith('.apk'))) {

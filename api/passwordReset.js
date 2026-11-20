@@ -24,6 +24,7 @@ import {
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
 import {
   isMongoConfigured,
+  getMongoUri,
   upsertMongoDoc,
   updateMongoDoc,
   findMongoDocs,
@@ -31,6 +32,15 @@ import {
   checkDistributedRateLimit,
   claimOneShotEmergencyToken
 } from './db/mongo.js';
+
+// Caché de corta duración (15 s) para passwordVersion indexado por URI de MongoDB,
+// invalidado inmediatamente tras cada cambio/reseteo de contraseña (Hallazgo ARCH-07).
+const PASSWORD_VERSION_CACHE_TTL_MS = 15 * 1000;
+let passwordVersionStoreCache = { version: null, fetchedAt: 0, mongoUri: '' };
+
+export function invalidatePasswordVersionCache() {
+  passwordVersionStoreCache = { version: null, fetchedAt: 0, mongoUri: '' };
+}
 
 // Rate limiters en memoria por IP (respaldados en MongoDB Atlas cuando está configurado - Hallazgo A2)
 const resetRequestAttempts = new Map(); // ip -> { count, windowStart }
@@ -243,30 +253,47 @@ export async function updateAdminPasswordInStore({ runtimeDB, newScryptHash, new
     runtimeDB.settings.adminPasswordVersion = newVersion;
   }
   setCachedPasswordVersion(newVersion);
+  invalidatePasswordVersionCache();
 }
 
 /**
- * Obtiene la versión actual de la contraseña (por defecto 1)
+ * Obtiene la versión actual de la contraseña (por defecto 1),
+ * usando caché acotada de 15 s por URI de MongoDB e invalidación inmediata al rotar clave.
  */
-export async function getActivePasswordVersionFromStore({ runtimeDB }) {
+export async function getActivePasswordVersionFromStore({ runtimeDB, forceRefresh = false } = {}) {
   const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
   if (isMongoConfigured()) {
+    const currentUri = getMongoUri();
+    const now = Date.now();
+    if (
+      !forceRefresh &&
+      passwordVersionStoreCache.version !== null &&
+      passwordVersionStoreCache.mongoUri === currentUri &&
+      (now - passwordVersionStoreCache.fetchedAt) < PASSWORD_VERSION_CACHE_TTL_MS
+    ) {
+      return passwordVersionStoreCache.version;
+    }
     try {
       const docs = await findMongoDocs(
         'security',
         { $or: [{ id: 'system_admin_pin_hash' }, { key: 'admin_pin_hash' }] },
         null,
         0,
-        { throwOnError: isProduction }
+        { throwOnError: isProduction, projection: { passwordVersion: 1, _id: 0 } }
       );
       if (docs && docs[0]?.passwordVersion) {
         const v = Number(docs[0].passwordVersion);
         if (Number.isFinite(v) && v >= 1) {
           setCachedPasswordVersion(v);
+          passwordVersionStoreCache = { version: v, fetchedAt: now, mongoUri: currentUri };
           return v;
         }
       }
+      const fallbackVer = Number(runtimeDB?.settings?.adminPasswordVersion) || getCachedPasswordVersion();
+      passwordVersionStoreCache = { version: fallbackVer, fetchedAt: now, mongoUri: currentUri };
+      return fallbackVer;
     } catch (e) {
+      invalidatePasswordVersionCache();
       if (isProduction) {
         throw new Error(`Almacén de versión de contraseña en MongoDB Atlas no disponible: ${e?.message || e}`);
       }

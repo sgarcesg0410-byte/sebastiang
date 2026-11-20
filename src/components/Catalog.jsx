@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowRight, Calendar, Camera, Heart, MapPin, Share2, Check, X } from 'lucide-react';
 import { trackLinkShare } from '../services/analytics';
-import { sortCatalogDescending } from '../services/api';
+import { sortCatalogDescending, getPaymentWalletHandles } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 
 const HERO_WORDS = ['retratos', 'parejas', 'bodas', 'quinceañeras', 'eventos', 'campo y playa'];
@@ -165,12 +165,13 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
   const handleShareApp = async () => {
     const shareUrl = typeof window !== 'undefined' ? window.location.origin : 'https://sebastiang.app';
     const shareTitle = 'Sebastian G • Fotografía & Edición Profesional';
+    const handles = getPaymentWalletHandles();
     const shareText = 
       `📸 *Sebastian G • Fotografía Profesional*\n` +
       `Capturamos tus mejores momentos en playa, exteriores y tus destinos favoritos.\n\n` +
       `✨ Mira el portafolio oficial completo, fotos en alta resolución y paquetes aquí:\n` +
-      `👉 ${shareUrl}\n\n` +
-      `📞 WhatsApp de reservas: +57 324 472 5167`;
+      `👉 ${shareUrl}` +
+      (handles.wa1Intl ? `\n\n📞 WhatsApp de reservas: ${handles.wa1Intl}` : '');
 
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {

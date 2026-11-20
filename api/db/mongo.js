@@ -111,9 +111,10 @@ async function deduplicateCollectionByField(database, collectionName, fieldName)
 }
 
 /**
- * Definición canónica de los 22 índices BSON críticos de producción e índices TTL en MongoDB Atlas:
+ * Definición canónica de los 23 índices BSON críticos de producción e índices TTL en MongoDB Atlas:
  * - Unicidad estricta en `bookings.id`, `payments.id`, `payments.reference`, `payments.transactionId`,
- *   `sessions.id`, `sessions.token`, `reviews.id`, `reviews.galleryToken`, `audit_logs.id`, `slot_locks.lockKey` y `rate_limits.key`.
+ *   `sessions.id`, `sessions.token`, `reviews.id`, `reviews.galleryToken`, `audit_logs.id`,
+ *   `slot_locks.lockKey`, `rate_limits.key` y `security.id` (garantía anti-TOCTOU para tokens one-shot).
  * - Índice compuesto `{ dateTime: 1, status: 1 }` en `bookings` para detección rápida de cruces de horario.
  * - Índice `{ expiresAt: 1 }` en `sessions` para control de caducidad de galerías privadas.
  * - Índices TTL nativos en `audit_logs` (90 días), `slot_locks` y `rate_limits`.
@@ -153,7 +154,10 @@ export const EXPECTED_MONGO_INDEXES = [
 
   // 21–22. Índices de Rate Limiting Distribuido (rate_limits)
   { col: 'rate_limits', spec: { key: 1 }, opts: { unique: true, name: 'uniq_rate_limits_key', background: true } },
-  { col: 'rate_limits', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true } }
+  { col: 'rate_limits', spec: { expiresAtDate: 1 }, opts: { expireAfterSeconds: 0, name: 'idx_rate_limits_ttl', background: true } },
+
+  // 23. Índice único en colección de seguridad (anti-TOCTOU en tokens break-glass one-shot y retos)
+  { col: 'security', spec: { id: 1 }, opts: { unique: true, name: 'uniq_security_id', background: true } }
 ];
 
 function indexKeyMatches(actualKey, expectedSpec) {
@@ -203,6 +207,7 @@ export async function ensureMongoIndexes(targetDb = null) {
       await deduplicateCollectionByField(database, 'reviews', 'id');
       await deduplicateCollectionByField(database, 'reviews', 'galleryToken');
       await deduplicateCollectionByField(database, 'audit_logs', 'id');
+      await deduplicateCollectionByField(database, 'security', 'id');
 
       const safeCreateIndex = async (colName, spec, opts) => {
         const indexId = `${colName}:${opts.name}`;
@@ -683,7 +688,7 @@ export async function pingMongoDB() {
 /**
  * Helper seguro para hacer upsert de un documento en una colección por su `id` (o filtro personalizado).
  */
-export async function upsertMongoDoc(collectionName, filter, doc, { throwOnError = false } = {}) {
+export async function upsertMongoDoc(collectionName, filter, doc, { throwOnError = false, session = null } = {}) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -693,10 +698,12 @@ export async function upsertMongoDoc(collectionName, filter, doc, { throwOnError
   }
   try {
     const { _id, ...cleanDoc } = doc || {};
+    const opts = { upsert: true };
+    if (session) opts.session = session;
     const result = await database.collection(collectionName).updateOne(
       filter,
       { $set: { ...cleanDoc, updatedAt: new Date().toISOString() } },
-      { upsert: true }
+      opts
     );
     if (!result || result.acknowledged !== true) {
       throw new Error(`Escritura no reconocida (acknowledged=false) en "${collectionName}"`);
@@ -713,7 +720,7 @@ export async function upsertMongoDoc(collectionName, filter, doc, { throwOnError
  * Helper para actualizar un documento existente sin upsert, retornando el resultado completo (matchedCount, modifiedCount)
  * para verificaciones de atomicidad y concurrencia (ej. webhooks de pago).
  */
-export async function updateMongoDoc(collectionName, filter, update, { throwOnError = false } = {}) {
+export async function updateMongoDoc(collectionName, filter, update, { throwOnError = false, session = null } = {}) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -722,7 +729,10 @@ export async function updateMongoDoc(collectionName, filter, update, { throwOnEr
     return { acknowledged: false, matchedCount: 0, modifiedCount: 0 };
   }
   try {
-    const result = await database.collection(collectionName).updateOne(filter, update);
+    const opts = session ? { session } : undefined;
+    const result = opts
+      ? await database.collection(collectionName).updateOne(filter, update, opts)
+      : await database.collection(collectionName).updateOne(filter, update);
     if (!result || result.acknowledged !== true) {
       throw new Error(`Actualización no reconocida en "${collectionName}"`);
     }
@@ -735,9 +745,15 @@ export async function updateMongoDoc(collectionName, filter, update, { throwOnEr
 }
 
 /**
- * Helper seguro para leer documentos de una colección.
+ * Helper seguro para leer documentos de una colección (soporta proyección, orden, skip y limit).
  */
-export async function findMongoDocs(collectionName, filter = {}, sort = null, limit = 0, { throwOnError = false, skip = 0 } = {}) {
+export async function findMongoDocs(
+  collectionName,
+  filter = {},
+  sort = null,
+  limit = 0,
+  { throwOnError = false, skip = 0, projection = null, session = null } = {}
+) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -746,7 +762,12 @@ export async function findMongoDocs(collectionName, filter = {}, sort = null, li
     return null;
   }
   try {
-    let cursor = database.collection(collectionName).find(filter);
+    const findOpts = {};
+    if (projection && typeof projection === 'object') findOpts.projection = projection;
+    if (session) findOpts.session = session;
+    let cursor = Object.keys(findOpts).length > 0
+      ? database.collection(collectionName).find(filter, findOpts)
+      : database.collection(collectionName).find(filter);
     if (sort) cursor = cursor.sort(sort);
     if (skip > 0) cursor = cursor.skip(skip);
     if (limit > 0) cursor = cursor.limit(limit);
@@ -761,7 +782,7 @@ export async function findMongoDocs(collectionName, filter = {}, sort = null, li
 /**
  * Helper seguro para buscar un único documento en una colección.
  */
-export async function findMongoDoc(collectionName, filter = {}, { throwOnError = false } = {}) {
+export async function findMongoDoc(collectionName, filter = {}, { throwOnError = false, projection = null, session = null } = {}) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -770,7 +791,12 @@ export async function findMongoDoc(collectionName, filter = {}, { throwOnError =
     return null;
   }
   try {
-    const doc = await database.collection(collectionName).findOne(filter);
+    const opts = {};
+    if (projection && typeof projection === 'object') opts.projection = projection;
+    if (session) opts.session = session;
+    const doc = Object.keys(opts).length > 0
+      ? await database.collection(collectionName).findOne(filter, opts)
+      : await database.collection(collectionName).findOne(filter);
     if (!doc) return null;
     const { _id, ...cleanDoc } = doc;
     return cleanDoc;
@@ -784,7 +810,7 @@ export async function findMongoDoc(collectionName, filter = {}, { throwOnError =
 /**
  * Helper seguro para eliminar un documento de una colección.
  */
-export async function deleteMongoDoc(collectionName, filter, { throwOnError = false } = {}) {
+export async function deleteMongoDoc(collectionName, filter, { throwOnError = false, session = null } = {}) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -793,7 +819,9 @@ export async function deleteMongoDoc(collectionName, filter, { throwOnError = fa
     return { acknowledged: false, deletedCount: 0 };
   }
   try {
-    const result = await database.collection(collectionName).deleteOne(filter);
+    const result = session
+      ? await database.collection(collectionName).deleteOne(filter, { session })
+      : await database.collection(collectionName).deleteOne(filter);
     if (!result || result.acknowledged !== true) {
       throw new Error(`Eliminación no reconocida en "${collectionName}"`);
     }
@@ -808,7 +836,7 @@ export async function deleteMongoDoc(collectionName, filter, { throwOnError = fa
 /**
  * Helper seguro para eliminar múltiples documentos de una colección.
  */
-export async function deleteMongoDocs(collectionName, filter, { throwOnError = false } = {}) {
+export async function deleteMongoDocs(collectionName, filter, { throwOnError = false, session = null } = {}) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -817,7 +845,9 @@ export async function deleteMongoDocs(collectionName, filter, { throwOnError = f
     return { acknowledged: false, deletedCount: 0 };
   }
   try {
-    const result = await database.collection(collectionName).deleteMany(filter);
+    const result = session
+      ? await database.collection(collectionName).deleteMany(filter, { session })
+      : await database.collection(collectionName).deleteMany(filter);
     if (!result || result.acknowledged !== true) {
       throw new Error(`Eliminación múltiple no reconocida en "${collectionName}"`);
     }
@@ -826,6 +856,39 @@ export async function deleteMongoDocs(collectionName, filter, { throwOnError = f
     console.warn(`⚠️ [MongoDB] Error eliminando varios (${collectionName}):`, err?.message || err);
     if (throwOnError) throw err;
     return { acknowledged: false, deletedCount: 0 };
+  }
+}
+
+/**
+ * Ejecuta una operación multi-colección dentro de una transacción ACID nativa de MongoDB Atlas
+ * cuando la topología soporta sesiones/transacciones (replica set Atlas). Si el clúster local
+ * es standalone y no soporta transacciones, devuelve `{ supported: false }` para que el caller
+ * aplique su estrategia controlada de staging + rollback.
+ */
+export async function runInMongoTransaction(workFn) {
+  await getMongoDb();
+  if (!cachedClient || typeof cachedClient.startSession !== 'function') {
+    return { supported: false, committed: false };
+  }
+  const session = cachedClient.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      result = await workFn(session);
+    });
+    return { supported: true, committed: true, result };
+  } catch (err) {
+    const msg = String(err?.message || '');
+    const isUnsupportedStandalone =
+      err?.code === 20 ||
+      err?.codeName === 'IllegalOperation' ||
+      /Transaction numbers are only allowed on a replica set/i.test(msg);
+    if (isUnsupportedStandalone) {
+      return { supported: false, committed: false };
+    }
+    throw err;
+  } finally {
+    await session.endSession().catch(() => {});
   }
 }
 
@@ -883,12 +946,16 @@ export async function isDistributedAdminJtiRevoked(jti) {
 
 /**
  * Reclama de forma atómica (sin condición de carrera TOCTOU) un token de emergencia one-shot
- * en la colección `security`. Devuelve `{ claimed: true }` solo para la primera llamada ganadora.
+ * en la colección `security`, respaldado por el índice único `uniq_security_id` sobre `security.id`.
+ * Devuelve `{ claimed: true }` únicamente para la primera invocación ganadora.
  */
-export async function claimOneShotEmergencyToken({ docId, tokenHash, usedByIp }) {
-  const database = await getMongoDb();
+export async function claimOneShotEmergencyToken({ docId, tokenHash, usedByIp, targetDb = null }) {
+  const database = targetDb || await getMongoDb();
   if (!database) {
     return { claimed: false, dbUnavailable: true };
+  }
+  if (!targetDb && !indexesEnsured) {
+    await ensureMongoIndexes(database).catch(() => {});
   }
   const nowIso = new Date().toISOString();
   try {
@@ -909,7 +976,7 @@ export async function claimOneShotEmergencyToken({ docId, tokenHash, usedByIp })
     const claimed = Boolean(res?.acknowledged && (res.upsertedCount > 0 || res.modifiedCount > 0));
     return { claimed, dbUnavailable: false };
   } catch (err) {
-    // Si otro worker concurrente insertó el documento simultáneamente (E11000) o falló la condición
+    // Si otro worker concurrente insertó el documento simultáneamente (E11000) sobre uniq_security_id
     if (err?.code === 11000) {
       return { claimed: false, dbUnavailable: false };
     }

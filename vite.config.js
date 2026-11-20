@@ -16,6 +16,10 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
+      // jsPDF declara html2canvas, canvg y dompurify como dependencias opcionales para jsPDF.html().
+      // No usamos jsPDF.html() (generamos PDF vectorial puro), así que el alias evita inflar el bundle;
+      // el override "dompurify" en package.json se conserva deliberadamente para parchear CVEs
+      // transitivos de jspdf -> dompurify reportados por npm audit.
       html2canvas: emptyDepPath,
       canvg: emptyDepPath,
       dompurify: emptyDepPath

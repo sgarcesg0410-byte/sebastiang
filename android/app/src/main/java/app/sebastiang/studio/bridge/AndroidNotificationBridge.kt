@@ -31,6 +31,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.fragment.app.FragmentActivity
 import app.sebastiang.studio.MainActivity
 import app.sebastiang.studio.security.DomainValidator
@@ -362,9 +363,71 @@ class AndroidNotificationBridge(
     @JavascriptInterface
     fun sharePdfFile(base64Data: String, fileName: String, phone: String, text: String, line: String): Boolean {
         if (!isTrustedActiveOrigin()) return false
-        val saved = downloadPdfFile(base64Data, fileName)
-        val waOpened = openWhatsAppWithLine(phone, text, line)
-        return saved || waOpened
+        val safeName = fileName.trim().let {
+            if (SAFE_PDF_NAME_REGEX.matches(it)) it else "Comprobante-SebastianG.pdf"
+        }
+        val pdfBytes = decodeValidatedPdfBase64(base64Data) ?: return false
+        val safeText = text.take(1800)
+
+        return try {
+            val shareDir = File(activity.cacheDir, "shared_pdfs").apply {
+                if (!exists()) mkdirs()
+            }
+            // Limpiar PDFs compartidos antiguos (> 24 h) para no acumular caché sensible
+            val cutoffMs = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+            shareDir.listFiles()?.forEach { oldFile ->
+                if (oldFile.isFile && oldFile.lastModified() < cutoffMs) {
+                    oldFile.delete()
+                }
+            }
+
+            val pdfFile = File(shareDir, safeName)
+            FileOutputStream(pdfFile).use { out ->
+                out.write(pdfBytes)
+                out.flush()
+            }
+
+            val contentUri = FileProvider.getUriForFile(
+                activity,
+                "${activity.packageName}.fileprovider",
+                pdfFile
+            )
+
+            val baseShareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                if (safeText.isNotBlank()) {
+                    putExtra(Intent.EXTRA_TEXT, safeText)
+                }
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            val preferredPackage = when {
+                line.equals("business", ignoreCase = true) -> "com.whatsapp.w4b"
+                line.equals("whatsapp", ignoreCase = true) || line.equals("line1", ignoreCase = true) -> "com.whatsapp"
+                else -> null
+            }
+
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    if (preferredPackage != null) {
+                        val targeted = Intent(baseShareIntent).apply { setPackage(preferredPackage) }
+                        if (targeted.resolveActivity(activity.packageManager) != null) {
+                            activity.startActivity(targeted)
+                            return@post
+                        }
+                    }
+                    val chooser = Intent.createChooser(baseShareIntent, "Compartir comprobante PDF")
+                    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    activity.startActivity(chooser)
+                } catch (_: Exception) {
+                    // Manejo seguro ante cancelación o ausencia de apps compatibles
+                }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     @JavascriptInterface

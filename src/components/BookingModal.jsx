@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Calendar, Clock, MapPin, Sparkles, MessageCircle, AlertCircle, CheckCircle2, User, FileText, Printer, Crown, Mail, Gift, ArrowRight, ChevronLeft, ChevronDown, ChevronUp, Maximize2, CreditCard, Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { createBooking, checkClientLoyalty, checkReferralCode, createWompiCheckout, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
+import { createBooking, checkClientLoyalty, checkReferralCode, createWompiCheckout, formatTo12Hour, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary, getPaymentWalletHandles } from '../services/api';
 import { getPublicSchedule, checkSlotAvailability, getSlotsForDate, minutesToLabel, getColombiaTodayIso } from '../services/bookingAvailability';
 
 const WOMPI_WIDGET_SRC = 'https://checkout.wompi.co/widget.js';
@@ -56,6 +56,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
   const modalDialogRef = useRef(null);
   const previousFocusRef = useRef(null);
   const surchargeAmount = settings.outOfSanAnteroSurcharge || 10000;
+  const walletHandles = getPaymentWalletHandles(settings);
   const paperSizes = getPaperPrintSizes(settings);
   const retabloSizes = getRetabloSizes(settings);
   const printSizesCatalog = getPrintSizes(settings);
@@ -763,39 +764,45 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
                   {showManualTransfer && (
                     <div className="mt-2.5 p-3 rounded-xl bg-stone-950 border border-stone-800 space-y-2 text-[11px] text-stone-300">
-                      <div className="flex justify-between items-center py-1 border-b border-stone-900">
-                        <span>🟣 <strong>Nequi:</strong> 324 472 5167</span>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard('3244725167', 'nequi')}
-                          className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
-                        >
-                          {copiedKey === 'nequi' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedKey === 'nequi' ? 'Copiado' : 'Copiar'}</span>
-                        </button>
-                      </div>
-                      <div className="flex justify-between items-center py-1 border-b border-stone-900">
-                        <span>🔴 <strong>DaviPlata:</strong> @PLATA3244725167</span>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard('3244725167', 'daviplata')}
-                          className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
-                        >
-                          {copiedKey === 'daviplata' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedKey === 'daviplata' ? 'Copiado' : 'Copiar'}</span>
-                        </button>
-                      </div>
-                      <div className="flex justify-between items-center py-1">
-                        <span>🟡 <strong>Dale!:</strong> @SGG04</span>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard('@SGG04', 'dale')}
-                          className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
-                        >
-                          {copiedKey === 'dale' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedKey === 'dale' ? 'Copiado' : 'Copiar'}</span>
-                        </button>
-                      </div>
+                      {walletHandles.nequiNumber && (
+                        <div className="flex justify-between items-center py-1 border-b border-stone-900">
+                          <span>🟣 <strong>Nequi:</strong> {walletHandles.nequiDisplay || walletHandles.nequiNumber}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(walletHandles.nequiNumber, 'nequi')}
+                            className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
+                          >
+                            {copiedKey === 'nequi' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedKey === 'nequi' ? 'Copiado' : 'Copiar'}</span>
+                          </button>
+                        </div>
+                      )}
+                      {walletHandles.daviplataKey && (
+                        <div className="flex justify-between items-center py-1 border-b border-stone-900">
+                          <span>🔴 <strong>DaviPlata:</strong> {walletHandles.daviplataKey}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(walletHandles.daviplataKey, 'daviplata')}
+                            className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
+                          >
+                            {copiedKey === 'daviplata' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedKey === 'daviplata' ? 'Copiado' : 'Copiar'}</span>
+                          </button>
+                        </div>
+                      )}
+                      {walletHandles.daleKey && (
+                        <div className="flex justify-between items-center py-1">
+                          <span>🟡 <strong>Dale!:</strong> {walletHandles.daleKey}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(walletHandles.daleKey, 'dale')}
+                            className="flex items-center gap-1 text-amber-400 hover:text-amber-300 font-semibold"
+                          >
+                            {copiedKey === 'dale' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedKey === 'dale' ? 'Copiado' : 'Copiar'}</span>
+                          </button>
+                        </div>
+                      )}
                       <p className="text-[10px] text-stone-400 pt-1 border-t border-stone-800/80">
                         Tras transferir, toca el botón de WhatsApp abajo para enviar tu comprobante.
                       </p>
@@ -823,7 +830,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold py-3.5 px-6 rounded-xl shadow-lg shadow-emerald-600/20 active:scale-98 transition-all"
                   >
                     <MessageCircle className="w-5 h-5 fill-white" />
-                    <span>Notificar a WhatsApp Línea 1 (324 472 5167) 📲</span>
+                    <span>Notificar a WhatsApp Línea 1{walletHandles.wa1Display ? ` (${walletHandles.wa1Display})` : ''} 📲</span>
                   </a>
                 )}
 
@@ -841,7 +848,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
                     className="w-full flex items-center justify-center gap-2 bg-emerald-950/80 border border-emerald-500/50 hover:bg-emerald-900/80 text-emerald-200 font-extrabold py-3 px-6 rounded-xl text-xs active:scale-98 transition-all shadow-md"
                   >
                     <MessageCircle className="w-4 h-4 fill-emerald-400" />
-                    <span>Notificar también a WhatsApp Línea 2 (302 369 6513) 📲</span>
+                    <span>Notificar también a WhatsApp Línea 2{walletHandles.wa2Display ? ` (${walletHandles.wa2Display})` : ''} 📲</span>
                   </a>
                 )}
 

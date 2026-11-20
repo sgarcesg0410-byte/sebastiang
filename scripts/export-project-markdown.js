@@ -13,7 +13,7 @@ const includedExactNames = new Set([
   '.env.example', '.gitignore', '.htaccess'
 ]);
 const excludedDirectories = new Set([
-  'node_modules', 'dist', 'release', '.git', 'scratch_photos', 'scratch', '.gemini', 'coverage', '.system_generated', 'legacy'
+  'node_modules', 'dist', 'build', 'release', '.git', '.gradle', '.idea', 'scratch_photos', 'scratch', '.gemini', 'coverage', '.system_generated', 'legacy'
 ]);
 const excludedFiles = new Set([
   'package-lock.json', 'PROJECT_SOURCE_CODE.md', '.env', '.env.local', '.env.production'

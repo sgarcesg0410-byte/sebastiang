@@ -64,6 +64,7 @@ export function buildServerWatermarkSvg({
 }
 
 const watermarkOverlayCache = new Map();
+const MAX_WATERMARK_OVERLAY_CACHE = 64;
 
 async function getRasterizedWatermarkOverlay({
   width,
@@ -73,7 +74,11 @@ async function getRasterizedWatermarkOverlay({
 }) {
   const key = `${width}x${height}:${watermarkText}:${watermarkSubtext}`;
   if (watermarkOverlayCache.has(key)) {
-    return watermarkOverlayCache.get(key);
+    // True O(1) LRU: mover la clave accedida al final del Map para preservar recencia
+    const cached = watermarkOverlayCache.get(key);
+    watermarkOverlayCache.delete(key);
+    watermarkOverlayCache.set(key, cached);
+    return cached;
   }
   const svgBuffer = buildServerWatermarkSvg({
     width,
@@ -82,9 +87,9 @@ async function getRasterizedWatermarkOverlay({
     watermarkSubtext
   });
   const pngOverlay = await sharp(svgBuffer).png().toBuffer();
-  if (watermarkOverlayCache.size >= 24) {
-    const oldestKey = watermarkOverlayCache.keys().next().value;
-    watermarkOverlayCache.delete(oldestKey);
+  if (watermarkOverlayCache.size >= MAX_WATERMARK_OVERLAY_CACHE) {
+    const lruKey = watermarkOverlayCache.keys().next().value;
+    if (lruKey !== undefined) watermarkOverlayCache.delete(lruKey);
   }
   watermarkOverlayCache.set(key, pngOverlay);
   return pngOverlay;

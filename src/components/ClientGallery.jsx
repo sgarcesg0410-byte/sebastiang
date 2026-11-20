@@ -27,14 +27,16 @@ import {
   Maximize2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
+import { getGalleryByToken, submitGallerySelection, syncLiveGallerySelection, createPayment, submitGalleryReview, getReviews, getSettings, getPaymentWalletHandles, getPrintSizes, getPaperPrintSizes, getRetabloSizes, formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from '../services/api';
 import ProtectedCanvasImage from './ProtectedCanvasImage';
 import { NequiLogo, DaviPlataLogo, DaleLogo } from './PaymentLogos';
 
 export default function ClientGallery({ token = "demo-cliente-2026", onBackToHome }) {
   const [galleryData, setGalleryData] = useState(null);
+  const [studioSettings, setStudioSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const walletHandles = getPaymentWalletHandles(studioSettings);
 
   // Selecciones locales del usuario: Map de { [photoId]: { selected: boolean, comment: string } }
   const [selections, setSelections] = useState({});
@@ -71,6 +73,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
 
   useEffect(() => {
     fetchGallery();
+    getSettings().then((st) => { if (st) setStudioSettings(st); }).catch(() => {});
   }, [token]);
 
   const fetchGallery = async () => {
@@ -375,9 +378,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
       if (res.directWhatsAppUrl) {
         let finalUrl = res.directWhatsAppUrl;
         const walletLabels = {
-          nequi: 'Nequi (3244725167)',
-          daviplata: 'DaviPlata (Llave @PLATA3244725167)',
-          dale: 'Dale! (Llave @SGG04)'
+          nequi: walletHandles.nequiNumber ? `Nequi (${walletHandles.nequiNumber})` : 'Nequi',
+          daviplata: walletHandles.daviplataKey ? `DaviPlata (Llave ${walletHandles.daviplataKey})` : 'DaviPlata',
+          dale: walletHandles.daleKey ? `Dale! (Llave ${walletHandles.daleKey})` : 'Dale!'
         };
         const paperSummaryText = formatPaperPhotosSummary(printedSizes, paperSizes);
         const retabloSummaryText = formatRetablosSummary(printedSizes, retabloSizes);
@@ -734,14 +737,16 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 Han transcurrido los 3 días de vigencia acordados para elegir tus fotos. Para proteger tu sesión, las imágenes se encuentran temporalmente pausadas.
               </p>
               <div className="pt-2">
-                <a
-                  href={`https://wa.me/573244725167?text=${encodeURIComponent(`Hola Sebastian G, el enlace de mi sesión "${galleryData.clientName || 'Cliente'}" ha expirado. ¿Podrías reactivarlo para terminar de elegir mis fotos?`)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-xl transition-all"
-                >
-                  <span>Solicitar Reactivación por WhatsApp 📲</span>
-                </a>
+                {walletHandles.wa1Digits && (
+                  <a
+                    href={`https://wa.me/${walletHandles.wa1Digits}?text=${encodeURIComponent(`Hola Sebastian G, el enlace de mi sesión "${galleryData.clientName || 'Cliente'}" ha expirado. ¿Podrías reactivarlo para terminar de elegir mis fotos?`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-xl transition-all"
+                  >
+                    <span>Solicitar Reactivación por WhatsApp 📲</span>
+                  </a>
+                )}
               </div>
             </div>
           )}
@@ -760,8 +765,8 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
             });
             autoSummary += `\n\n_Quedo atento(a) a la entrega final en alta calidad. ¡Muchas gracias!_`;
 
-            const primaryWaUrl = submissionResult?.directWhatsAppUrl || `https://wa.me/573244725167?text=${encodeURIComponent(autoSummary)}`;
-            const secondaryWaUrl = submissionResult?.secondaryWhatsAppUrl || `https://wa.me/573023696513?text=${encodeURIComponent(autoSummary)}`;
+            const primaryWaUrl = submissionResult?.directWhatsAppUrl || (walletHandles.wa1Digits ? `https://wa.me/${walletHandles.wa1Digits}?text=${encodeURIComponent(autoSummary)}` : '');
+            const secondaryWaUrl = submissionResult?.secondaryWhatsAppUrl || (walletHandles.wa2Digits ? `https://wa.me/${walletHandles.wa2Digits}?text=${encodeURIComponent(autoSummary)}` : '');
 
             return (
               <div className="bg-emerald-950/90 border-2 border-emerald-500/70 rounded-3xl p-6 flex flex-col gap-4 text-left shadow-2xl">
@@ -778,25 +783,29 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-3 pt-1">
-                  <a
-                    href={primaryWaUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs sm:text-sm py-3.5 px-5 rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
-                  >
-                    <Share2 className="w-4 h-4 fill-white shrink-0" />
-                    <span>Enviar a Sebastian (Línea 1: 324 472 5167) 📲</span>
-                  </a>
+                  {primaryWaUrl && (
+                    <a
+                      href={primaryWaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs sm:text-sm py-3.5 px-5 rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
+                    >
+                      <Share2 className="w-4 h-4 fill-white shrink-0" />
+                      <span>Enviar a Sebastian (Línea 1{walletHandles.wa1Display ? `: ${walletHandles.wa1Display}` : ''}) 📲</span>
+                    </a>
+                  )}
 
-                  <a
-                    href={secondaryWaUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 font-bold text-xs sm:text-sm py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
-                  >
-                    <MessageSquare className="w-4 h-4 shrink-0" />
-                    <span>Enviar a Línea 2 (302 369 6513)</span>
-                  </a>
+                  {secondaryWaUrl && (
+                    <a
+                      href={secondaryWaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 bg-stone-900 border border-emerald-500/40 hover:bg-stone-800 text-emerald-300 font-bold text-xs sm:text-sm py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
+                    >
+                      <MessageSquare className="w-4 h-4 shrink-0" />
+                      <span>Enviar a Línea 2{walletHandles.wa2Display ? ` (${walletHandles.wa2Display})` : ''}</span>
+                    </a>
+                  )}
                 </div>
               </div>
             );
@@ -1299,7 +1308,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                     >
                       <NequiLogo className="w-5 h-5" showText={false} />
                       <span className="text-xs font-black">Nequi</span>
-                      <span className="text-[10px] opacity-75">3244725167</span>
+                      <span className="text-[10px] opacity-75">{walletHandles.nequiNumber || 'Celular'}</span>
                     </button>
 
                     <button
@@ -1339,29 +1348,31 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                           <NequiLogo className="w-5 h-5" showText={true} textColor="text-purple-200" />
                         </div>
                         <span className="text-xs font-mono font-bold text-white bg-purple-900/60 px-2 py-0.5 rounded-md border border-purple-500/30">
-                          324 472 5167
+                          {walletHandles.nequiDisplay || walletHandles.nequiNumber || 'Consultar por WhatsApp'}
                         </span>
                       </div>
                       <p className="text-[11px] text-purple-200/80 leading-relaxed">
-                        Abre tu app Nequi y envía <strong>${formatPrice(totalAmount)} COP</strong> al número <strong>3244725167</strong>.
+                        Abre tu app Nequi y envía <strong>${formatPrice(totalAmount)} COP</strong> al número <strong>{walletHandles.nequiNumber || 'oficial del estudio'}</strong>.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard('3244725167', 'nequi')}
-                        className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-colors"
-                      >
-                        {copiedKeyFeedback === 'nequi' ? (
-                          <>
-                            <Check className="w-4 h-4 stroke-[3]" />
-                            <span>¡Número 3244725167 Copiado!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-4 h-4" />
-                            <span>Copiar Número Nequi (3244725167)</span>
-                          </>
-                        )}
-                      </button>
+                      {walletHandles.nequiNumber && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(walletHandles.nequiNumber, 'nequi')}
+                          className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-colors"
+                        >
+                          {copiedKeyFeedback === 'nequi' ? (
+                            <>
+                              <Check className="w-4 h-4 stroke-[3]" />
+                              <span>¡Número {walletHandles.nequiNumber} Copiado!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span>Copiar Número Nequi ({walletHandles.nequiNumber})</span>
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -1372,29 +1383,31 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                           <DaviPlataLogo className="w-5 h-5" showText={true} textColor="text-red-200" />
                         </div>
                         <span className="text-xs font-mono font-bold text-white bg-red-900/60 px-2 py-0.5 rounded-md border border-red-500/30">
-                          @PLATA3244725167
+                          {walletHandles.daviplataKey || 'Consultar por WhatsApp'}
                         </span>
                       </div>
                       <p className="text-[11px] text-red-200/80 leading-relaxed">
-                        Abre DaviPlata &gt; Pasa Plata &gt; Por Llave &gt; Ingresa <strong>@PLATA3244725167</strong> por <strong>${formatPrice(totalAmount)} COP</strong>.
+                        Abre DaviPlata &gt; Pasa Plata &gt; Por Llave &gt; Ingresa <strong>{walletHandles.daviplataKey || 'la llave oficial'}</strong> por <strong>${formatPrice(totalAmount)} COP</strong>.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard('@PLATA3244725167', 'daviplata')}
-                        className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-colors"
-                      >
-                        {copiedKeyFeedback === 'daviplata' ? (
-                          <>
-                            <Check className="w-4 h-4 stroke-[3]" />
-                            <span>¡Llave @PLATA3244725167 Copiada!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-4 h-4" />
-                            <span>Copiar Llave DaviPlata (@PLATA3244725167)</span>
-                          </>
-                        )}
-                      </button>
+                      {walletHandles.daviplataKey && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(walletHandles.daviplataKey, 'daviplata')}
+                          className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs py-2 px-3 rounded-xl transition-colors"
+                        >
+                          {copiedKeyFeedback === 'daviplata' ? (
+                            <>
+                              <Check className="w-4 h-4 stroke-[3]" />
+                              <span>¡Llave {walletHandles.daviplataKey} Copiada!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span>Copiar Llave DaviPlata ({walletHandles.daviplataKey})</span>
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -1405,29 +1418,31 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                           <DaleLogo className="w-5 h-5" showText={true} textColor="text-amber-200" />
                         </div>
                         <span className="text-xs font-mono font-bold text-white bg-amber-900/60 px-2 py-0.5 rounded-md border border-amber-500/30">
-                          @SGG04
+                          {walletHandles.daleKey || 'Consultar por WhatsApp'}
                         </span>
                       </div>
                       <p className="text-[11px] text-amber-200/80 leading-relaxed">
-                        Abre Dale! &gt; Transfiere a la Llave <strong>@SGG04</strong> por valor de <strong>${formatPrice(totalAmount)} COP</strong>.
+                        Abre Dale! &gt; Transfiere a la Llave <strong>{walletHandles.daleKey || 'oficial del estudio'}</strong> por valor de <strong>${formatPrice(totalAmount)} COP</strong>.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard('@SGG04', 'dale')}
-                        className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-xs py-2 px-3 rounded-xl transition-colors"
-                      >
-                        {copiedKeyFeedback === 'dale' ? (
-                          <>
-                            <Check className="w-4 h-4 stroke-[3]" />
-                            <span>¡Llave @SGG04 Copiada!</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-4 h-4" />
-                            <span>Copiar Llave Dale! (@SGG04)</span>
-                          </>
-                        )}
-                      </button>
+                      {walletHandles.daleKey && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(walletHandles.daleKey, 'dale')}
+                          className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-stone-950 font-bold text-xs py-2 px-3 rounded-xl transition-colors"
+                        >
+                          {copiedKeyFeedback === 'dale' ? (
+                            <>
+                              <Check className="w-4 h-4 stroke-[3]" />
+                              <span>¡Llave {walletHandles.daleKey} Copiada!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-4 h-4" />
+                              <span>Copiar Llave Dale! ({walletHandles.daleKey})</span>
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   )}
 

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Download, MessageCircle, ArrowLeft, CheckCircle2, ShieldCheck, Printer } from 'lucide-react';
-import { fetchPublicReceipt, formatDateTime12Hour, formatPaperPhotosSummary, formatRetablosSummary, formatPrintedPhotosSummary } from '../services/api';
+import { fetchPublicReceipt, getSettings, getPaymentWalletHandles, formatDateTime12Hour, formatPaperPhotosSummary, formatRetablosSummary, formatPrintedPhotosSummary } from '../services/api';
 import { LOGO_WATERMARK_WHITE, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
 import { generateLuxuryReceiptPdf } from '../services/receiptPdfGenerator';
 
 export default function PublicReceiptView({ bookingId, onBack }) {
   const [booking, setBooking] = useState(null);
+  const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -14,6 +15,7 @@ export default function PublicReceiptView({ bookingId, onBack }) {
   const [paymentMethod, setPaymentMethod] = useState('Nequi');
 
   useEffect(() => {
+    getSettings().then((st) => { if (st) setSettings(st); }).catch(() => {});
     if (typeof window !== 'undefined') {
       const hash = window.location.hash || '';
       const params = new URLSearchParams(hash.includes('?') ? hash.split('?')[1] : (hash.includes('&') ? hash.replace('#recibo=', 'id=').replace('&', '&') : ''));
@@ -185,7 +187,10 @@ export default function PublicReceiptView({ bookingId, onBack }) {
                 Fotografía & Retoque Profesional
               </p>
               <p className="text-[10px] text-stone-400 mt-0.5">
-                Colombia • Tel: +57 324 472 5167 • sebastiang.app
+                {(() => {
+                  const wh = getPaymentWalletHandles(settings);
+                  return wh.wa1Intl ? `Colombia • Tel: ${wh.wa1Intl} • sebastiang.app` : 'Colombia • sebastiang.app';
+                })()}
               </p>
             </div>
 
@@ -352,15 +357,17 @@ export default function PublicReceiptView({ bookingId, onBack }) {
             <span>Imprimir</span>
           </button>
 
-          <a
-            href="https://wa.me/573244725167"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full sm:flex-1 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
-          >
-            <MessageCircle className="w-4 h-4" />
-            <span>💬 Escribir a Sebastian G</span>
-          </a>
+          {getPaymentWalletHandles(settings).wa1Digits && (
+            <a
+              href={`https://wa.me/${getPaymentWalletHandles(settings).wa1Digits}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full sm:flex-1 py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>💬 Escribir a Sebastian G</span>
+            </a>
+          )}
         </div>
       </div>
     </div>

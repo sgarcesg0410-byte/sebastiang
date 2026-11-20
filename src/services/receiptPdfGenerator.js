@@ -1,5 +1,5 @@
 import { LOGO_WATERMARK_APP, LOGO_WATERMARK_FAINT } from '../assets/logoWatermark';
-import { formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary } from './api';
+import { formatPrintedPhotosSummary, formatPaperPhotosSummary, formatRetablosSummary, getPaymentWalletHandles } from './api';
 
 /**
  * Formatea fechas a formato legible colombiano (ej: Sábado, 3 de octubre de 2026 - 3:10 p. m.)
@@ -170,10 +170,17 @@ export async function generateLuxuryReceiptPdf({
   pdf.setTextColor(180, 83, 9); // amber-700
   pdf.text('ESTUDIO DE FOTOGRAFÍA & RETOQUE PROFESIONAL', textLeftX, 28);
 
+  const pdfWalletHandles = getPaymentWalletHandles();
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(7.5);
   pdf.setTextColor(100, 116, 139); // slate-500
-  pdf.text('Colombia • WhatsApp: +57 324 472 5167 • sebastiang.app', textLeftX, 33);
+  pdf.text(
+    pdfWalletHandles.wa1Intl
+      ? `Colombia • WhatsApp: ${pdfWalletHandles.wa1Intl} • sebastiang.app`
+      : 'Colombia • sebastiang.app',
+    textLeftX,
+    33
+  );
 
   // Insignia de Número de Comprobante (Derecha)
   const badgeW = 66;
@@ -514,7 +521,9 @@ export async function generateLuxuryReceiptPdf({
   pdf.setFontSize(6.5);
   pdf.setTextColor(148, 163, 184);
   pdf.text(
-    'Documento Electrónico Oficial • Sebastian G • sebastiang.app • Línea de Atención: +57 324 472 5167',
+    pdfWalletHandles.wa1Intl
+      ? `Documento Electrónico Oficial • Sebastian G • sebastiang.app • Línea de Atención: ${pdfWalletHandles.wa1Intl}`
+      : 'Documento Electrónico Oficial • Sebastian G • sebastiang.app',
     pageWidth / 2,
     footerY - 1.5,
     { align: 'center' }

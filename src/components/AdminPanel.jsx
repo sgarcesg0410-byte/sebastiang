@@ -153,7 +153,8 @@ import {
   calculateRetablosFinancials,
   DEFAULT_RETABLO_COSTS,
   clearAdminSession,
-  logoutAdminSession
+  logoutAdminSession,
+  getPaymentWalletHandles
 } from '../services/api';
 import { computeBookingPaymentStatus } from '../services/financials';
 
@@ -818,7 +819,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   const [receiptPaymentMethod, setReceiptPaymentMethod] = useState('Nequi');
   const [receiptNotes, setReceiptNotes] = useState('Abono para reserva de fecha y cupo garantizado.');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-  const [receiptWhatsAppLine, setReceiptWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
+  const [receiptWhatsAppLine, setReceiptWhatsAppLine] = useState('line1'); // 'line1' (Principal) | 'line2' (Secundaria)
   const [payments, setPayments] = useState([]);
   const [copiedWalletKey, setCopiedWalletKey] = useState(null);
   const handleCopyWalletKey = (val, keyName) => {
@@ -978,7 +979,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setIsTestingPush(true);
     setPushStatusMessage('');
     playPushNotificationChime('booking');
-    const testWhatsApp = 'https://wa.me/573244725167';
+    const wa1 = getPaymentWalletHandles(settings).wa1Digits;
+    const testWhatsApp = wa1 ? `https://wa.me/${wa1}` : 'https://sebastiang.app';
     if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.testNativeNotification) {
       window.AndroidNotificationBridge.testNativeNotification();
     }
@@ -1039,12 +1041,16 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   });
   const [settings, setSettings] = useState({
     photographerName: 'Sebastian G',
-    photographerWhatsApp: '+573244725167',
-    photographerWhatsApp2: '+573023696513',
+    photographerWhatsApp: '',
+    photographerWhatsApp2: '',
+    nequiNumber: '',
+    daviplataKey: '',
+    daleKey: '',
     outOfSanAnteroSurcharge: 10000,
     watermarkText: 'SEBASTIAN G',
     watermarkSubtext: 'MUESTRA EXCLUSIVA • PROHIBIDA SU DESCARGA'
   });
+  const adminWalletHandles = getPaymentWalletHandles(settings);
   const [packages, setPackages] = useState(DEFAULT_PACKAGES);
   const [loadingData, setLoadingData] = useState(false);
 
@@ -1106,11 +1112,11 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
   });
   const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
   const [deliverySuccessMsg, setDeliverySuccessMsg] = useState('');
-  const [deliveryWhatsAppLine, setDeliveryWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
+  const [deliveryWhatsAppLine, setDeliveryWhatsAppLine] = useState('line1'); // 'line1' (Principal) | 'line2' (Secundaria)
 
   // Modal y confirmación de reserva (fecha y sesión) por WhatsApp y Correo al cliente
   const [confirmingBooking, setConfirmingBooking] = useState(null);
-  const [confirmWhatsAppLine, setConfirmWhatsAppLine] = useState('line1'); // 'line1' (+57 324 472 5167) | 'line2' (+57 302 369 6513)
+  const [confirmWhatsAppLine, setConfirmWhatsAppLine] = useState('line1'); // 'line1' (Principal) | 'line2' (Secundaria)
   const [confirmPhone, setConfirmPhone] = useState('');
   const [confirmNote, setConfirmNote] = useState('');
   const [confirmSuccessMsg, setConfirmSuccessMsg] = useState('');
@@ -1318,8 +1324,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       'Todas tus fotografías seleccionadas han sido editadas y preparadas en máxima resolución Full HD original.';
 
     const lineDisplay = chosenLine === 'line2'
-      ? '+57 302 369 6513 (Línea 2)'
-      : '+57 324 472 5167 (Línea 1)';
+      ? `${adminWalletHandles.wa2Intl || 'Línea 2'} (Línea 2)`
+      : `${adminWalletHandles.wa1Intl || 'Línea 1'} (Línea 1)`;
 
     const text = encodeURIComponent(
       `📸 *¡Hola ${formattedFirstName}! Tus fotos profesionales con Sebastian G están listas en Calidad Original Full HD.* ✨\n\n` +
@@ -2015,7 +2021,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
     const isOutside = b.locationType === 'outside_san_antero' || b.locationType === 'outside';
     const loc = b.specificLocation || b.specific_location || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada');
-    const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
+    const myPhone = chosenLine === 'line2'
+      ? (adminWalletHandles.wa2Display || 'Línea 2')
+      : (adminWalletHandles.wa1Display || 'Línea 1');
     const total = Number(b.totalPrice ?? b.total_price ?? 0);
 
     return (
@@ -2051,7 +2059,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const rawName = (b.clientName || b.client_name || 'Cliente').trim();
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
-    const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
+    const myPhone = chosenLine === 'line2'
+      ? (adminWalletHandles.wa2Display || 'Línea 2')
+      : (adminWalletHandles.wa1Display || 'Línea 1');
     const total = Number(b.totalPrice ?? b.total_price ?? 0);
     const amount = Number(payment.amount || 0);
     const method = String(payment.method || 'Nequi').toUpperCase();
@@ -2081,7 +2091,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const firstName = rawName.split(' ')[0] || rawName;
     const formattedFirstName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
     const loc = b.specificLocation || b.specific_location || (b.locationType === 'outside' ? 'Locación con Desplazamiento' : 'Locación Acordada');
-    const myPhone = chosenLine === 'line2' ? '302 369 6513' : '324 472 5167';
+    const myPhone = chosenLine === 'line2'
+      ? (adminWalletHandles.wa2Display || 'Línea 2')
+      : (adminWalletHandles.wa1Display || 'Línea 1');
 
     return (
       `🎉 *¡Hola ${formattedFirstName}! Muchísimas gracias por la sesión de hoy.* 📸✨\n\n` +
@@ -2145,7 +2157,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         activePhone,
         chosenLine
       );
-      const lineLabel = chosenLine === 'line2' ? 'Línea 2 (302 369 6513)' : 'Línea 1 (324 472 5167)';
+      const lineLabel = chosenLine === 'line2'
+        ? `Línea 2${adminWalletHandles.wa2Display ? ` (${adminWalletHandles.wa2Display})` : ''}`
+        : `Línea 1${adminWalletHandles.wa1Display ? ` (${adminWalletHandles.wa1Display})` : ''}`;
       setConfirmSuccessMsg(`✓ ¡Sesión y fecha confirmadas con éxito! Abriendo WhatsApp desde tu ${lineLabel}...`);
       setLastSentWhatsAppUrl(url);
 
@@ -3063,7 +3077,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div>
                 <h1 class="brand-title">SEBASTIAN G</h1>
                 <div class="brand-sub">Estudio de Fotografía & Retoque Profesional</div>
-                <p class="brand-info">Colombia • Cobertura Nacional • WhatsApp: +57 324 472 5167 • sebastiang.app</p>
+                <p class="brand-info">Colombia • Cobertura Nacional${adminWalletHandles.wa1Intl ? ` • WhatsApp: ${escapeHtml(adminWalletHandles.wa1Intl)}` : ''} • sebastiang.app</p>
               </div>
             </div>
             <div>
@@ -3225,8 +3239,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const voucherOnlineUrl = `https://sebastiang.app/#recibo=${receiptBooking.receiptToken || receiptBooking.id}&paid=${isNowFull ? total : paid}&method=${encodeURIComponent(receiptPaymentMethod)}`;
 
     const lineInfo = chosenLine === 'line2'
-      ? '+57 302 369 6513 (Línea 2 - WhatsApp Business)'
-      : '+57 324 472 5167 (Línea 1 - Principal)';
+      ? `${adminWalletHandles.wa2Intl || 'Línea 2'} (Línea 2 - WhatsApp Business)`
+      : `${adminWalletHandles.wa1Intl || 'Línea 1'} (Línea 1 - Principal)`;
 
     const text =
       `🧾 *COMPROBANTE DE PAGO OFICIAL • SEBASTIAN G* 📸✨\n\n` +
@@ -3545,12 +3559,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
           return;
         }
         finalPhotos = [
-          { title: 'Foto 001 - Primer Plano', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80' },
-          { title: 'Foto 002 - Luz de Atardecer', url: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80' },
-          { title: 'Foto 003 - Sonrisa Frente al Mar', url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80' },
-          { title: 'Foto 004 - Movimiento y Brisa', url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80' },
-          { title: 'Foto 005 - Plano Entero en Playa', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80' },
-          { title: 'Foto 006 - Silueta al Ocaso', url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80' }
+          { title: 'Foto 001 - Primer Plano', url: '/catalog/verano-salsero.jpg' },
+          { title: 'Foto 002 - Luz de Atardecer', url: '/catalog/cat-1789878355199.jpg' },
+          { title: 'Foto 003 - Sonrisa Frente al Mar', url: '/catalog/cat-1789902452640.jpg' },
+          { title: 'Foto 004 - Movimiento y Brisa', url: '/catalog/cat-1789916075257.jpg' },
+          { title: 'Foto 005 - Plano Entero en Playa', url: '/catalog/cat-1789916145830.jpg' },
+          { title: 'Foto 006 - Silueta al Ocaso', url: '/catalog/cat-1789916197806.jpg' }
         ];
       }
 
@@ -4234,7 +4248,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       `¡Hola! Te comparto mi portafolio oficial y catálogo de sesiones fotográficas profesionales.\n\n` +
       `✨ *Conoce mis paquetes, fotos en alta resolución y cotiza tu fecha aquí:*\n` +
       `👉 ${shareUrl}\n\n` +
-      `📞 WhatsApp de reservas: +57 324 472 5167\n` +
+      (adminWalletHandles.wa1Intl ? `📞 WhatsApp de reservas: ${adminWalletHandles.wa1Intl}\n` : '') +
       `¡Será un gusto capturar tus mejores momentos! 🌊📸`;
 
     if (typeof window !== 'undefined' && window.AndroidNotificationBridge?.shareToWhatsApp) {
@@ -6289,7 +6303,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <WalletAccountCard
                   walletType="nequi"
-                  number="324 472 5167"
+                  number={adminWalletHandles.nequiDisplay || adminWalletHandles.nequiNumber || 'Sin configurar'}
                   holderName="Sebastian Garcés"
                   copiedKey={copiedWalletKey}
                   onCopy={handleCopyWalletKey}
@@ -6300,7 +6314,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 />
                 <WalletAccountCard
                   walletType="daviplata"
-                  number="@PLATA3244725167"
+                  number={adminWalletHandles.daviplataKey || 'Sin configurar'}
                   holderName="Sebastian Garcés"
                   copiedKey={copiedWalletKey}
                   onCopy={handleCopyWalletKey}
@@ -6311,7 +6325,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 />
                 <WalletAccountCard
                   walletType="dale"
-                  number="@SGG04"
+                  number={adminWalletHandles.daleKey || 'Sin configurar'}
                   holderName="Sebastian Garcés"
                   copiedKey={copiedWalletKey}
                   onCopy={handleCopyWalletKey}
@@ -6398,7 +6412,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     : `No hay pagos registrados para ${selectedPaymentGateway.toUpperCase()}`}
                 </h4>
                 <p className="text-xs max-w-lg mx-auto text-stone-400 leading-relaxed">
-                  Cuando tus clientes elijan fotos o impresiones en su galería y paguen por <strong>Nequi (324 472 5167)</strong>, <strong>DaviPlata (@PLATA3244725167)</strong> o <strong>Dale! (@SGG04)</strong>, sus transferencias aparecerán aquí en tiempo real con alerta y notificación instantánea a tu WhatsApp y APK.
+                  Cuando tus clientes elijan fotos o impresiones en su galería y paguen por <strong>Nequi{adminWalletHandles.nequiDisplay ? ` (${adminWalletHandles.nequiDisplay})` : ''}</strong>, <strong>DaviPlata{adminWalletHandles.daviplataKey ? ` (${adminWalletHandles.daviplataKey})` : ''}</strong> o <strong>Dale!{adminWalletHandles.daleKey ? ` (${adminWalletHandles.daleKey})` : ''}</strong>, sus transferencias aparecerán aquí en tiempo real con alerta y notificación instantánea a tu WhatsApp y APK.
                 </p>
               </div>
             ) : (
@@ -6406,9 +6420,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 {filteredPayments.map((payment) => {
                   const clientPhoneClean = (payment.clientWhatsApp || '').replace(/\D/g, '');
                   const methodBadge = {
-                    nequi: { name: 'Nequi', key: '3244725167', color: 'bg-purple-900/60 text-purple-200 border-purple-500/40', logo: <NequiLogo className="w-4 h-4" showText={true} /> },
-                    daviplata: { name: 'DaviPlata', key: '@PLATA3244725167', color: 'bg-red-900/60 text-red-200 border-red-500/40', logo: <DaviPlataLogo className="w-4 h-4" showText={true} /> },
-                    dale: { name: 'Dale!', key: '@SGG04', color: 'bg-amber-900/60 text-amber-200 border-amber-500/40', logo: <DaleLogo className="w-4 h-4" showText={true} /> }
+                    nequi: { name: 'Nequi', key: adminWalletHandles.nequiNumber || '', color: 'bg-purple-900/60 text-purple-200 border-purple-500/40', logo: <NequiLogo className="w-4 h-4" showText={true} /> },
+                    daviplata: { name: 'DaviPlata', key: adminWalletHandles.daviplataKey || '', color: 'bg-red-900/60 text-red-200 border-red-500/40', logo: <DaviPlataLogo className="w-4 h-4" showText={true} /> },
+                    dale: { name: 'Dale!', key: adminWalletHandles.daleKey || '', color: 'bg-amber-900/60 text-amber-200 border-amber-500/40', logo: <DaleLogo className="w-4 h-4" showText={true} /> }
                   }[payment.method] || { name: payment.method, key: '', color: 'bg-stone-800 text-stone-300 border-stone-700', logo: null };
 
                   return (
@@ -7676,7 +7690,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           `📸 *¡Hola ${createdSessionResult.session.clientName}! Ya están listas las fotografías de tu sesión con Sebastian G para que elijas tus favoritas.*\n\n` +
                           `👉 *Ingresa a tu galería privada aquí:*\n${galleryFullUrl}\n\n` +
                           `⏰ *Importante:* Tienes exactamente *3 días* para hacer tu selección antes de que el enlace expire automáticamente.\n\n` +
-                          `📞 *Contacto:* Sebastian G • +57 324 472 5167 (Línea 1)\n\n` +
+                          `📞 *Contacto:* Sebastian G${adminWalletHandles.wa1Intl ? ` • ${adminWalletHandles.wa1Intl}` : ''} (Línea 1)\n\n` +
                           `✨ Toca cualquier foto para elegirla. ¡Quedo muy atento a tus elecciones!`
                         )}`}
                         target="_blank"
@@ -7684,7 +7698,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         className="flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs py-3.5 px-3 rounded-xl shadow-lg shadow-emerald-600/30 active:scale-98 transition-all"
                       >
                         <Share2 className="w-4 h-4 shrink-0" />
-                        <span>📲 Enviar vía Línea 1 (324...)</span>
+                        <span>📲 Enviar vía Línea 1</span>
                       </a>
 
                       <a
@@ -7692,7 +7706,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                           `📸 *¡Hola ${createdSessionResult.session.clientName}! Ya están listas las fotografías de tu sesión con Sebastian G para que elijas tus favoritas.*\n\n` +
                           `👉 *Ingresa a tu galería privada aquí:*\n${galleryFullUrl}\n\n` +
                           `⏰ *Importante:* Tienes exactamente *3 días* para hacer tu selección antes de que el enlace expire automáticamente.\n\n` +
-                          `📞 *Contacto:* Sebastian G • +57 302 369 6513 (Línea 2)\n\n` +
+                          `📞 *Contacto:* Sebastian G${adminWalletHandles.wa2Intl ? ` • ${adminWalletHandles.wa2Intl}` : ''} (Línea 2)\n\n` +
                           `✨ Toca cualquier foto para elegirla. ¡Quedo muy atento a tus elecciones!`
                         )}`}
                         target="_blank"
@@ -7700,7 +7714,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                         className="flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-700 to-emerald-600 hover:from-emerald-600 hover:to-emerald-500 text-white font-extrabold text-xs py-3.5 px-3 rounded-xl shadow-lg shadow-emerald-700/30 active:scale-98 transition-all"
                       >
                         <Share2 className="w-4 h-4 shrink-0" />
-                        <span>📲 Enviar vía Línea 2 (302...)</span>
+                        <span>📲 Enviar vía Línea 2</span>
                       </a>
 
                       <button
@@ -9876,11 +9890,12 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div className="p-4 rounded-2xl bg-stone-950 border border-emerald-500/30 space-y-2">
                 <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
                   <MessageCircle className="w-4 h-4 text-emerald-400" />
-                  <span>WhatsApp Principal (Línea 1: 324 472 5167) *</span>
+                  <span>WhatsApp Principal (Línea 1) *</span>
                 </label>
                 <input
                   type="text"
-                  value={settings.photographerWhatsApp || '+573244725167'}
+                  placeholder="+573000000000"
+                  value={settings.photographerWhatsApp || ''}
                   onChange={(e) => setSettings({ ...settings, photographerWhatsApp: e.target.value })}
                   className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
                 />
@@ -9890,14 +9905,54 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               <div className="p-4 rounded-2xl bg-stone-950 border border-emerald-500/30 space-y-2">
                 <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
                   <MessageCircle className="w-4 h-4 text-emerald-400" />
-                  <span>WhatsApp Secundario (Línea 2: 302 369 6513) *</span>
+                  <span>WhatsApp Secundario (Línea 2) *</span>
                 </label>
                 <input
                   type="text"
-                  value={settings.photographerWhatsApp2 || '+573023696513'}
+                  placeholder="+573000000000"
+                  value={settings.photographerWhatsApp2 || ''}
                   onChange={(e) => setSettings({ ...settings, photographerWhatsApp2: e.target.value })}
                   className="w-full bg-stone-900 border border-stone-700 rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+
+              {/* LLAVES DE BILLETERAS DIGITALES (CONFIGURABLES DESDE MONGODB) */}
+              <div className="p-4 rounded-2xl bg-stone-950 border border-purple-500/30 space-y-3">
+                <label className="block text-xs font-bold text-purple-300 uppercase tracking-wider">
+                  Llaves Comerciales de Billeteras Digitales (Nequi / DaviPlata / Dale!)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <span className="block text-[10px] text-stone-400 mb-1">Nequi</span>
+                    <input
+                      type="text"
+                      placeholder="3000000000"
+                      value={settings.nequiNumber || ''}
+                      onChange={(e) => setSettings({ ...settings, nequiNumber: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-stone-400 mb-1">Llave DaviPlata</span>
+                    <input
+                      type="text"
+                      placeholder="@LLAVE"
+                      value={settings.daviplataKey || ''}
+                      onChange={(e) => setSettings({ ...settings, daviplataKey: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-red-500"
+                    />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-stone-400 mb-1">Llave Dale!</span>
+                    <input
+                      type="text"
+                      placeholder="@LLAVE"
+                      value={settings.daleKey || ''}
+                      onChange={(e) => setSettings({ ...settings, daleKey: e.target.value })}
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* RECARGO FUERA DE SAN ANTERO */}
@@ -11171,7 +11226,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     >
                       <div>
                         <div className="text-[10px] text-stone-400">Línea 1 (Principal)</div>
-                        <div className="font-mono text-xs text-white">324 472 5167</div>
+                        <div className="font-mono text-xs text-white">{adminWalletHandles.wa1Display || 'Principal'}</div>
                       </div>
                       {deliveryWhatsAppLine === 'line1' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
                     </button>
@@ -11187,7 +11242,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     >
                       <div>
                         <div className="text-[10px] text-stone-400">Línea 2 (Secundaria)</div>
-                        <div className="font-mono text-xs text-white">302 369 6513</div>
+                        <div className="font-mono text-xs text-white">{adminWalletHandles.wa2Display || 'Secundaria'}</div>
                       </div>
                       {deliveryWhatsAppLine === 'line2' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
                     </button>
@@ -11208,7 +11263,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 px-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
                   >
                     <MessageCircle className="w-4 h-4 shrink-0" />
-                    <span>📲 Enviar vía Línea 1 (324...)</span>
+                    <span>📲 Enviar vía Línea 1</span>
                   </a>
 
                   <a
@@ -11224,7 +11279,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="w-full bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs py-3 px-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99]"
                   >
                     <MessageCircle className="w-4 h-4 shrink-0" />
-                    <span>📲 Enviar vía Línea 2 (302...)</span>
+                    <span>📲 Enviar vía Línea 2</span>
                   </a>
                 </div>
               </div>
@@ -11390,7 +11445,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 >
                   <div className="text-left">
                     <div className="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">Línea 1 (Principal)</div>
-                    <div className="font-mono text-sm font-black text-white">324 472 5167</div>
+                    <div className="font-mono text-sm font-black text-white">{adminWalletHandles.wa1Display || 'Principal'}</div>
                   </div>
                   <span className="text-[11px] bg-emerald-950 px-2.5 py-1.5 rounded-lg border border-emerald-400/40 text-emerald-300 font-black flex items-center gap-1 shadow-sm">
                     📲 Confirmar
@@ -11405,7 +11460,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 >
                   <div className="text-left">
                     <div className="text-[10px] text-teal-200 font-bold uppercase tracking-wider">Línea 2 (Secundaria)</div>
-                    <div className="font-mono text-sm font-black text-white">302 369 6513</div>
+                    <div className="font-mono text-sm font-black text-white">{adminWalletHandles.wa2Display || 'Secundaria'}</div>
                   </div>
                   <span className="text-[11px] bg-teal-950 px-2.5 py-1.5 rounded-lg border border-teal-400/40 text-teal-300 font-black flex items-center gap-1 shadow-sm">
                     📲 Confirmar
@@ -11502,7 +11557,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
                   >
                     <MessageCircle className="w-4 h-4 shrink-0" />
-                    <span>📲 Confirmar vía Línea 1 (324...)</span>
+                    <span>📲 Confirmar vía Línea 1</span>
                   </button>
 
                   <button
@@ -11512,7 +11567,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     className="py-3 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 disabled:opacity-50"
                   >
                     <MessageCircle className="w-4 h-4 shrink-0" />
-                    <span>📲 Confirmar vía Línea 2 (302...)</span>
+                    <span>📲 Confirmar vía Línea 2</span>
                   </button>
                 </div>
 
@@ -11782,7 +11837,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                             : 'bg-stone-950 border-stone-800 text-stone-400'
                         }`}
                       >
-                        Línea 1 (324 472 5167)
+                        Línea 1{adminWalletHandles.wa1Display ? ` (${adminWalletHandles.wa1Display})` : ''}
                       </button>
                       <button
                         type="button"
@@ -11793,7 +11848,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                             : 'bg-stone-950 border-stone-800 text-stone-400'
                         }`}
                       >
-                        Línea 2 (302 369 6513)
+                        Línea 2{adminWalletHandles.wa2Display ? ` (${adminWalletHandles.wa2Display})` : ''}
                       </button>
                     </div>
                   </div>
@@ -11896,7 +11951,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               >
                 <div className="text-left">
                   <div className="text-[10px] text-emerald-200 font-bold uppercase">Línea 1 (Principal)</div>
-                  <div className="font-mono text-sm font-black text-white">324 472 5167</div>
+                  <div className="font-mono text-sm font-black text-white">{adminWalletHandles.wa1Display || 'Principal'}</div>
                 </div>
                 <span className="text-[10px] bg-emerald-950 px-2 py-1 rounded-lg border border-emerald-400/40 text-emerald-300 font-bold">
                   📲 Abrir WhatsApp
@@ -11914,7 +11969,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
               >
                 <div className="text-left">
                   <div className="text-[10px] text-teal-200 font-bold uppercase">Línea 2 (Business)</div>
-                  <div className="font-mono text-sm font-black text-white">302 369 6513</div>
+                  <div className="font-mono text-sm font-black text-white">{adminWalletHandles.wa2Display || 'Secundaria'}</div>
                 </div>
                 <span className="text-[10px] bg-teal-950 px-2 py-1 rounded-lg border border-teal-400/40 text-teal-300 font-bold">
                   📲 Abrir Business
@@ -12060,7 +12115,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <h2 className="text-xl font-serif font-black tracking-wide text-white">SEBASTIAN G</h2>
                   </div>
                   <p className="text-[11px] text-amber-400/90 font-medium tracking-widest uppercase">Fotografía & Retoque Profesional</p>
-                  <p className="text-[10px] text-stone-400 mt-0.5">Colombia • Tel: +57 324 472 5167 • sebastiang.app</p>
+                  <p className="text-[10px] text-stone-400 mt-0.5">
+                    {adminWalletHandles.wa1Intl ? `Colombia • Tel: ${adminWalletHandles.wa1Intl} • sebastiang.app` : 'Colombia • sebastiang.app'}
+                  </p>
                 </div>
                 <div className="text-left sm:text-right">
                   <span className="inline-block px-3 py-1 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono text-xs font-black">
@@ -12282,7 +12339,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 >
                   <div>
                     <div className="text-[10px] text-stone-400">Línea 1 (Principal)</div>
-                    <div className="font-mono text-xs text-white">324 472 5167</div>
+                    <div className="font-mono text-xs text-white">{adminWalletHandles.wa1Display || 'Principal'}</div>
                   </div>
                   {receiptWhatsAppLine === 'line1' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
                 </button>
@@ -12297,7 +12354,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                 >
                   <div>
                     <div className="text-[10px] text-stone-400">Línea 2 (Secundaria)</div>
-                    <div className="font-mono text-xs text-white">302 369 6513</div>
+                    <div className="font-mono text-xs text-white">{adminWalletHandles.wa2Display || 'Secundaria'}</div>
                   </div>
                   {receiptWhatsAppLine === 'line2' && <Check className="w-4 h-4 text-emerald-400 shrink-0" />}
                 </button>

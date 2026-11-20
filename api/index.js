@@ -84,6 +84,7 @@ import {
   findMongoDoc,
   deleteMongoDoc,
   deleteMongoDocs,
+  runInMongoTransaction,
   ensureMongoIndexes,
   acquireDistributedSlotLock,
   releaseDistributedSlotLock,
@@ -135,7 +136,7 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 export const HARDENED_CONTENT_SECURITY_POLICY =
-  "default-src 'self'; img-src 'self' data: blob: https://images.unsplash.com https://*.googleusercontent.com https://drive.google.com https://i.imgur.com https://*.cloudinary.com https://sebastiang.app https://www.sebastiang.app; script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co; connect-src 'self' https://onesignal.com https://api.onesignal.com https://cdn.onesignal.com https://checkout.wompi.co https://*.wompi.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://checkout.wompi.co; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self' https://checkout.wompi.co https://onesignal.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests";
+  "default-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com https://drive.google.com https://i.imgur.com https://*.cloudinary.com https://sebastiang.app https://www.sebastiang.app; script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co; connect-src 'self' https://onesignal.com https://api.onesignal.com https://cdn.onesignal.com https://checkout.wompi.co https://production.wompi.co https://sandbox.wompi.co https://api.wompi.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://checkout.wompi.co; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self' https://checkout.wompi.co https://onesignal.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests";
 
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', HARDENED_CONTENT_SECURITY_POLICY);
@@ -213,19 +214,30 @@ app.use((req, res, next) => {
 // Las claves se leen EXCLUSIVAMENTE desde variables de entorno.
 // Si no están configuradas, las notificaciones push se deshabilitan sin fallar.
 // ==============================================================================
+/**
+ * Resuelve y valida estrictamente la credencial REST API de OneSignal.
+ * Solo acepta claves v2 (`os_v2_...`) en texto plano o codificadas explícitamente en Base64 que
+ * decodifiquen a un prefijo `os_v2_`. Cualquier otro valor se descarta sin exponerlo en logs.
+ */
+export function resolveOneSignalRestApiKey(rawInput = '') {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('os_v2_')) return trimmed;
+  if (/^[A-Za-z0-9+/=]+$/.test(trimmed)) {
+    try {
+      const decoded = Buffer.from(trimmed, 'base64').toString('utf8').trim();
+      if (decoded.startsWith('os_v2_')) {
+        return decoded;
+      }
+    } catch {}
+  }
+  console.warn('⚠️ [OneSignal] ONESIGNAL_REST_API_KEY con formato inválido (se esperaba prefijo os_v2_); notificaciones push deshabilitadas.');
+  return '';
+}
+
 const ONESIGNAL_APP_ID = (process.env.ONESIGNAL_APP_ID || '').trim();
 const ONESIGNAL_ADMIN_EXTERNAL_ID = (process.env.ONESIGNAL_ADMIN_EXTERNAL_ID || 'sebastiang_admin').trim();
-let rawOneSignalKey = process.env.ONESIGNAL_REST_API_KEY || '';
-// Detectar si la clave fue provista en Base64 y decodificarla
-if (rawOneSignalKey && !rawOneSignalKey.startsWith('os_v2_')) {
-  try {
-    const decoded = Buffer.from(rawOneSignalKey, 'base64').toString('utf8');
-    if (decoded.startsWith('os_v2_') || decoded.length > 20) {
-      rawOneSignalKey = decoded;
-    }
-  } catch (e) {}
-}
-const ONESIGNAL_REST_API_KEY = rawOneSignalKey;
+const ONESIGNAL_REST_API_KEY = resolveOneSignalRestApiKey(process.env.ONESIGNAL_REST_API_KEY || '');
 
 if (!ONESIGNAL_APP_ID || !ONESIGNAL_REST_API_KEY) {
   console.warn(
@@ -313,8 +325,9 @@ if (!isMongoConfigured() && process.env.NODE_ENV !== 'test' && !process.env.VITE
 }
 
 // Configurar validador de versión de contraseña y revocación distribuida de jti para sesiones admin
-setPasswordVersionGetter(() => getActivePasswordVersionFromStore({
-  runtimeDB
+setPasswordVersionGetter((opts = {}) => getActivePasswordVersionFromStore({
+  runtimeDB,
+  forceRefresh: Boolean(opts?.forceRefresh)
 }));
 setDistributedRevokedJtiChecker((jti) =>
   isMongoConfigured() ? isDistributedAdminJtiRevoked(jti) : Promise.resolve(false)
@@ -436,7 +449,7 @@ export function requireDurablePersistence(res) {
   return true;
 }
 
-async function persistBookingToMongo(b, { throwOnError = false } = {}) {
+async function persistBookingToMongo(b, { throwOnError = false, session = null } = {}) {
   if (!b || !b.id) {
     if (throwOnError) {
       throw new Error('Reserva inválida o sin identificador para persistir en MongoDB Atlas.');
@@ -459,7 +472,7 @@ async function persistBookingToMongo(b, { throwOnError = false } = {}) {
   }
 
   try {
-    const ok = await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id }, { throwOnError });
+    const ok = await upsertMongoDoc('bookings', { id: b.id }, { ...normalized, id: b.id }, { throwOnError, session });
     if (!ok) {
       throw new Error('Fallo al persistir documento de reserva en MongoDB Atlas (resultado no exitoso)');
     }
@@ -472,7 +485,7 @@ async function persistBookingToMongo(b, { throwOnError = false } = {}) {
   }
 }
 
-async function persistPaymentToMongo(p, { throwOnError = false } = {}) {
+async function persistPaymentToMongo(p, { throwOnError = false, session = null } = {}) {
   if (!p || !p.id) {
     if (throwOnError) {
       throw new Error('Pago inválido o sin identificador para persistir en MongoDB Atlas.');
@@ -488,7 +501,7 @@ async function persistPaymentToMongo(p, { throwOnError = false } = {}) {
   }
 
   try {
-    const ok = await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id }, { throwOnError });
+    const ok = await upsertMongoDoc('payments', { id: p.id }, { ...p, id: p.id }, { throwOnError, session });
     if (!ok) {
       throw new Error('Fallo al persistir documento de pago en MongoDB Atlas (resultado no exitoso)');
     }
@@ -1008,6 +1021,9 @@ export const PUBLIC_SETTINGS_ALLOWLIST = new Set([
   'photographerName',
   'photographerWhatsApp',
   'photographerWhatsApp2',
+  'nequiNumber',
+  'daviplataKey',
+  'daleKey',
   'outOfSanAnteroSurcharge',
   'currencySymbol',
   'tagline',
@@ -1031,6 +1047,12 @@ export const PUBLIC_SETTINGS_ALLOWLIST = new Set([
   'retabloCost70x100'
 ]);
 
+function stripColombiaCountryCode(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('57')) return digits.slice(2);
+  return digits;
+}
+
 export function extractPublicSettings(settings = {}) {
   const result = {};
   for (const key of PUBLIC_SETTINGS_ALLOWLIST) {
@@ -1038,6 +1060,22 @@ export function extractPublicSettings(settings = {}) {
       result[key] = settings[key];
     }
   }
+  const wa1 = String(result.photographerWhatsApp || process.env.PHOTOGRAPHER_WHATSAPP || '').trim();
+  const wa2 = String(result.photographerWhatsApp2 || process.env.PHOTOGRAPHER_WHATSAPP_2 || '').trim();
+  if (wa1) result.photographerWhatsApp = wa1;
+  if (wa2) result.photographerWhatsApp2 = wa2;
+
+  const derivedNequi = String(result.nequiNumber || process.env.NEQUI_NUMBER || stripColombiaCountryCode(wa1)).trim();
+  if (derivedNequi) result.nequiNumber = derivedNequi;
+
+  const derivedDaviplata = String(
+    result.daviplataKey || process.env.DAVIPLATA_KEY || (derivedNequi ? `@PLATA${derivedNequi}` : '')
+  ).trim();
+  if (derivedDaviplata) result.daviplataKey = derivedDaviplata;
+
+  const derivedDale = String(result.daleKey || process.env.DALE_KEY || '').trim();
+  if (derivedDale) result.daleKey = derivedDale;
+
   return result;
 }
 
@@ -1200,6 +1238,7 @@ app.post('/api/packages', requireAdminAuth, async (req, res) => {
       }
     }
     runtimeDB.packages = packages;
+    runtimeDB._packagesCachedAt = 0;
   }
   res.json({ success: true, packages: runtimeDB.packages });
 });
@@ -1226,6 +1265,7 @@ app.post('/api/settings', requireAdminAuth, async (req, res) => {
       }
     }
     runtimeDB.settings = candidateSettings;
+    runtimeDB._settingsCachedAt = 0;
   }
   res.json({ success: true, settings: extractPublicSettings(runtimeDB.settings) });
 });
@@ -1527,7 +1567,9 @@ app.post('/api/bookings', async (req, res) => {
         if (Array.isArray(mongoDocs)) {
           existingBookings = [...existingBookings, ...mongoDocs];
         }
-      } catch (eMongo) {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando reservas activas para validación de horario: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
 
     const seenBookingIds = new Set();
@@ -1549,8 +1591,9 @@ app.post('/api/bookings', async (req, res) => {
       }
     }
 
-  // Hidratar paquetes, ajustes, historial de clientes y sesiones desde MongoDB Atlas en cold-starts serverless
-  // para garantizar tarifas actualizadas y descuentos legítimos de fidelidad/referidos.
+  // Caché de 5 minutos para paquetes y configuración de tarifas (invalidado en cada actualización administrativa)
+  // + consulta puntual en MongoDB por sufijo telefónico (máx. 50 registros con proyección mínima) para fidelidad y referidos.
+  const PRICING_META_CACHE_TTL_MS = 5 * 60 * 1000;
   let pricingPackages = Array.isArray(runtimeDB.packages) ? runtimeDB.packages : [];
   let pricingSettings = runtimeDB.settings || {};
   let pricingBookings = existingBookings;
@@ -1558,31 +1601,77 @@ app.post('/api/bookings', async (req, res) => {
 
   if (isMongoConfigured()) {
     try {
-      const [mongoPkgs, mongoSettingsDoc, mongoAllBookings, mongoSessions] = await Promise.all([
-        findMongoDocs('packages', {}, null, 100),
-        findMongoDoc('settings', { id: 'app_settings' }),
-        findMongoDocs('bookings', {}, { createdAt: -1 }, 1000),
-        findMongoDocs('sessions', {}, { createdAt: -1 }, 500)
+      const nowMeta = Date.now();
+      const needPackagesRefresh = !runtimeDB._packagesCachedAt || (nowMeta - runtimeDB._packagesCachedAt) > PRICING_META_CACHE_TTL_MS;
+      const needSettingsRefresh = !runtimeDB._settingsCachedAt || (nowMeta - runtimeDB._settingsCachedAt) > PRICING_META_CACHE_TTL_MS;
+
+      const phoneSuffixes = [];
+      const clientPhoneDigits = String(clientWhatsApp || '').replace(/\D/g, '').slice(-8);
+      if (clientPhoneDigits.length >= 7) phoneSuffixes.push(clientPhoneDigits);
+      const referralDigits = String(req.body?.referralCode || '').replace(/\D/g, '').slice(-8);
+      if (referralDigits.length >= 7 && !phoneSuffixes.includes(referralDigits)) {
+        phoneSuffixes.push(referralDigits);
+      }
+
+      const phoneFilter = phoneSuffixes.length > 0
+        ? {
+            $or: phoneSuffixes.map((suf) => ({
+              clientWhatsApp: { $regex: suf.split('').join('[^0-9]*') + '$' }
+            }))
+          }
+        : null;
+
+      const [mongoPkgs, mongoSettingsDoc, mongoCustomerBookings, mongoCustomerSessions] = await Promise.all([
+        needPackagesRefresh ? findMongoDocs('packages', {}, null, 100) : Promise.resolve(null),
+        needSettingsRefresh ? findMongoDoc('settings', { id: 'app_settings' }) : Promise.resolve(null),
+        phoneFilter
+          ? findMongoDocs(
+              'bookings',
+              { ...phoneFilter, status: { $nin: ['cancelled', 'canceled', 'cancelada', 'anulada', 'rejected'] } },
+              { createdAt: -1 },
+              50,
+              { projection: { id: 1, clientName: 1, clientWhatsApp: 1, status: 1, dateTime: 1, _id: 0 } }
+            )
+          : Promise.resolve([]),
+        phoneFilter
+          ? findMongoDocs(
+              'sessions',
+              phoneFilter,
+              { createdAt: -1 },
+              50,
+              { projection: { id: 1, token: 1, clientName: 1, clientWhatsApp: 1, status: 1, _id: 0 } }
+            )
+          : Promise.resolve([])
       ]);
+
       if (Array.isArray(mongoPkgs) && mongoPkgs.length > 0) {
         pricingPackages = mongoPkgs.map(({ _id, ...p }) => p);
         runtimeDB.packages = pricingPackages;
+        runtimeDB._packagesCachedAt = nowMeta;
       }
       if (mongoSettingsDoc && typeof mongoSettingsDoc === 'object') {
         const { _id, ...cleanSt } = mongoSettingsDoc;
         pricingSettings = { ...pricingSettings, ...cleanSt };
+        runtimeDB.settings = { ...runtimeDB.settings, ...cleanSt };
+        runtimeDB._settingsCachedAt = nowMeta;
       }
-      if (Array.isArray(mongoAllBookings) && mongoAllBookings.length > 0) {
+      if (Array.isArray(mongoCustomerBookings) && mongoCustomerBookings.length > 0) {
         const bMap = new Map();
-        [...existingBookings, ...mongoAllBookings].forEach(b => {
+        [...existingBookings, ...mongoCustomerBookings].forEach(b => {
           if (b?.id) bMap.set(b.id, b);
         });
         pricingBookings = [...bMap.values()];
       }
-      if (Array.isArray(mongoSessions) && mongoSessions.length > 0) {
-        pricingSessions = mongoSessions.map(({ _id, ...s }) => s);
+      if (Array.isArray(mongoCustomerSessions) && mongoCustomerSessions.length > 0) {
+        const sMap = new Map();
+        [...pricingSessions, ...mongoCustomerSessions].forEach(s => {
+          if (s?.token || s?.id) sMap.set(s.token || s.id, s);
+        });
+        pricingSessions = [...sMap.values()];
       }
-    } catch {}
+    } catch (eHydrate) {
+      recordOperationalEvent('mongoErrors', `Error hidratando tarifas/historial en POST /api/bookings: ${eHydrate?.message || eHydrate}`, 'warning');
+    }
   }
 
   const pkg = pricingPackages.find(p => p.id === packageId) || pricingPackages[0];
@@ -1950,7 +2039,9 @@ app.get('/api/gallery/:token/photo/:photoId', async (req, res) => {
   if (!session && isMongoConfigured()) {
     try {
       session = await findMongoDoc('sessions', { token });
-    } catch {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando sesión para foto de galería: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
   if (!session || session.revoked || session.status === 'revoked') {
     return res.status(404).json({ error: 'Imagen no disponible.' });
@@ -2005,7 +2096,9 @@ app.post('/api/gallery/:token/live-selection', async (req, res) => {
             runtimeDB.sessions.push(session);
           }
         }
-      } catch (errMongo) {}
+      } catch (errMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando sesión en live-selection: ${errMongo?.message || errMongo}`, 'warning');
+      }
     }
 
     if (!session) {
@@ -2093,7 +2186,9 @@ app.post('/api/gallery/:token/submit', async (req, res) => {
           runtimeDB.sessions.push(session);
         }
       }
-    } catch (errMongo) {}
+    } catch (errMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando sesión en submit de galería: ${errMongo?.message || errMongo}`, 'warning');
+    }
   }
 
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
@@ -2408,7 +2503,9 @@ app.post('/api/admin/auth/bio-enroll', requireAdminAuth, async (req, res) => {
           });
           currentCreds = Array.from(map.values());
         }
-      } catch {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando credenciales biométricas en bio-enroll: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
 
     const cleanCredId = String(credentialId).trim().slice(0, 128);
@@ -2515,7 +2612,9 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
           enrolledCredentials = Array.from(map.values());
           runtimeDB.settings.biometricCredentials = enrolledCredentials;
         }
-      } catch {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando credenciales biométricas en bio-refresh: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
 
     const payload = verifyBioRefreshToken(rawToken, {
@@ -2869,7 +2968,9 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
     if (!matchedSession && isMongoConfigured()) {
       try {
         matchedSession = await findMongoDoc('sessions', { token: String(sessionToken).trim() });
-      } catch {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando sesión en POST /api/payments: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
     if (!matchedSession && !isAdminCaller) {
       return res.status(404).json({ error: 'La galería privada asociada al pago no existe.' });
@@ -3061,7 +3162,9 @@ app.post('/api/payments/checkout', async (req, res) => {
           const { _id, ...cleanSession } = doc;
           session = cleanSession;
         }
-      } catch (eMongo) {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando sesión en checkout Wompi: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
     const allowDemoCheckout = !isProduction || process.env.ALLOW_DEMO_GALLERY === 'true';
     if (!session && !(sessionToken === 'demo-cliente-2026' && allowDemoCheckout)) {
@@ -3174,7 +3277,9 @@ app.post('/api/payments/checkout', async (req, res) => {
             }
           }
         }
-      } catch (eMongo) {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando pagos previos en checkout Wompi: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
 
     // Si ya existe un pago verificado para el abono inicial, impedir segundo cobro de abono
@@ -3599,7 +3704,9 @@ app.post('/api/payments/webhook', async (req, res) => {
           });
           allKnownPayments = [...pMap.values()];
         }
-      } catch {}
+      } catch (eMongo) {
+        recordOperationalEvent('mongoErrors', `Error consultando pagos previos en webhook Wompi: ${eMongo?.message || eMongo}`, 'warning');
+      }
     }
 
     const priorVerifiedPayments = allKnownPayments.filter(p =>
@@ -3762,7 +3869,9 @@ app.post('/api/payments/webhook', async (req, res) => {
             hasOtherVerifiedDeposit = Array.isArray(mongoVerified) && mongoVerified.some(
               p => p.concept !== 'session_balance' && p.concept !== 'saldo_galeria'
             );
-          } catch {}
+          } catch (eMongo) {
+            recordOperationalEvent('mongoErrors', `Error consultando anticipos verificados en webhook Wompi: ${eMongo?.message || eMongo}`, 'warning');
+          }
         }
         if (!hasOtherVerifiedDeposit) {
           bookingToRevert = { ...b, depositPaid: false };
@@ -3850,7 +3959,9 @@ app.patch('/api/admin/payments/:id', async (req, res) => {
         const { _id, ...cleanDoc } = doc;
         payment = cleanDoc;
       }
-    } catch (eMongo) {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando pago en PATCH /api/admin/payments: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
 
   if (!payment) return res.status(404).json({ error: 'Pago no encontrado.' });
@@ -4115,7 +4226,9 @@ app.post('/api/admin/sessions/:id/reopen', async (req, res) => {
         const { _id, ...cleanSession } = doc;
         session = cleanSession;
       }
-    } catch {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando sesión en reopen: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
@@ -4159,7 +4272,9 @@ app.post('/api/admin/sessions/:id/revoke', async (req, res) => {
         const { _id, ...cleanSession } = doc;
         session = cleanSession;
       }
-    } catch (eMongo) {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando sesión en revoke: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
@@ -4203,7 +4318,9 @@ app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
         const { _id, ...cleanSession } = doc;
         session = cleanSession;
       }
-    } catch (eMongo) {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando sesión en deliver: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
 
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
@@ -4285,6 +4402,7 @@ app.post('/api/admin/settings', async (req, res) => {
       }
     }
     runtimeDB.settings = candidateSettings;
+    runtimeDB._settingsCachedAt = 0;
   }
   if (packages && Array.isArray(packages)) {
     if (isMongoConfigured()) {
@@ -4306,6 +4424,7 @@ app.post('/api/admin/settings', async (req, res) => {
       }
     }
     runtimeDB.packages = packages;
+    runtimeDB._packagesCachedAt = 0;
   }
   res.json({ success: true, settings: extractPublicSettings(runtimeDB.settings), packages: runtimeDB.packages });
 });
@@ -4887,59 +5006,69 @@ app.post('/api/admin/backup/restore', express.json({ limit: '25mb' }), requireAd
           throw new Error('La validación de integridad en staging_restore falló antes de aplicar la restauración.');
         }
 
-        // Fase 2 (Commit): Aplicar cambios sobre colecciones vivas
-        // 1. Persistir configuración restaurada
-        await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...candidateSettings }, { throwOnError: true });
+        // Fase 2 (Commit): Aplicar cambios atómicamente mediante transacción multi-documento de MongoDB Atlas
+        // (con respaldo de commit secuencial + rollback si el entorno local es standalone sin replica set).
+        const applyRestoreWrites = async (session = null) => {
+          // 1. Persistir configuración restaurada
+          await upsertMongoDoc('settings', { id: 'app_settings' }, { id: 'app_settings', ...candidateSettings }, { throwOnError: true, session });
 
-        // 2. Persistir y sincronizar paquetes restaurados
-        const packageIds = candidatePackages.map(p => p.id).filter(Boolean);
-        if (packageIds.length > 0) {
-          await deleteMongoDocs('packages', { id: { $nin: packageIds } }, { throwOnError: true });
-          for (const p of candidatePackages) {
-            await upsertMongoDoc('packages', { id: p.id }, p, { throwOnError: true });
+          // 2. Persistir y sincronizar paquetes restaurados
+          const packageIds = candidatePackages.map(p => p.id).filter(Boolean);
+          if (packageIds.length > 0) {
+            await deleteMongoDocs('packages', { id: { $nin: packageIds } }, { throwOnError: true, session });
+            for (const p of candidatePackages) {
+              await upsertMongoDoc('packages', { id: p.id }, p, { throwOnError: true, session });
+            }
           }
-        }
 
-        // 3. Sincronizar catálogo eliminando registros ausentes en el respaldo
-        const catalogIds = candidateCatalog.map(c => c.id).filter(Boolean);
-        await deleteMongoDocs('catalog', { id: { $nin: catalogIds } }, { throwOnError: true });
-        for (const c of candidateCatalog) {
-          if (c?.id) await upsertMongoDoc('catalog', { id: c.id }, c, { throwOnError: true });
-        }
+          // 3. Sincronizar catálogo eliminando registros ausentes en el respaldo
+          const catalogIds = candidateCatalog.map(c => c.id).filter(Boolean);
+          await deleteMongoDocs('catalog', { id: { $nin: catalogIds } }, { throwOnError: true, session });
+          for (const c of candidateCatalog) {
+            if (c?.id) await upsertMongoDoc('catalog', { id: c.id }, c, { throwOnError: true, session });
+          }
 
-        // 4. Sincronizar sesiones eliminando registros ausentes en el respaldo
-        const sessionTokens = candidateSessions.map(s => s.token).filter(Boolean);
-        await deleteMongoDocs('sessions', { token: { $nin: sessionTokens } }, { throwOnError: true });
-        for (const s of candidateSessions) {
-          if (s?.token) await upsertMongoDoc('sessions', { token: s.token }, s, { throwOnError: true });
-        }
+          // 4. Sincronizar sesiones eliminando registros ausentes en el respaldo
+          const sessionTokens = candidateSessions.map(s => s.token).filter(Boolean);
+          await deleteMongoDocs('sessions', { token: { $nin: sessionTokens } }, { throwOnError: true, session });
+          for (const s of candidateSessions) {
+            if (s?.token) await upsertMongoDoc('sessions', { token: s.token }, s, { throwOnError: true, session });
+          }
 
-        // 5. Sincronizar reseñas eliminando registros ausentes en el respaldo
-        const reviewIds = candidateReviews.map(r => r.id).filter(Boolean);
-        await deleteMongoDocs('reviews', { id: { $nin: reviewIds } }, { throwOnError: true });
-        for (const r of candidateReviews) {
-          if (r?.id) await upsertMongoDoc('reviews', { id: r.id }, r, { throwOnError: true });
-        }
+          // 5. Sincronizar reseñas eliminando registros ausentes en el respaldo
+          const reviewIds = candidateReviews.map(r => r.id).filter(Boolean);
+          await deleteMongoDocs('reviews', { id: { $nin: reviewIds } }, { throwOnError: true, session });
+          for (const r of candidateReviews) {
+            if (r?.id) await upsertMongoDoc('reviews', { id: r.id }, r, { throwOnError: true, session });
+          }
 
-        // 6. Sincronizar reservas eliminando registros ausentes en el respaldo
-        const bookingIds = candidateBookings.map(b => b.id).filter(Boolean);
-        await deleteMongoDocs('bookings', { id: { $nin: bookingIds } }, { throwOnError: true });
-        for (const b of candidateBookings) {
-          if (b?.id) await persistBookingToMongo(b, { throwOnError: true });
-        }
+          // 6. Sincronizar reservas eliminando registros ausentes en el respaldo
+          const bookingIds = candidateBookings.map(b => b.id).filter(Boolean);
+          await deleteMongoDocs('bookings', { id: { $nin: bookingIds } }, { throwOnError: true, session });
+          for (const b of candidateBookings) {
+            if (b?.id) await persistBookingToMongo(b, { throwOnError: true, session });
+          }
 
-        // 7. Sincronizar pagos eliminando registros ausentes en el respaldo
-        const paymentIds = candidatePayments.map(p => p.id).filter(Boolean);
-        await deleteMongoDocs('payments', { id: { $nin: paymentIds } }, { throwOnError: true });
-        for (const p of candidatePayments) {
-          if (p?.id) await persistPaymentToMongo(p, { throwOnError: true });
+          // 7. Sincronizar pagos eliminando registros ausentes en el respaldo
+          const paymentIds = candidatePayments.map(p => p.id).filter(Boolean);
+          await deleteMongoDocs('payments', { id: { $nin: paymentIds } }, { throwOnError: true, session });
+          for (const p of candidatePayments) {
+            if (p?.id) await persistPaymentToMongo(p, { throwOnError: true, session });
+          }
+        };
+
+        const txResult = await runInMongoTransaction(async (session) => {
+          await applyRestoreWrites(session);
+        });
+        if (!txResult.supported) {
+          await applyRestoreWrites(null);
         }
 
         mongoPersistMs = Math.max(1, Math.round(performance.now() - mongoStartMs));
         indexReport = await ensureMongoIndexes();
 
         if (!indexReport || indexReport.verified !== true) {
-          throw new Error('Fallo al verificar los 22 índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
+          throw new Error('Fallo al verificar los 23 índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
         }
       } catch (eMongo) {
         console.error('❌ [Restore] Fallo persistiendo respaldo en MongoDB Atlas, ejecutando rollback:', eMongo?.message || eMongo);
@@ -5007,6 +5136,8 @@ app.post('/api/admin/backup/restore', express.json({ limit: '25mb' }), requireAd
     const memStartMs = performance.now();
     runtimeDB.settings = candidateSettings;
     runtimeDB.packages = candidatePackages;
+    runtimeDB._settingsCachedAt = 0;
+    runtimeDB._packagesCachedAt = 0;
     runtimeDB.catalog = candidateCatalog;
     runtimeDB.bookings = candidateBookings;
     runtimeDB.payments = candidatePayments;
@@ -5093,7 +5224,9 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
       data: { type: 'operational_alert_drill', timestamp: new Date().toISOString() }
     });
     channels.oneSignalPush = Boolean(pushOk);
-  } catch {}
+  } catch (ePush) {
+    recordOperationalEvent('apiExceptions', `Fallo enviando alerta push en simulacro: ${ePush?.message || ePush}`, 'warning');
+  }
 
   const webhookUrl = String(process.env.MONITORING_WEBHOOK_URL || '').trim();
   if (webhookUrl.startsWith('https://')) {
@@ -5113,7 +5246,9 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
         signal: controller.signal
       });
       channels.webhookExternal = whRes.ok;
-    } catch {} finally {
+    } catch (eWh) {
+      recordOperationalEvent('apiExceptions', `Fallo enviando webhook de monitoreo en simulacro: ${eWh?.message || eWh}`, 'warning');
+    } finally {
       clearTimeout(timer);
     }
   }
@@ -5212,7 +5347,9 @@ app.patch('/api/admin/reviews/:id', requireAdminAuth, async (req, res) => {
         const { _id, ...cleanDoc } = doc;
         existing = cleanDoc;
       }
-    } catch {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando reseña en PATCH /api/admin/reviews: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
 
   const hasHiddenFlag = typeof hidden === 'boolean';
@@ -5355,7 +5492,9 @@ app.post('/api/gallery/:token/review', async (req, res) => {
         const { _id, ...cleanSession } = doc;
         session = cleanSession;
       }
-    } catch (eMongo) {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error consultando sesión en POST /api/gallery/:token/review: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
   if (!session) {
     return res.status(404).json({ error: 'Galería no encontrada.' });
@@ -5389,7 +5528,9 @@ app.post('/api/gallery/:token/review', async (req, res) => {
       existingReview = await findMongoDoc('reviews', {
         $or: [{ galleryToken: token }, { token }]
       });
-    } catch {}
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Error verificando reseña previa en galería: ${eMongo?.message || eMongo}`, 'warning');
+    }
   }
   if (existingReview) {
     return res.status(409).json({
@@ -5693,6 +5834,13 @@ export function sanitizeDbMatchFilter(rawMatch, { requireNonEmpty = false } = {}
 }
 
 app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
+  const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (isProduction && process.env.ADMIN_DB_PROXY_ENABLED !== 'true') {
+    return res.status(403).json({
+      error: 'El proxy genérico /api/admin/db está deshabilitado en producción por superficie mínima de ataque. Usa los endpoints administrativos específicos.',
+      code: 'ADMIN_DB_PROXY_DISABLED'
+    });
+  }
   const { table, op, payload, match } = req.body || {};
 
   if (!DB_ALLOWED_TABLES.includes(String(table))) {
