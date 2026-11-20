@@ -52,5 +52,5 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.biometric:biometric:1.1.0")
     // OneSignal Push SDK
-    implementation("com.onesignal:OneSignal:5.1.19")
+    implementation("com.onesignal:OneSignal:5.11.0")
 }
