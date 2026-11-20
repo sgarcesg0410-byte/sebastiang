@@ -26,11 +26,11 @@ import HowItWorksSection from './components/HowItWorksSection';
 import InteractiveLogoIntro, { INTRO_SEEN_STORAGE_KEY } from './components/InteractiveLogoIntro';
 import SecurityOverlay from './components/SecurityOverlay';
 import MobileStickyBookingBar from './components/MobileStickyBookingBar';
-import { getSettings, getCatalog, getPackages, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds, syncLocalCatalogToCloud, sortCatalogDescending } from './services/api';
+import { getSettings, getCatalog, getPackages, getPaymentStatus, DEFAULT_PACKAGES, DEFAULT_REAL_CATALOG, getDeletedCatalogIds, syncLocalCatalogToCloud, sortCatalogDescending } from './services/api';
 import { trackPageVisit } from './services/analytics';
 import { initOneSignal } from './services/onesignal';
 import { initErrorCapture } from './services/systemAuditor';
-import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail } from 'lucide-react';
+import { Camera, MapPin, MessageCircle, ShieldCheck, Heart, Lock, Mail, CheckCircle2, Clock, XCircle, X } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, SOCIAL_LINKS } from './components/SocialIcons';
 
 /**
@@ -105,6 +105,7 @@ export default function App() {
   const [selectedComboForBooking, setSelectedComboForBooking] = useState(null);
   const [selectedPhotoForBooking, setSelectedPhotoForBooking] = useState(null);
   const [selectedDateForBooking, setSelectedDateForBooking] = useState('');
+  const [paymentReturnBanner, setPaymentReturnBanner] = useState(null);
 
   // Bienvenida e intro con logo 3D interactivo: no bloquea visitas recurrentes, rutas directas ni usuarios con movimiento reducido
   const [showIntro, setShowIntro] = useState(() => {
@@ -202,6 +203,50 @@ export default function App() {
 
     // Registrar visita en analítica en tiempo real
     trackPageVisit();
+
+    // Detectar retorno desde la pasarela Wompi (?payment_success=true&ref=...) y consultar estado real en el servidor
+    try {
+      const searchParams = new URLSearchParams(window.location.search || '');
+      const returnedRef = (searchParams.get('ref') || '').trim();
+      const isPaymentReturn = searchParams.get('payment_success') === 'true' && returnedRef.length > 0;
+      if (isPaymentReturn) {
+        setPaymentReturnBanner({ status: 'checking', reference: returnedRef });
+        let attempts = 0;
+        const pollPayment = async () => {
+          attempts += 1;
+          const info = await getPaymentStatus(returnedRef);
+          if (info && (info.status === 'verified' || info.status === 'approved')) {
+            setPaymentReturnBanner({
+              status: 'verified',
+              reference: returnedRef,
+              amount: Number(info.amount || 0)
+            });
+            return;
+          }
+          if (info && (info.status === 'rejected' || info.status === 'declined')) {
+            setPaymentReturnBanner({
+              status: 'rejected',
+              reference: returnedRef,
+              amount: Number(info.amount || 0)
+            });
+            return;
+          }
+          if (attempts < 4) {
+            setTimeout(pollPayment, 2500);
+          } else {
+            setPaymentReturnBanner({
+              status: 'pending',
+              reference: returnedRef,
+              amount: Number(info?.amount || 0)
+            });
+          }
+        };
+        pollPayment();
+        try {
+          window.history.replaceState(null, '', window.location.pathname || '/');
+        } catch (e) {}
+      }
+    } catch (e) {}
 
     const applyLocationRoute = () => {
       const resolved = resolveRouteFromLocation(window.location);
@@ -326,6 +371,55 @@ export default function App() {
             setShowIntro(false);
           }}
         />
+      )}
+
+      {/* BANNER DE RETORNO DE PASARELA WOMPI */}
+      {paymentReturnBanner && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-lg rounded-2xl border shadow-2xl p-4 backdrop-blur-md bg-stone-950/95 border-amber-500/40"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 shrink-0">
+              {paymentReturnBanner.status === 'verified' && <CheckCircle2 className="w-6 h-6 text-emerald-400" />}
+              {paymentReturnBanner.status === 'rejected' && <XCircle className="w-6 h-6 text-rose-400" />}
+              {(paymentReturnBanner.status === 'checking' || paymentReturnBanner.status === 'pending') && (
+                <Clock className="w-6 h-6 text-amber-400 animate-pulse" />
+              )}
+            </div>
+            <div className="flex-1 text-left">
+              <h4 className="text-sm font-bold text-white">
+                {paymentReturnBanner.status === 'verified' && '¡Pago confirmado con éxito!'}
+                {paymentReturnBanner.status === 'rejected' && 'El pago no fue aprobado'}
+                {paymentReturnBanner.status === 'checking' && 'Verificando tu pago con Wompi...'}
+                {paymentReturnBanner.status === 'pending' && 'Pago recibido — en verificación'}
+              </h4>
+              <p className="text-xs text-stone-300 mt-1 leading-relaxed">
+                {paymentReturnBanner.status === 'verified' && (
+                  <>Tu pago{paymentReturnBanner.amount > 0 ? ` de $${paymentReturnBanner.amount.toLocaleString('es-CO')} COP` : ''} quedó confirmado y tu cupo está asegurado. Ref: <span className="font-mono text-amber-300">{paymentReturnBanner.reference}</span>.</>
+                )}
+                {paymentReturnBanner.status === 'rejected' && (
+                  <>La transacción <span className="font-mono text-rose-300">{paymentReturnBanner.reference}</span> fue rechazada o cancelada. Puedes intentarlo de nuevo o escribirnos por WhatsApp.</>
+                )}
+                {paymentReturnBanner.status === 'checking' && (
+                  <>Consultando confirmación oficial para la referencia <span className="font-mono text-amber-300">{paymentReturnBanner.reference}</span>...</>
+                )}
+                {paymentReturnBanner.status === 'pending' && (
+                  <>Tu transferencia está siendo confirmada por el banco (Ref: <span className="font-mono text-amber-300">{paymentReturnBanner.reference}</span>). Recibirás confirmación en breve.</>
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPaymentReturnBanner(null)}
+              aria-label="Cerrar aviso de pago"
+              className="text-stone-400 hover:text-white p-1 rounded-lg transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       )}
 
       {/* BARRA SUPERIOR (SOLO SE MUESTRA EN VISTAS PÚBLICAS, NO EN EL DASHBOARD DEL FOTÓGRAFO) */}

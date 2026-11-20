@@ -12,10 +12,13 @@ import {
   hashPinScryptAsync,
   buildAdminSessionCookieHeader,
   revokeAdminAccessTokenJti,
+  verifyCsrfForCookieAuth,
   createReceiptToken,
   readAdminToken,
   verifyAdminToken,
   setPasswordVersionGetter,
+  setDistributedRevokedJtiChecker,
+  isForbiddenWeakPassword,
   generateGalleryToken,
   isValidGalleryTokenFormat,
   maskEmail,
@@ -87,7 +90,9 @@ import {
   checkDistributedRateLimit,
   resetDistributedRateLimit,
   saveDistributedBioChallenge,
-  consumeDistributedBioChallenge
+  consumeDistributedBioChallenge,
+  revokeDistributedAdminJti,
+  isDistributedAdminJtiRevoked
 } from './db/mongo.js';
 
 // Orígenes permitidos estrictamente acotados (Hallazgo M1: sin comodín sebastiang-*.vercel.app ni credentials innecesarias)
@@ -127,9 +132,10 @@ export function isAllowedCorsOrigin(origin, isProd = (process.env.NODE_ENV === '
 }
 
 const app = express();
+app.disable('x-powered-by');
 app.set('trust proxy', 1);
 export const HARDENED_CONTENT_SECURITY_POLICY =
-  "default-src 'self'; img-src 'self' data: blob: https://images.unsplash.com https://*.googleusercontent.com https://drive.google.com https://i.imgur.com https://*.cloudinary.com https://sebastiang.app https://www.sebastiang.app; script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co; connect-src 'self' https://onesignal.com https://api.onesignal.com https://cdn.onesignal.com https://checkout.wompi.co https://*.wompi.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://checkout.wompi.co; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self' https://checkout.wompi.co https://onesignal.com; worker-src 'self' blob:; frame-ancestors 'self'";
+  "default-src 'self'; img-src 'self' data: blob: https://images.unsplash.com https://*.googleusercontent.com https://drive.google.com https://i.imgur.com https://*.cloudinary.com https://sebastiang.app https://www.sebastiang.app; script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co; connect-src 'self' https://onesignal.com https://api.onesignal.com https://cdn.onesignal.com https://checkout.wompi.co https://*.wompi.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://checkout.wompi.co; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self' https://checkout.wompi.co https://onesignal.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; upgrade-insecure-requests";
 
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', HARDENED_CONTENT_SECURITY_POLICY);
@@ -138,6 +144,8 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (req.path.startsWith('/api/')) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   }
@@ -189,7 +197,14 @@ app.use((req, res, next) => {
   } else if (url.startsWith('/api/payments')) {
     limit = '15mb';
   }
-  return express.json({ limit })(req, res, next);
+  return express.json({
+    limit,
+    verify: (r, _res, buf) => {
+      if (buf && buf.length > 0 && buf.length <= 2 * 1024 * 1024) {
+        r.rawBody = buf.toString('utf8');
+      }
+    }
+  })(req, res, next);
 });
 
 // ==============================================================================
@@ -262,20 +277,27 @@ async function sendOneSignalPush({ title, message, url = 'https://sebastiang.app
   }
   try {
     const payload = JSON.stringify(buildOneSignalAdminPushPayload({ title, message, url, data }));
-
-    const response = await fetch('https://onesignal.com/api/v1/notifications', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`
-      },
-      body: payload
-    });
-    const resJson = await response.json();
-    console.log('OneSignal Push enviado:', resJson);
-    return resJson;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    if (typeof timer.unref === 'function') timer.unref();
+    try {
+      const response = await fetch('https://onesignal.com/api/v1/notifications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`
+        },
+        body: payload,
+        signal: controller.signal
+      });
+      const resJson = await response.json();
+      console.log('OneSignal Push enviado:', resJson);
+      return resJson;
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (err) {
-    console.warn('Error al disparar OneSignal Push:', err);
+    console.warn('Error al disparar OneSignal Push:', err?.message || err);
     return null;
   }
 }
@@ -290,14 +312,54 @@ if (!isMongoConfigured() && process.env.NODE_ENV !== 'test' && !process.env.VITE
   );
 }
 
-// Configurar validador de versión de contraseña en tiempo real para sesiones admin
+// Configurar validador de versión de contraseña y revocación distribuida de jti para sesiones admin
 setPasswordVersionGetter(() => getActivePasswordVersionFromStore({
   runtimeDB
 }));
+setDistributedRevokedJtiChecker((jti) =>
+  isMongoConfigured() ? isDistributedAdminJtiRevoked(jti) : Promise.resolve(false)
+);
 setOperationalPersistenceAdapter({
   isMongoConfigured,
   upsertMongoDoc
 });
+
+const PROTOTYPE_POLLUTION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function hasUnsafeMongoOrProtoKeys(obj, depth = 0) {
+  if (depth > 8 || !obj || typeof obj !== 'object') return false;
+  if (Array.isArray(obj)) {
+    return obj.some(item => hasUnsafeMongoOrProtoKeys(item, depth + 1));
+  }
+  for (const key of Object.keys(obj)) {
+    if (PROTOTYPE_POLLUTION_KEYS.has(key) || key.startsWith('$') || key.includes('.')) {
+      return true;
+    }
+    if (hasUnsafeMongoOrProtoKeys(obj[key], depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sanitizeSafeObjectKeys(obj, forbiddenKeys = new Set()) {
+  const clean = {};
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return clean;
+  for (const [k, v] of Object.entries(obj)) {
+    if (
+      typeof k !== 'string' ||
+      !k ||
+      PROTOTYPE_POLLUTION_KEYS.has(k) ||
+      k.startsWith('$') ||
+      k.includes('.') ||
+      forbiddenKeys.has(k)
+    ) {
+      continue;
+    }
+    clean[k] = v;
+  }
+  return clean;
+}
 
 function normalizeBookingDoc(b) {
   if (!b || !b.id) return null;
@@ -912,11 +974,30 @@ app.get('/api/admin/health', requireAdminAuth, async (req, res) => {
 });
 
 app.post('/api/send-push', requireAdminAuth, async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 20, 'send-push')) {
+    return res.status(429).json({ error: 'Límite de envío de notificaciones push alcanzado temporalmente.' });
+  }
   const { title, message, url, data } = req.body || {};
-  if (!title || !message) {
+  const cleanTitle = sanitizeText(String(title || '')).slice(0, 100);
+  const cleanMessage = sanitizeText(String(message || '')).slice(0, 300);
+  if (!cleanTitle || !cleanMessage) {
     return res.status(400).json({ error: 'Faltan parámetros requeridos (title, message)' });
   }
-  const result = await sendOneSignalPush({ title, message, url, data });
+  let safeUrl = 'https://sebastiang.app/?mode=admin';
+  if (typeof url === 'string' && url.trim()) {
+    try {
+      const parsed = new URL(url.trim());
+      if (parsed.protocol === 'https:' && (parsed.hostname === 'sebastiang.app' || parsed.hostname === 'www.sebastiang.app')) {
+        safeUrl = parsed.toString();
+      }
+    } catch {}
+  }
+  const result = await sendOneSignalPush({
+    title: cleanTitle,
+    message: cleanMessage,
+    url: safeUrl,
+    data: (data && typeof data === 'object' && !Array.isArray(data)) ? data : {}
+  });
   res.json({ success: true, result });
 });
 
@@ -1074,8 +1155,19 @@ app.get('/api/admin/wallets', requireAdminAuth, async (req, res) => {
 app.post('/api/admin/wallets', requireAdminAuth, async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const balances = req.body;
-  if (balances && typeof balances === 'object') {
-    const candidateBalances = { ...runtimeDB.walletBalances, ...balances };
+  if (balances && typeof balances === 'object' && !Array.isArray(balances)) {
+    const ALLOWED_WALLETS = new Set(['nequi', 'daviplata', 'dale', 'wompi', 'efectivo', 'bancolombia', 'breb', 'nu']);
+    const sanitizedWallets = {};
+    for (const [k, v] of Object.entries(balances)) {
+      const cleanKey = String(k).trim().toLowerCase();
+      if (!ALLOWED_WALLETS.has(cleanKey)) continue;
+      const numVal = Number(v);
+      if (!Number.isFinite(numVal) || numVal < 0 || numVal > 1000000000) {
+        return res.status(400).json({ error: `Saldo inválido para la billetera "${cleanKey}".` });
+      }
+      sanitizedWallets[cleanKey] = Math.round(numVal);
+    }
+    const candidateBalances = { ...runtimeDB.walletBalances, ...sanitizedWallets };
     if (isMongoConfigured()) {
       try {
         const ok = await upsertMongoDoc('settings', { id: 'wallet_balances' }, { id: 'wallet_balances', ...candidateBalances }, { throwOnError: true });
@@ -1115,14 +1207,14 @@ app.post('/api/packages', requireAdminAuth, async (req, res) => {
 app.post('/api/settings', requireAdminAuth, async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const newSettings = req.body;
-  if (newSettings && typeof newSettings === 'object') {
-    // Nunca permitir que se sobreescriban credenciales o hashes de seguridad por este endpoint
-    const {
-      adminPin, adminPinHash, adminPinScrypt, adminPasswordVersion,
-      adminResetChallenge, revokedApkDeviceIds, revokedBioRefreshJtis,
-      biometricCredentials, _loadedFromMongo, id, _id,
-      ...safeSettings
-    } = newSettings;
+  if (newSettings && typeof newSettings === 'object' && !Array.isArray(newSettings)) {
+    // Nunca permitir que se sobreescriban credenciales, hashes de seguridad ni claves de prototipo/Mongo
+    const FORBIDDEN_PUBLIC_SETTINGS_KEYS = new Set([
+      'adminPin', 'adminPinHash', 'adminPinScrypt', 'adminPasswordVersion',
+      'adminResetChallenge', 'revokedApkDeviceIds', 'revokedBioRefreshJtis',
+      'biometricCredentials', '_loadedFromMongo', 'id', '_id', 'key'
+    ]);
+    const safeSettings = sanitizeSafeObjectKeys(newSettings, FORBIDDEN_PUBLIC_SETTINGS_KEYS);
     const candidateSettings = { ...runtimeDB.settings, ...safeSettings };
     if (isMongoConfigured()) {
       try {
@@ -1351,6 +1443,23 @@ app.post('/api/bookings', async (req, res) => {
     });
   }
 
+  // Validación estricta de datos de contacto para impedir bloqueos anónimos o vacíos de la agenda
+  const validatedName = sanitizeText(String(clientName || '')).slice(0, 100);
+  const validatedPhoneDigits = String(clientWhatsApp || '').replace(/\D/g, '');
+  if (validatedName.length < 2 || validatedPhoneDigits.length < 7 || validatedPhoneDigits.length > 15) {
+    return res.status(400).json({
+      error: 'Por favor ingresa tu nombre completo y un número de WhatsApp válido para confirmar tu reserva.',
+      code: 'INVALID_BOOKING_CONTACT'
+    });
+  }
+  const rawEmailTrim = String(clientEmail || '').trim();
+  if (rawEmailTrim && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmailTrim)) {
+    return res.status(400).json({
+      error: 'El formato del correo electrónico ingresado no es válido.',
+      code: 'INVALID_BOOKING_EMAIL'
+    });
+  }
+
   if (!global.__activeSlotLocks) global.__activeSlotLocks = new Map();
   const now = Date.now();
   for (const [k, lock] of global.__activeSlotLocks.entries()) {
@@ -1440,13 +1549,54 @@ app.post('/api/bookings', async (req, res) => {
       }
     }
 
-  const pkg = runtimeDB.packages.find(p => p.id === packageId) || runtimeDB.packages[0];
+  // Hidratar paquetes, ajustes, historial de clientes y sesiones desde MongoDB Atlas en cold-starts serverless
+  // para garantizar tarifas actualizadas y descuentos legítimos de fidelidad/referidos.
+  let pricingPackages = Array.isArray(runtimeDB.packages) ? runtimeDB.packages : [];
+  let pricingSettings = runtimeDB.settings || {};
+  let pricingBookings = existingBookings;
+  let pricingSessions = Array.isArray(runtimeDB.sessions) ? runtimeDB.sessions : [];
+
+  if (isMongoConfigured()) {
+    try {
+      const [mongoPkgs, mongoSettingsDoc, mongoAllBookings, mongoSessions] = await Promise.all([
+        findMongoDocs('packages', {}, null, 100),
+        findMongoDoc('settings', { id: 'app_settings' }),
+        findMongoDocs('bookings', {}, { createdAt: -1 }, 1000),
+        findMongoDocs('sessions', {}, { createdAt: -1 }, 500)
+      ]);
+      if (Array.isArray(mongoPkgs) && mongoPkgs.length > 0) {
+        pricingPackages = mongoPkgs.map(({ _id, ...p }) => p);
+        runtimeDB.packages = pricingPackages;
+      }
+      if (mongoSettingsDoc && typeof mongoSettingsDoc === 'object') {
+        const { _id, ...cleanSt } = mongoSettingsDoc;
+        pricingSettings = { ...pricingSettings, ...cleanSt };
+      }
+      if (Array.isArray(mongoAllBookings) && mongoAllBookings.length > 0) {
+        const bMap = new Map();
+        [...existingBookings, ...mongoAllBookings].forEach(b => {
+          if (b?.id) bMap.set(b.id, b);
+        });
+        pricingBookings = [...bMap.values()];
+      }
+      if (Array.isArray(mongoSessions) && mongoSessions.length > 0) {
+        pricingSessions = mongoSessions.map(({ _id, ...s }) => s);
+      }
+    } catch {}
+  }
+
+  const pkg = pricingPackages.find(p => p.id === packageId) || pricingPackages[0];
 
   // El precio lo decide el SERVIDOR entre un mínimo y un máximo legítimos:
   //  - se ignoran los valores manipulados (por ejemplo reservar por $1),
   //  - se respetan las combinaciones válidas (impresiones, retablos, fidelidad),
   //  - el descuento de recurrencia se comprueba aquí, no en el navegador.
-  const { finalPrice, band, priceCheck, referralApplied } = resolveBookingPrice({ db: runtimeDB, pkg, body: req.body });
+  const pricingDbSnapshot = {
+    settings: pricingSettings,
+    bookings: pricingBookings,
+    sessions: pricingSessions
+  };
+  const { finalPrice, band, priceCheck, referralApplied } = resolveBookingPrice({ db: pricingDbSnapshot, pkg, body: req.body });
   if (priceCheck.adjusted) {
     console.warn(`[Precios] Corregido (${priceCheck.reason}) para ${clientName || 'cliente sin nombre'}: banda ${band.minPrice}-${band.listPrice}`);
   }
@@ -1463,7 +1613,7 @@ app.post('/api/bookings', async (req, res) => {
     packageName: pkg.name,
     eventType: sanitizeText(eventType || req.body.sessionType || 'Sesión Fotográfica').slice(0, 100),
     totalPrice: finalPrice,
-    locationType: locationType === 'outside' ? 'outside_san_antero' : 'san_antero',
+    locationType: (locationType === 'outside' || locationType === 'outside_san_antero') ? 'outside_san_antero' : 'san_antero',
     specificLocation: sanitizeText(specificLocation || '').slice(0, 150),
     dateTime,
     description: sanitizeText(description || '').slice(0, 500),
@@ -1564,21 +1714,35 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
     return res.status(429).json({ error: 'Límite de envío de correos alcanzado temporalmente. Intenta en unos minutos.' });
   }
   const { type, data } = req.body || {};
+  const payload = (data && typeof data === 'object') ? data : {};
   try {
     if (type === '2fa_code') {
-      const ok = await sendTwoFactorCodeEmail(data?.code, data?.targetEmail);
+      // Invariante de seguridad: un código 2FA JAMÁS acepta targetEmail del cliente; siempre va a ADMIN_EMAIL
+      const ok = await sendTwoFactorCodeEmail(payload.code, getAdminEmail() || 'reservas@sebastiang.app');
       return res.json({ success: ok, message: ok ? 'Código de seguridad 2FA enviado por correo' : 'No se pudo enviar el correo' });
     } else if (type === 'booking_confirmation') {
-      const ok = await sendBookingConfirmedEmail(data.booking, data.customNotes);
+      if (!payload.booking || typeof payload.booking !== 'object') {
+        return res.status(400).json({ error: 'Falta el objeto booking para enviar confirmación.' });
+      }
+      const ok = await sendBookingConfirmedEmail(payload.booking, payload.customNotes);
       return res.json({ success: ok, message: ok ? 'Correo de confirmación enviado' : 'No se pudo enviar el correo' });
     } else if (type === 'session_completed') {
-      const ok = await sendSessionCompletedEmail(data.booking, data.customNotes);
+      if (!payload.booking || typeof payload.booking !== 'object') {
+        return res.status(400).json({ error: 'Falta el objeto booking para notificar sesión realizada.' });
+      }
+      const ok = await sendSessionCompletedEmail(payload.booking, payload.customNotes);
       return res.json({ success: ok, message: ok ? 'Correo de sesión realizada enviado' : 'No se pudo enviar el correo' });
     } else if (type === 'photo_delivery') {
-      const ok = await sendPhotoDeliveryEmail(data);
+      if (!payload.clientEmail) {
+        return res.status(400).json({ error: 'Falta clientEmail para enviar la entrega de fotos.' });
+      }
+      const ok = await sendPhotoDeliveryEmail(payload);
       return res.json({ success: ok, message: ok ? 'Fotos enviadas por correo al cliente' : 'No se pudo enviar el correo' });
     } else if (type === 'payment_receipt') {
-      const result = await sendPaymentReceiptEmail(data);
+      if (!payload.booking || typeof payload.booking !== 'object') {
+        return res.status(400).json({ error: 'Falta el objeto booking para emitir comprobante por correo.' });
+      }
+      const result = await sendPaymentReceiptEmail(payload);
       return res.json({
         success: Boolean(result?.sent),
         ...result,
@@ -1587,7 +1751,7 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
           : (result?.reason === 'no_email' ? 'El cliente no tiene correo registrado' : 'No se pudo enviar el correo')
       });
     } else if (type === 'test') {
-      const ok = await sendNewBookingEmails(data?.booking || {
+      const ok = await sendNewBookingEmails(payload.booking || {
         clientName: 'Cliente de Prueba',
         clientWhatsApp: '+57 300 000 0000',
         clientEmail: 'reservas@sebastiang.app',
@@ -1600,8 +1764,8 @@ app.post('/api/send-email', requireAdminAuth, async (req, res) => {
     }
     return res.status(400).json({ error: 'Tipo de correo no soportado' });
   } catch (err) {
-    console.error('Error en /api/send-email:', err);
-    return res.status(500).json({ error: err.message || 'Error interno al enviar correo' });
+    console.error('Error en /api/send-email:', err?.message || err);
+    return res.status(500).json({ error: 'Error interno al enviar correo.' });
   }
 });
 
@@ -1790,6 +1954,11 @@ app.get('/api/gallery/:token/photo/:photoId', async (req, res) => {
   }
   if (!session || session.revoked || session.status === 'revoked') {
     return res.status(404).json({ error: 'Imagen no disponible.' });
+  }
+  const isDelivered = session.status === 'delivered';
+  const isExpired = Boolean(session.expiresAt && new Date(session.expiresAt).getTime() < Date.now());
+  if (isExpired && !isDelivered) {
+    return res.status(410).json({ error: 'El tiempo de visualización de esta galería expiró.' });
   }
   const photo = (session.photos || []).find((p, idx) => (p.id || `photo-${idx + 1}`) === photoId);
   if (!photo) {
@@ -2092,6 +2261,10 @@ app.post('/api/admin/auth', async (req, res) => {
     const priorPayload = verifyAdminToken(priorToken);
     if (priorPayload?.jti) {
       revokeAdminAccessTokenJti(priorPayload.jti);
+      if (isMongoConfigured()) {
+        const remainingMs = Math.max(60 * 1000, (Number(priorPayload.exp) || Date.now()) - Date.now());
+        await revokeDistributedAdminJti(priorPayload.jti, remainingMs).catch(() => {});
+      }
     }
 
     const activeVersion = await getActivePasswordVersionFromStore({ runtimeDB });
@@ -2105,12 +2278,22 @@ app.post('/api/admin/auth', async (req, res) => {
   }
 });
 
-// Cierre de sesión administrativo en servidor: revoca el jti del token activo y limpia la cookie HttpOnly (Hallazgo B4)
+// Cierre de sesión administrativo en servidor: revoca el jti del token activo (local + distribuido en MongoDB) y limpia cookie HttpOnly
 app.post('/api/admin/auth/logout', async (req, res) => {
   const token = readAdminToken(req);
+  if (!verifyCsrfForCookieAuth(req)) {
+    return res.status(403).json({
+      error: 'Solicitud de cierre de sesión bloqueada por protección anti-CSRF.',
+      code: 'CSRF_PROTECTION_REQUIRED'
+    });
+  }
   const payload = verifyAdminToken(token);
   if (payload?.jti) {
     revokeAdminAccessTokenJti(payload.jti);
+    if (isMongoConfigured()) {
+      const remainingMs = Math.max(60 * 1000, (Number(payload.exp) || Date.now()) - Date.now());
+      await revokeDistributedAdminJti(payload.jti, remainingMs).catch(() => {});
+    }
   }
   res.setHeader('Set-Cookie', buildAdminSessionCookieHeader('', { clear: true }));
   return res.json({ success: true, revoked: Boolean(payload?.jti) });
@@ -2285,7 +2468,7 @@ app.post('/api/admin/auth/bio-enroll', requireAdminAuth, async (req, res) => {
 // verificación criptográfica de firma ECDSA P-256 (biometricProof) en el servidor y rotación de token
 app.post('/api/admin/auth/bio-refresh', async (req, res) => {
   const ip = getClientIp(req);
-  const rateCheck = checkRateLimit(ip);
+  const rateCheck = await checkAdminLoginDistributedLimits(ip);
   if (!rateCheck.allowed) {
     return res.status(429).json({
       error: `Demasiados intentos. Bloqueado por ${rateCheck.retryAfterMin} minutos.`,
@@ -2419,11 +2602,13 @@ app.post('/api/admin/auth/bio-refresh', async (req, res) => {
       }
     }
 
+    resetLoginAttempts(ip);
     const freshToken = createAdminToken({ pwd: activeVersion });
     const rotatedBioRefreshToken = createBioRefreshToken({
       pwd: activeVersion,
       cid: enrolledCred.credentialId
     });
+    res.setHeader('Set-Cookie', buildAdminSessionCookieHeader(freshToken));
     return res.json({
       success: true,
       token: freshToken,
@@ -2710,27 +2895,32 @@ app.post('/api/payments', express.json({ limit: '15mb' }), async (req, res) => {
     }
   }
 
+  const parsedAmount = Number(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 50000000) {
+    return res.status(400).json({ error: 'El monto del pago debe ser un valor numérico positivo válido.' });
+  }
+
   const newPayment = {
     id: `pay-${crypto.randomUUID()}`,
     ...(resolvedBookingId ? { bookingId: resolvedBookingId } : {}),
     clientName: verifiedClientName,
-    clientWhatsApp: resolvedWhatsApp,
-    sessionToken: sessionToken || '',
+    clientWhatsApp: sanitizeText(String(resolvedWhatsApp || '')).slice(0, 30),
+    sessionToken: sanitizeText(String(sessionToken || '')).slice(0, 128),
     packageTitle: verifiedPackageTitle,
-    amount: Number(amount) || 0,
-    method: method || 'nequi',
-    reference: (reference || '').trim(),
+    amount: Math.round(parsedAmount),
+    method: sanitizeText(String(method || 'nequi')).slice(0, 40) || 'nequi',
+    reference: sanitizeText(String(reference || '')).slice(0, 120),
     voucherUrl: voucherUrl || null,
-    extraPhotosCount: Number(extraPhotosCount) || 0,
-    printedPhotosCount: Number(printedPhotosCount) || 0,
-    printedPhotos10x15Count: Number(printedPhotos10x15Count) || 0,
-    printedPhotos15x20Count: Number(printedPhotos15x20Count) || 0,
-    retablosCount: Number(retablosCount) || 0,
-    printedSizes: printedSizes || {},
-    paperPhotosSummary: paperPhotosSummary || '',
-    retablosSummary: retablosSummary || '',
-    printedPhotosSummary: printedPhotosSummary || '',
-    concept: concept || 'Sesión Fotográfica',
+    extraPhotosCount: Math.max(0, Math.min(500, Math.floor(Number(extraPhotosCount) || 0))),
+    printedPhotosCount: Math.max(0, Math.min(500, Math.floor(Number(printedPhotosCount) || 0))),
+    printedPhotos10x15Count: Math.max(0, Math.min(500, Math.floor(Number(printedPhotos10x15Count) || 0))),
+    printedPhotos15x20Count: Math.max(0, Math.min(500, Math.floor(Number(printedPhotos15x20Count) || 0))),
+    retablosCount: Math.max(0, Math.min(500, Math.floor(Number(retablosCount) || 0))),
+    printedSizes: (printedSizes && typeof printedSizes === 'object' && !Array.isArray(printedSizes)) ? printedSizes : {},
+    paperPhotosSummary: sanitizeText(String(paperPhotosSummary || '')).slice(0, 300),
+    retablosSummary: sanitizeText(String(retablosSummary || '')).slice(0, 300),
+    printedPhotosSummary: sanitizeText(String(printedPhotosSummary || '')).slice(0, 300),
+    concept: sanitizeText(String(concept || 'Sesión Fotográfica')).slice(0, 120) || 'Sesión Fotográfica',
     // El estado NUNCA se acepta del cliente: solo un administrador autenticado
     // puede marcarlo como verificado (y debe pedirlo explícitamente).
     status: isAdminCaller && status === 'verified' ? 'verified' : 'pending',
@@ -2853,6 +3043,12 @@ app.post('/api/payments/checkout', async (req, res) => {
     if (!booking) {
       return res.status(404).json({ error: 'Reserva no encontrada para asociar el pago.' });
     }
+    if (['cancelled', 'canceled', 'cancelada', 'anulada', 'rejected'].includes(String(booking.status || '').toLowerCase())) {
+      return res.status(400).json({
+        error: 'No se puede iniciar un pago para una reserva cancelada o anulada.',
+        code: 'BOOKING_CANCELLED'
+      });
+    }
   }
 
   let session = null;
@@ -2870,6 +3066,12 @@ app.post('/api/payments/checkout', async (req, res) => {
     const allowDemoCheckout = !isProduction || process.env.ALLOW_DEMO_GALLERY === 'true';
     if (!session && !(sessionToken === 'demo-cliente-2026' && allowDemoCheckout)) {
       return res.status(404).json({ error: 'Sesión no encontrada para asociar el pago.' });
+    }
+    if (session && (session.revoked || session.status === 'revoked')) {
+      return res.status(403).json({
+        error: 'Esta galería fue revocada y no admite pagos.',
+        code: 'SESSION_REVOKED'
+      });
     }
   }
 
@@ -3044,19 +3246,24 @@ app.post('/api/payments/checkout', async (req, res) => {
       });
     }
 
+    const cleanCopAmount = Math.round(Number(amount));
+    if (!Number.isFinite(Number(amount)) || Number(amount) !== cleanCopAmount || cleanCopAmount <= 0) {
+      return res.status(400).json({ error: 'El monto del pago debe ser un número entero positivo en COP.' });
+    }
+
     const reference = generatePaymentReference('wompi');
-    const amountInCents = Number(amount) * 100;
+    const amountInCents = cleanCopAmount * 100;
     const currency = 'COP';
 
     const paymentRecord = {
       id: `pay-wompi-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       bookingId: booking?.id || bookingId || null,
-      sessionToken: sessionToken || '',
-      clientName: (clientName || booking?.clientName || 'Cliente').trim(),
-      clientWhatsApp: (clientWhatsApp || booking?.clientWhatsApp || '').trim(),
-      clientEmail: (clientEmail || booking?.clientEmail || '').trim(),
-      packageTitle: booking?.packageName || 'Sesión Fotográfica',
-      amount: Number(amount),
+      sessionToken: sanitizeText(String(sessionToken || '')).slice(0, 128),
+      clientName: sanitizeText(String(booking?.clientName || session?.clientName || clientName || 'Cliente')).slice(0, 100) || 'Cliente',
+      clientWhatsApp: sanitizeText(String(booking?.clientWhatsApp || session?.clientWhatsApp || clientWhatsApp || '')).slice(0, 30),
+      clientEmail: sanitizeText(String(booking?.clientEmail || clientEmail || '')).slice(0, 100),
+      packageTitle: sanitizeText(String(booking?.packageName || session?.packageTitle || 'Sesión Fotográfica')).slice(0, 100),
+      amount: cleanCopAmount,
       amountInCents,
       currency,
       method: 'wompi',
@@ -3378,7 +3585,24 @@ app.post('/api/payments/webhook', async (req, res) => {
       0
     );
 
-    const priorVerifiedPayments = (runtimeDB.payments || []).filter(p =>
+    let allKnownPayments = Array.isArray(runtimeDB.payments) ? [...runtimeDB.payments] : [];
+    if (isMongoConfigured() && (payment.bookingId || payment.sessionToken)) {
+      try {
+        const orClauses = [];
+        if (payment.bookingId) orClauses.push({ bookingId: payment.bookingId });
+        if (payment.sessionToken) orClauses.push({ sessionToken: payment.sessionToken });
+        const mongoRelatedPayments = await findMongoDocs('payments', { $or: orClauses }, null, 100);
+        if (Array.isArray(mongoRelatedPayments) && mongoRelatedPayments.length > 0) {
+          const pMap = new Map();
+          [...allKnownPayments, ...mongoRelatedPayments].forEach(p => {
+            if (p?.id) pMap.set(p.id, p);
+          });
+          allKnownPayments = [...pMap.values()];
+        }
+      } catch {}
+    }
+
+    const priorVerifiedPayments = allKnownPayments.filter(p =>
       p &&
       p.id !== payment.id &&
       p.reference !== payment.reference &&
@@ -3498,7 +3722,7 @@ app.post('/api/payments/webhook', async (req, res) => {
         url: 'https://sebastiang.app/?mode=admin',
         data: { type: 'payment', paymentId: approvedPayment.id, reference: approvedPayment.reference, transactionId: tx.id }
       }).catch(e => console.warn('OneSignal push error:', e)),
-      approvedBooking && approvedBooking.clientEmail ? sendBookingConfirmedEmail(approvedBooking, runtimeDB.settings).catch(e => console.warn('Email error:', e)) : Promise.resolve()
+      approvedBooking && approvedBooking.clientEmail ? sendBookingConfirmedEmail(approvedBooking, '').catch(e => console.warn('Email error:', e)) : Promise.resolve()
     ]);
 
     return res.status(200).json({ success: true, status: 'APPROVED', reference: approvedPayment.reference });
@@ -3512,11 +3736,37 @@ app.post('/api/payments/webhook', async (req, res) => {
       rejectedAt: new Date().toISOString()
     };
 
+    const isDepositConcept = (payment.concept === 'booking_deposit' || payment.concept === 'abono' || !payment.concept) &&
+      payment.concept !== 'session_balance' &&
+      payment.concept !== 'saldo_galeria';
+
     let bookingToRevert = null;
-    if (payment.bookingId) {
+    if (payment.bookingId && isDepositConcept) {
       const b = await findBookingById(payment.bookingId);
-      if (b) {
-        bookingToRevert = { ...b, depositPaid: false };
+      if (b && b.status === 'pending') {
+        let hasOtherVerifiedDeposit = (runtimeDB.payments || []).some(p =>
+          p &&
+          p.id !== payment.id &&
+          p.bookingId === payment.bookingId &&
+          (p.status === 'verified' || p.status === 'approved') &&
+          p.concept !== 'session_balance' &&
+          p.concept !== 'saldo_galeria'
+        );
+        if (!hasOtherVerifiedDeposit && isMongoConfigured()) {
+          try {
+            const mongoVerified = await findMongoDocs('payments', {
+              bookingId: payment.bookingId,
+              id: { $ne: payment.id },
+              status: { $in: ['verified', 'approved'] }
+            }, null, 10);
+            hasOtherVerifiedDeposit = Array.isArray(mongoVerified) && mongoVerified.some(
+              p => p.concept !== 'session_balance' && p.concept !== 'saldo_galeria'
+            );
+          } catch {}
+        }
+        if (!hasOtherVerifiedDeposit) {
+          bookingToRevert = { ...b, depositPaid: false };
+        }
       }
     }
 
@@ -3564,6 +3814,9 @@ app.post('/api/payments/webhook', async (req, res) => {
 });
 
 app.get('/api/payments/status/:reference', async (req, res) => {
+  if (!checkPublicWriteRateLimit(getClientIp(req), 60, 'payment-status')) {
+    return res.status(429).json({ error: 'Demasiadas consultas de estado de pago. Intenta en unos segundos.' });
+  }
   const { reference } = req.params;
   if (!reference) return res.status(400).json({ error: 'Referencia requerida.' });
 
@@ -3853,8 +4106,17 @@ app.post('/api/admin/sessions', express.json({ limit: '25mb' }), async (req, res
 app.post('/api/admin/sessions/:id/reopen', async (req, res) => {
   if (!requireDurablePersistence(res)) return;
   const { id } = req.params;
-  const { additionalDays = 3, allowReSelection = true } = req.body;
-  const session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
+  const { additionalDays = 3, allowReSelection = true } = req.body || {};
+  let session = (runtimeDB.sessions || []).find(s => s.id === id || s.token === id);
+  if (!session && isMongoConfigured()) {
+    try {
+      const doc = await findMongoDoc('sessions', { $or: [{ id }, { token: id }] });
+      if (doc) {
+        const { _id, ...cleanSession } = doc;
+        session = cleanSession;
+      }
+    } catch {}
+  }
   if (!session) return res.status(404).json({ error: 'Sesión no encontrada.' });
 
   const safeDays = Math.max(-30, Math.min(30, Number(additionalDays) || 3));
@@ -3877,8 +4139,13 @@ app.post('/api/admin/sessions/:id/reopen', async (req, res) => {
     }
   }
 
-  Object.assign(session, candidate);
-  res.json({ success: true, session });
+  const inMem = (runtimeDB.sessions || []).find(s => s.id === session.id || s.token === session.token);
+  if (inMem) Object.assign(inMem, candidate);
+  else {
+    if (!runtimeDB.sessions) runtimeDB.sessions = [];
+    runtimeDB.sessions.push(candidate);
+  }
+  res.json({ success: true, session: candidate });
 });
 
 app.post('/api/admin/sessions/:id/revoke', async (req, res) => {
@@ -3957,11 +4224,22 @@ app.post('/api/admin/sessions/:id/deliver', async (req, res) => {
     ...session,
     status: 'delivered',
     finalDeliveryUrl: cleanDeliveryUrl,
-    deliveryService,
-    deliveryNotes: (deliveryNotes || '').trim(),
+    deliveryService: sanitizeText(String(deliveryService || 'wetransfer')).slice(0, 40) || 'wetransfer',
+    deliveryNotes: sanitizeText(String(deliveryNotes || '')).slice(0, 1000),
     deliveredAt: new Date().toISOString()
   };
   if (Array.isArray(finalPhotos) && finalPhotos.length > 0) {
+    if (finalPhotos.length > 120) {
+      return res.status(400).json({ error: 'Se superó el límite de 120 fotos finales por entrega.' });
+    }
+    for (let i = 0; i < finalPhotos.length; i++) {
+      const item = finalPhotos[i];
+      const photoUrl = typeof item === 'string' ? item : item?.url;
+      const check = validateImagePayload(photoUrl, { maxBytes: DEFAULT_MAX_IMAGE_BYTES });
+      if (!check.valid) {
+        return res.status(400).json({ error: `Foto final #${i + 1} inválida: ${check.error}` });
+      }
+    }
     candidate.finalPhotos = finalPhotos;
   }
 
@@ -3995,12 +4273,7 @@ app.post('/api/admin/settings', async (req, res) => {
       'adminResetChallenge', 'revokedApkDeviceIds', 'revokedBioRefreshJtis',
       'biometricCredentials', 'id', '_id', 'key', '_loadedFromMongo'
     ]);
-    const safeSettings = {};
-    for (const [k, v] of Object.entries(settings)) {
-      if (!FORBIDDEN_SETTINGS_KEYS.has(k) && typeof k === 'string') {
-        safeSettings[k] = v;
-      }
-    }
+    const safeSettings = sanitizeSafeObjectKeys(settings, FORBIDDEN_SETTINGS_KEYS);
     const candidateSettings = { ...runtimeDB.settings, ...safeSettings };
     if (isMongoConfigured()) {
       try {
@@ -4165,6 +4438,9 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
   if (cleanNew.length < 8) {
     return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres para máxima seguridad.' });
   }
+  if (isForbiddenWeakPassword(cleanNew)) {
+    return res.status(400).json({ error: 'La nueva contraseña es demasiado común o repetitiva. Elige una clave más segura.' });
+  }
 
   const activeScrypt = await getActiveAdminScryptHash();
   const effectiveSha = process.env.ADMIN_PIN_HASH || runtimeDB.settings?.adminPinHash || '';
@@ -4205,12 +4481,21 @@ app.post('/api/admin/pin/change', requireAdminAuth, async (req, res) => {
     ip: getClientIp(req)
   }, { runtimeDB, isMongoConfigured, upsertMongoDoc });
 
-  // Alerta de seguridad por correo vía Zoho
+  // Alerta de seguridad por correo vía Zoho (espera acotada máx. 3s para evitar 504 si SMTP tarda)
   const targetEmail = getAdminEmail();
+  let alertTimer = null;
   try {
-    await sendPasswordChangedAlertEmail(targetEmail, { ip: getClientIp(req) });
+    await Promise.race([
+      sendPasswordChangedAlertEmail(targetEmail, { ip: getClientIp(req) }),
+      new Promise(resolve => {
+        alertTimer = setTimeout(resolve, 3000);
+        if (typeof alertTimer.unref === 'function') alertTimer.unref();
+      })
+    ]);
   } catch (alertErr) {
     console.warn('[Seguridad] Advertencia enviando alerta de cambio de clave:', alertErr?.message || alertErr);
+  } finally {
+    if (alertTimer) clearTimeout(alertTimer);
   }
 
   return res.json({
@@ -4359,15 +4644,56 @@ app.get('/api/admin/backup', requireAdminAuth, async (req, res) => {
   }
   const shouldEncrypt = isProduction ? true : explicitEnableEncrypt;
 
+  // Hidratar desde MongoDB Atlas en cold-starts serverless para evitar backups vacíos
+  let backupSettings = runtimeDB.settings || {};
+  let backupPackages = runtimeDB.packages || [];
+  let backupCatalog = runtimeDB.catalog || [];
+  let backupBookings = runtimeDB.bookings || [];
+  let backupPayments = runtimeDB.payments || [];
+  let backupSessions = runtimeDB.sessions || [];
+  let backupReviews = runtimeDB.reviews || [];
+
+  if (isMongoConfigured()) {
+    try {
+      const [mSettings, mPackages, mCatalog, mBookings, mPayments, mSessions, mReviews] = await Promise.all([
+        findMongoDoc('settings', { id: 'app_settings' }),
+        findMongoDocs('packages', {}, null, 200),
+        findMongoDocs('catalog', {}, { createdAt: -1 }, 500),
+        findMongoDocs('bookings', {}, { createdAt: -1 }, 2000),
+        findMongoDocs('payments', {}, { createdAt: -1 }, 2000),
+        findMongoDocs('sessions', {}, { createdAt: -1 }, 1000),
+        findMongoDocs('reviews', {}, { createdAt: -1 }, 1000)
+      ]);
+      const stripId = (arr) => arr.map(({ _id, ...doc }) => doc);
+      if (mSettings && typeof mSettings === 'object') {
+        const { _id, ...cleanSt } = mSettings;
+        backupSettings = { ...backupSettings, ...cleanSt };
+      }
+      if (Array.isArray(mPackages) && mPackages.length > 0) backupPackages = stripId(mPackages);
+      if (Array.isArray(mCatalog) && mCatalog.length > 0) backupCatalog = stripId(mCatalog);
+      if (Array.isArray(mBookings) && mBookings.length > 0) backupBookings = stripId(mBookings);
+      if (Array.isArray(mPayments) && mPayments.length > 0) backupPayments = stripId(mPayments);
+      if (Array.isArray(mSessions) && mSessions.length > 0) backupSessions = stripId(mSessions);
+      if (Array.isArray(mReviews) && mReviews.length > 0) backupReviews = stripId(mReviews);
+    } catch (eMongo) {
+      recordOperationalEvent('mongoErrors', `Fallo cargando colecciones de MongoDB para backup: ${eMongo?.message || eMongo}`, 'high');
+      if (isProduction) {
+        return res.status(503).json({
+          error: 'No se pudo obtener una instantánea consistente desde MongoDB Atlas. Intenta nuevamente.'
+        });
+      }
+    }
+  }
+
   // Sanitizar estrictamente: nunca exportar hashes de PIN, retos de reseteo ni secretos
   const cleanSnapshot = sanitizeBackupSnapshot({
-    settings: runtimeDB.settings || {},
-    packages: runtimeDB.packages || [],
-    catalog: runtimeDB.catalog || [],
-    bookings: runtimeDB.bookings || [],
-    payments: runtimeDB.payments || [],
-    sessions: runtimeDB.sessions || [],
-    reviews: runtimeDB.reviews || []
+    settings: backupSettings,
+    packages: backupPackages,
+    catalog: backupCatalog,
+    bookings: backupBookings,
+    payments: backupPayments,
+    sessions: backupSessions,
+    reviews: backupReviews
   });
 
   recordOperationalEvent('backupExports', `Backup exportado por admin (${shouldEncrypt ? 'AES-256-GCM' : 'JSON'})`, 'info');
@@ -4613,7 +4939,7 @@ app.post('/api/admin/backup/restore', express.json({ limit: '25mb' }), requireAd
         indexReport = await ensureMongoIndexes();
 
         if (!indexReport || indexReport.verified !== true) {
-          throw new Error('Fallo al verificar los 19 índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
+          throw new Error('Fallo al verificar los 22 índices de seguridad en MongoDB Atlas tras restaurar el respaldo.');
         }
       } catch (eMongo) {
         console.error('❌ [Restore] Fallo persistiendo respaldo en MongoDB Atlas, ejecutando rollback:', eMongo?.message || eMongo);
@@ -4733,8 +5059,11 @@ app.post('/api/admin/backup/restore', express.json({ limit: '25mb' }), requireAd
 
 app.get('/api/admin/monitoring/status', requireAdminAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+  const mongoPing = isMongoConfigured()
+    ? await pingMongoDB().catch(() => ({ connected: false }))
+    : { connected: false };
   const report = getOperationalMonitoringReport({
-    mongoConnected: isMongoConfigured(),
+    mongoConnected: Boolean(mongoPing.connected),
     runtimeDB
   });
   return res.json({
@@ -4768,6 +5097,9 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
 
   const webhookUrl = String(process.env.MONITORING_WEBHOOK_URL || '').trim();
   if (webhookUrl.startsWith('https://')) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    if (typeof timer.unref === 'function') timer.unref();
     try {
       const whRes = await fetch(webhookUrl, {
         method: 'POST',
@@ -4777,13 +5109,16 @@ app.post('/api/admin/monitoring/test-alert', requireAdminAuth, async (req, res) 
           event: 'operational_alert_drill',
           reason,
           timestamp: new Date().toISOString()
-        })
+        }),
+        signal: controller.signal
       });
       channels.webhookExternal = whRes.ok;
-    } catch {}
+    } catch {} finally {
+      clearTimeout(timer);
+    }
   }
 
-  recordOperationalEvent('backupExports', `Simulacro de alerta operacional ejecutado: ${reason}`, 'info');
+  recordOperationalEvent('monitoringDrills', `Simulacro de alerta operacional ejecutado: ${reason}`, 'info');
   const auditEntry = await recordFinancialAuditLog({
     action: 'monitoring_alert_drill',
     actor: 'admin',
@@ -5226,7 +5561,9 @@ export function verifyBotWebhookSignature(req) {
   if (!rawSigHeader) return false;
 
   const cleanReceivedSig = rawSigHeader.replace(/^sha256=/i, '');
-  const payloadStr = typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {});
+  const payloadStr = typeof req.rawBody === 'string' && req.rawBody.length > 0
+    ? req.rawBody
+    : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
   const expectedSig = crypto.createHmac('sha256', secret).update(payloadStr).digest('hex');
   return secureCompare(cleanReceivedSig, expectedSig);
 }
@@ -5243,7 +5580,7 @@ app.all('/api/bot-webhook', async (req, res) => {
   }
   try {
     const rawMsg = (req.body?.query?.message || req.body?.message || req.query?.message || '').trim();
-    const sender = (req.body?.query?.sender || req.body?.sender || req.query?.sender || 'Cliente').trim();
+    const sender = sanitizeText(String(req.body?.query?.sender || req.body?.sender || req.query?.sender || 'Cliente')).slice(0, 60) || 'Cliente';
     const cleanMsg = rawMsg.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
     const packages = Array.isArray(runtimeDB.packages) && runtimeDB.packages.length > 0 ? runtimeDB.packages : [
@@ -5261,7 +5598,7 @@ app.all('/api/bot-webhook', async (req, res) => {
     } else if (cleanMsg === '2' || cleanMsg.includes('reservar') || cleanMsg.includes('agendar')) {
       replyText = `🗓️ *¡EXCELENTE DECISIÓN!*\n🌐 Reserva en la web: https://sebastiang.app/#reservar\n💬 O envía: Nombre, Fecha, Paquete, Locación.`;
     } else if (cleanMsg === '3' || cleanMsg.includes('foto') || cleanMsg.includes('portafolio')) {
-      replyText = `🎨 *CONOCE NUESTRO TRABAJO:*\n👉 https://sebastiang.app\nInstagram: @sebastiang_fotos`;
+      replyText = `🎨 *CONOCE NUESTRO TRABAJO:*\n👉 https://sebastiang.app\nInstagram: @sgarces01`;
     } else if (cleanMsg === '4' || cleanMsg.includes('nequi') || cleanMsg.includes('pago')) {
       const configuredPhone = (runtimeDB.settings?.photographerWhatsApp || process.env.PHOTOGRAPHER_WHATSAPP || '').trim();
       replyText = `💳 *MEDIOS DE PAGO OFICIALES:*\n🟣 Nequi / DaviPlata${configuredPhone ? `: ${configuredPhone}` : ''}\n🟡 Dale!: @SGG04\n🌐 Pasarela segura en línea: https://sebastiang.app`;
@@ -5380,14 +5717,14 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
     const colName = table;
     const clientIp = getClientIp(req);
     if (op === 'select') {
-      // Hallazgo #11 (P1-8): Paginación obligatoria (máximo 200 documentos) y registro de auditoría en lecturas de /api/admin/db
+      // Hallazgo #11 (P1-8): Paginación obligatoria (máximo 200 documentos, skip acotado nativamente en MongoDB)
       const rawLimit = Number(req.body?.limit);
       const safeLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, Math.floor(rawLimit)) : 100;
       const rawSkip = Number(req.body?.skip);
-      const safeSkip = Number.isFinite(rawSkip) && rawSkip >= 0 ? Math.floor(rawSkip) : 0;
+      const safeSkip = Number.isFinite(rawSkip) && rawSkip >= 0 ? Math.min(5000, Math.floor(rawSkip)) : 0;
 
-      const docs = await findMongoDocs(colName, safeMatch, { createdAt: -1 }, safeLimit + safeSkip);
-      const paginatedDocs = (docs || []).slice(safeSkip, safeSkip + safeLimit).map(({ _id, ...d }) => d);
+      const docs = await findMongoDocs(colName, safeMatch, { createdAt: -1 }, safeLimit, { skip: safeSkip });
+      const paginatedDocs = (docs || []).map(({ _id, ...d }) => d);
 
       await recordFinancialAuditLog({
         action: 'admin_db_select',
@@ -5407,6 +5744,9 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
     } else if (op === 'upsert' || op === 'insert') {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para insertar/actualizar.' });
+      }
+      if (hasUnsafeMongoOrProtoKeys(payload)) {
+        return res.status(400).json({ error: 'El payload contiene claves prohibidas ($ o prototipo).', code: 'INVALID_DB_PAYLOAD' });
       }
       for (const [pk, pv] of Object.entries(payload)) {
         if (typeof pv === 'string' && (pv.trim().toLowerCase().startsWith('javascript:') || pv.trim().toLowerCase().startsWith('data:text/html'))) {
@@ -5435,6 +5775,9 @@ app.post('/api/admin/db', requireAdminAuth, async (req, res) => {
     } else if (op === 'update') {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return res.status(400).json({ error: 'Se requiere un objeto "payload" válido para actualizar.' });
+      }
+      if (hasUnsafeMongoOrProtoKeys(payload)) {
+        return res.status(400).json({ error: 'El payload contiene claves prohibidas ($ o prototipo).', code: 'INVALID_DB_PAYLOAD' });
       }
       for (const [pk, pv] of Object.entries(payload)) {
         if (typeof pv === 'string' && (pv.trim().toLowerCase().startsWith('javascript:') || pv.trim().toLowerCase().startsWith('data:text/html'))) {
@@ -5549,6 +5892,27 @@ app.delete('/api/admin/vip/:id', requireAdminAuth, async (req, res) => {
     id: raw,
     deleted: Boolean(deleteResult.deletedCount > 0 || existedInMem),
     message: 'Cliente VIP eliminado o ya inexistente (idempotente).'
+  });
+});
+
+// Manejador global de errores JSON (sin filtrar trazas internas ni responder HTML crudo)
+app.use((err, req, res, next) => {
+  if (!err) return next();
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({
+      error: 'El tamaño de la solicitud excede el límite permitido.',
+      code: 'PAYLOAD_TOO_LARGE'
+    });
+  }
+  if (err.type === 'entity.parse.failed' || (err instanceof SyntaxError && err.status === 400 && 'body' in err)) {
+    return res.status(400).json({
+      error: 'El cuerpo JSON de la solicitud está mal formado.',
+      code: 'INVALID_JSON'
+    });
+  }
+  recordOperationalEvent('apiExceptions', `Excepción Express en ${req.method} ${req.path}: ${err?.message || 'unknown'}`, 'error');
+  return res.status(500).json({
+    error: 'Error interno procesando la solicitud.'
   });
 });
 

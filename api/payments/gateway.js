@@ -43,12 +43,16 @@ export function generateWompiSignature({ reference, amountInCents, currency = 'C
  * @param {string} path
  * @returns {string}
  */
+const FORBIDDEN_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function resolvePropertyPath(obj, path) {
-  if (!obj || typeof path !== 'string') return '';
+  if (!obj || typeof obj !== 'object' || typeof path !== 'string' || !path.trim()) return '';
   const parts = path.split('.');
   let current = obj;
   for (const part of parts) {
-    if (current === null || current === undefined) return '';
+    if (!part || FORBIDDEN_PATH_SEGMENTS.has(part)) return '';
+    if (current === null || current === undefined || typeof current !== 'object') return '';
+    if (!Object.prototype.hasOwnProperty.call(current, part)) return '';
     current = current[part];
   }
   return current === null || current === undefined ? '' : String(current);
@@ -83,7 +87,16 @@ export function verifyWompiChecksum({
   }
 
   const { signature, timestamp, data } = eventPayload;
-  if (!signature || !Array.isArray(signature.properties) || !signature.checksum || timestamp === undefined || timestamp === null) {
+  if (
+    !signature ||
+    !Array.isArray(signature.properties) ||
+    signature.properties.length === 0 ||
+    !signature.properties.every((p) => typeof p === 'string' && p.trim().length > 0) ||
+    typeof signature.checksum !== 'string' ||
+    !signature.checksum.trim() ||
+    timestamp === undefined ||
+    timestamp === null
+  ) {
     return false;
   }
 

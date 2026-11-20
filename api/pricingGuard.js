@@ -28,11 +28,14 @@ export function phoneKey(value) {
  * Coincide si el teléfono aparece en una reserva o en una sesión anterior.
  * Se evalúa SIEMPRE en el servidor: el descuento no se acepta del navegador.
  */
+const CANCELLED_STATUSES = new Set(['cancelled', 'cancelada', 'anulada', 'rejected']);
+
 export function isReturningClient({ bookings = [], sessions = [], phone } = {}) {
   const key = phoneKey(phone);
   if (!key) return false;
 
   const match = (list, field) => (Array.isArray(list) ? list : []).some(item => {
+    if (CANCELLED_STATUSES.has(String(item?.status || '').toLowerCase())) return false;
     const other = phoneKey(item?.[field]);
     return other && (other.endsWith(key) || key.endsWith(other));
   });

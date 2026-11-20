@@ -7,6 +7,24 @@ function safeErrorMessage(err) {
   return raw.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]');
 }
 
+function sanitizeSubject(str) {
+  return String(str ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+function safeNoteText(notes) {
+  return typeof notes === 'string' ? notes.trim() : '';
+}
+
+function sanitizeHttpsUrl(rawUrl, fallback = 'https://sebastiang.app') {
+  try {
+    const parsed = new URL(String(rawUrl || '').trim());
+    if (parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {}
+  return fallback;
+}
+
 // ==============================================================================
 // CONFIGURACIÓN SMTP CON ZOHO MAIL
 // ==============================================================================
@@ -33,7 +51,10 @@ function getZohoConfig() {
     host,
     port,
     secure: port === 465,
-    auth: { user, pass }
+    auth: { user, pass },
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 8000
   };
 }
 
@@ -185,7 +206,7 @@ export async function sendNewBookingEmails(booking, settings = {}) {
     await transporter.sendMail({
       from: '"Sebastian G • Reservas" <reservas@sebastiang.app>',
       to: 'reservas@sebastiang.app',
-      subject: `🔔 Nueva Reserva: ${booking.clientName} • ${booking.packageName}`,
+      subject: sanitizeSubject(`🔔 Nueva Reserva: ${booking.clientName || 'Cliente'} • ${booking.packageName || 'Sesión'}`),
       html: adminHtml
     });
     results.adminSent = true;
@@ -268,17 +289,20 @@ export async function sendPaymentReceiptEmail({
 
   const rawName = (booking.clientName || 'Cliente').trim();
   const firstName = escapeHtml(rawName.split(' ')[0] || rawName);
-  const voucherNum = `REC-${String(booking.id || '001').replace(/\\D/g, '').slice(-5).padStart(5, '0')}`;
+  const voucherNum = `REC-${String(booking.id || '001').replace(/\D/g, '').slice(-5).padStart(5, '0')}`;
   const isOutside = booking.locationType === 'outside_san_antero' || booking.locationType === 'outside';
   const loc = escapeHtml(booking.specificLocation || (isOutside ? 'Locación con Desplazamiento' : 'Locación Acordada'));
-  const packageName = escapeHtml(booking.packageName || 'Sesión Fotográfica');
+  const rawPackageName = String(booking.packageName || 'Sesión Fotográfica').trim();
+  const packageName = escapeHtml(rawPackageName);
   const dateTime = escapeHtml(booking.dateTime || 'Por coordinar');
 
-  const receiptUrl = `https://sebastiang.app/#recibo=${booking.receiptToken || booking.id}&paid=${actualPaid}&method=${encodeURIComponent(paymentMethod)}`;
+  const receiptUrl = `https://sebastiang.app/#recibo=${encodeURIComponent(String(booking.receiptToken || booking.id || ''))}&paid=${encodeURIComponent(String(actualPaid))}&method=${encodeURIComponent(String(paymentMethod || 'Nequi'))}`;
 
-  const subject = isFull
-    ? `🏆 Comprobante Oficial de Pago (Paz y Salvo 100%) • ${voucherNum} • Sebastian G`
-    : `🧾 Comprobante Oficial de Abono • Reserva #${voucherNum} (${packageName}) • Sebastian G`;
+  const subject = sanitizeSubject(
+    isFull
+      ? `🏆 Comprobante Oficial de Pago (Paz y Salvo 100%) • ${voucherNum} • Sebastian G`
+      : `🧾 Comprobante Oficial de Abono • Reserva #${voucherNum} (${rawPackageName}) • Sebastian G`
+  );
 
   const statusBadge = isFull
     ? `<div style="background-color: #064e3b; border: 1px solid #059669; padding: 12px 16px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
@@ -361,7 +385,7 @@ export async function sendPaymentReceiptEmail({
 
     <!-- Botón de Consulta Web -->
     <div style="text-align: center; margin: 30px 0 15px;">
-      <a href="${receiptUrl}" style="display: inline-block; background: linear-gradient(135deg, #d97706, #b45309); color: #ffffff; font-weight: 800; font-size: 14px; padding: 14px 28px; border-radius: 10px; text-decoration: none; box-shadow: 0 4px 15px rgba(217, 119, 6, 0.35);">
+      <a href="${escapeHtml(receiptUrl)}" style="display: inline-block; background: linear-gradient(135deg, #d97706, #b45309); color: #ffffff; font-weight: 800; font-size: 14px; padding: 14px 28px; border-radius: 10px; text-decoration: none; box-shadow: 0 4px 15px rgba(217, 119, 6, 0.35);">
         📄 Ver Comprobante Digital Interactivo
       </a>
       <p style="color: #a8a29e; font-size: 12px; margin-top: 10px;">
@@ -433,10 +457,10 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📍 <strong>Locación:</strong> ${loc}</p>
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📦 <strong>Paquete:</strong> ${escapeHtml(booking.packageName)}</p>
       </div>
-      ${customNotes && customNotes.trim() ? `
+      ${safeNoteText(customNotes) ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Nota de Sebastian G:</span>
-        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(customNotes.trim())}"</p>
+        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(safeNoteText(customNotes))}"</p>
       </div>` : ''}
       <div style="background-color: #172554; border-left: 4px solid #3b82f6; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #93c5fd; font-weight: bold; font-size: 13px;">💡 Consejos para el día de tu sesión:</span>
@@ -455,7 +479,7 @@ export async function sendBookingConfirmedEmail(booking, customNotes = '') {
     await transporter.sendMail({
       from: '"Sebastian G • Fotografía" <reservas@sebastiang.app>',
       to: booking.clientEmail.trim(),
-      subject: `🎉 ¡Cita Confirmada! Tu Sesión con Sebastian G (${booking.dateTime})`,
+      subject: sanitizeSubject(`🎉 ¡Cita Confirmada! Tu Sesión con Sebastian G (${booking.dateTime || 'Por coordinar'})`),
       html
     });
 
@@ -502,10 +526,10 @@ export async function sendSessionCompletedEmail(booking, customNotes = '') {
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📍 <strong>Locación:</strong> ${loc}</p>
         <p style="margin: 6px 0; color: #d6d3d1; font-size: 14px;">📦 <strong>Paquete:</strong> ${pkgName}</p>
       </div>
-      ${customNotes && customNotes.trim() ? `
+      ${safeNoteText(customNotes) ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Mensaje de Sebastian G:</span>
-        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(customNotes.trim())}"</p>
+        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(safeNoteText(customNotes))}"</p>
       </div>` : ''}
       <div style="background-color: #172554; border-left: 4px solid #3b82f6; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #93c5fd; font-weight: bold; font-size: 13px;">⏳ ¿Qué sigue ahora?</span>
@@ -566,14 +590,14 @@ export async function sendPhotoDeliveryEmail({ clientName, clientEmail, packageN
         Para que tus fotos conserven el 100% de nitidez, color y resolución original (sin la compresión que aplica WhatsApp), puedes descargarlas directamente en el siguiente botón:
       </p>
       <div style="text-align: center; margin: 30px 0;">
-        <a href="${downloadUrl}" style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; font-weight: 800; font-size: 16px; padding: 15px 32px; border-radius: 12px; text-decoration: none; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);">
+        <a href="${escapeHtml(sanitizeHttpsUrl(downloadUrl))}" style="display: inline-block; background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; font-weight: 800; font-size: 16px; padding: 15px 32px; border-radius: 12px; text-decoration: none; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);">
           📥 Descargar Mis Fotos en Máxima Calidad
         </a>
       </div>
-      ${customNotes && customNotes.trim() ? `
+      ${safeNoteText(customNotes) ? `
       <div style="background-color: #292524; border-left: 4px solid #f59e0b; padding: 14px; border-radius: 8px; margin: 20px 0;">
         <span style="color: #f59e0b; font-weight: bold; font-size: 13px; text-transform: uppercase;">📝 Nota de Sebastian G:</span>
-        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(customNotes.trim())}"</p>
+        <p style="margin: 6px 0 0; color: #f5f5f4; font-size: 14px; font-style: italic;">"${escapeHtml(safeNoteText(customNotes))}"</p>
       </div>` : ''}
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
         <p style="margin: 0; color: #a8a29e; font-size: 12px; line-height: 1.5;">
@@ -623,7 +647,7 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = process.env.ADM
       </p>
       <div style="text-align: center; margin: 30px 0;">
         <div style="display: inline-block; background: #0c0a09; border: 2px solid #f59e0b; padding: 16px 36px; border-radius: 16px; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #f59e0b; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.25);">
-          ${code}
+          ${escapeHtml(code)}
         </div>
       </div>
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
@@ -634,13 +658,16 @@ export async function sendTwoFactorCodeEmail(code, targetEmail = process.env.ADM
       </div>
     `);
 
-    await transporter.sendMail({
+    const mailOpts2fa = {
       from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
       to: dest,
-      bcc: 'reservas@sebastiang.app',
       subject: `🔐 Código de Seguridad 2FA • Sebastian G`,
       html
-    });
+    };
+    if (dest.toLowerCase() !== 'reservas@sebastiang.app') {
+      mailOpts2fa.bcc = 'reservas@sebastiang.app';
+    }
+    await transporter.sendMail(mailOpts2fa);
 
     console.log('✓ Código 2FA enviado por correo a:', maskEmail(dest));
     return true;
@@ -674,7 +701,7 @@ export async function sendPasswordResetCodeEmail(code, targetEmail = process.env
       </p>
       <div style="text-align: center; margin: 30px 0;">
         <div style="display: inline-block; background: #0c0a09; border: 2px solid #f59e0b; padding: 16px 36px; border-radius: 16px; font-family: monospace; font-size: 34px; font-weight: 900; letter-spacing: 8px; color: #f59e0b; box-shadow: 0 8px 30px rgba(245, 158, 11, 0.25);">
-          ${code}
+          ${escapeHtml(code)}
         </div>
       </div>
       <div style="background-color: #0c0a09; border: 1px solid #292524; border-radius: 12px; padding: 14px 18px; margin: 20px 0;">
@@ -685,13 +712,16 @@ export async function sendPasswordResetCodeEmail(code, targetEmail = process.env
       </div>
     `);
 
-    await transporter.sendMail({
+    const mailOptsReset = {
       from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
       to: dest,
-      bcc: 'reservas@sebastiang.app',
       subject: `🔐 Código para Recuperar Contraseña • Sebastian G`,
       html
-    });
+    };
+    if (dest.toLowerCase() !== 'reservas@sebastiang.app') {
+      mailOptsReset.bcc = 'reservas@sebastiang.app';
+    }
+    await transporter.sendMail(mailOptsReset);
 
     console.log('✓ Código de recuperación enviado por correo a:', maskEmail(dest));
     return true;
@@ -734,13 +764,16 @@ export async function sendPasswordChangedAlertEmail(targetEmail = process.env.AD
       </p>
     `);
 
-    await transporter.sendMail({
+    const mailOptsAlert = {
       from: '"Seguridad Sebastian G" <reservas@sebastiang.app>',
       to: dest,
-      bcc: 'reservas@sebastiang.app',
       subject: `⚠️ Tu Contraseña de Administrador fue Cambiada • Sebastian G`,
       html
-    });
+    };
+    if (dest.toLowerCase() !== 'reservas@sebastiang.app') {
+      mailOptsAlert.bcc = 'reservas@sebastiang.app';
+    }
+    await transporter.sendMail(mailOptsAlert);
 
     console.log('✓ Alerta de seguridad (contraseña cambiada) enviada por correo a:', maskEmail(dest));
     return true;

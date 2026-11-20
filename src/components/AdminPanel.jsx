@@ -152,7 +152,8 @@ import {
   getRetabloSizes,
   calculateRetablosFinancials,
   DEFAULT_RETABLO_COSTS,
-  clearAdminSession
+  clearAdminSession,
+  logoutAdminSession
 } from '../services/api';
 import { computeBookingPaymentStatus } from '../services/financials';
 
@@ -745,7 +746,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       ? `https://api.whatsapp.com/send?phone=${targetPhone}&text=${encodeURIComponent(text)}`
       : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
 
-    window.open(url, '_blank');
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const handleCopyAdminQuoteText = (fullCatalog = false) => {
@@ -767,7 +768,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       return;
     }
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
-    window.open(url, '_blank');
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const handleCopyStandalonePackagesLink = () => {
@@ -780,8 +781,8 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
   };
 
-  // Datos del sistema inicializados con respaldo seguro para carga instantánea
-  const [bookings, setBookings] = useState(DEMO_DEFAULT_BOOKINGS);
+  // Datos del sistema inicializados vacíos hasta hidratar MongoDB Atlas (sin inyectar reservas demo)
+  const [bookings, setBookings] = useState([]);
   const [editingBooking, setEditingBooking] = useState(null);
   const [isSavingBooking, setIsSavingBooking] = useState(false);
 
@@ -881,7 +882,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
       }, 300);
     } catch (e) {
       try {
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener,noreferrer');
       } catch (err) {
         console.warn('Error abriendo WhatsApp:', err);
       }
@@ -1451,9 +1452,9 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
         }
       };
 
-      const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value) && bRes.value.length > 0 
-        ? bRes.value 
-        : DEMO_DEFAULT_BOOKINGS;
+      const bData = bRes.status === 'fulfilled' && Array.isArray(bRes.value)
+        ? bRes.value
+        : [];
 
       setBookings(prev => {
         const rawDel = getDeletedBookingIds();
@@ -1995,13 +1996,10 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     setTimeout(() => setPriceSaveSuccess(''), 5000);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (confirm('¿Deseas cerrar la sesión del panel?')) {
       forgetTrustedDevice();
-      clearAdminSession();
-      try {
-        fetch('/api/admin/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
-      } catch (e) {}
+      await logoutAdminSession();
       setIsAuthenticated(false);
       setPinInput('');
       setIsTwoFactorStep(false);
@@ -2851,7 +2849,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const total = Number(receiptBooking.totalPrice || 0);
     const paid = Number(receiptPaidAmount || 0);
     const prevPayments = (payments || []).filter(
-      p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+      p => (String(p.bookingId || '') === String(receiptBooking.id) || String(p.sessionToken || '') === String(receiptBooking.id)) && p.status !== 'rejected'
     );
     const prevPaid = prevPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     const isTotal = receiptType === 'total';
@@ -3211,7 +3209,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     const total = Number(receiptBooking.totalPrice || 0);
     const paid = Number(receiptPaidAmount || 0);
     const prevPayments = (payments || []).filter(
-      p => String(p.sessionToken) === String(receiptBooking.id) && p.status !== 'rejected'
+      p => (String(p.bookingId || '') === String(receiptBooking.id) || String(p.sessionToken || '') === String(receiptBooking.id)) && p.status !== 'rejected'
     );
     const prevPaid = prevPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     const isTotalType = receiptType === 'total';
@@ -4254,7 +4252,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
     }
 
     const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
-    window.open(waUrl, '_blank');
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -10475,7 +10473,7 @@ export default function AdminPanel({ onOpenGalleryToken, onCatalogUpdated, onBac
                     <h4 className="text-sm font-bold text-white">Diagnóstico Rápido del Auditor Autónomo</h4>
                     <p className="text-xs text-stone-300 mt-0.5 leading-relaxed">
                       {auditErrors.length === 0 && (auditConflicts?.conflictsCount || 0) === 0
-                        ? 'Tu aplicación está en un estado óptimo. Todas las fotos cargan rápido, la base de datos Supabase responde de forma estable y no hay referencias de dinero cruzadas.'
+                        ? 'Tu aplicación está en un estado óptimo. Todas las fotos cargan rápido, la base de datos MongoDB Atlas responde de forma estable y no hay referencias de dinero cruzadas.'
                         : `El sistema ha identificado ${(auditConflicts?.conflictsCount || 0)} conflicto(s) de pagos y ${auditErrors.length} alerta(s) técnica(s). Haz clic en las pestañas superiores para resolverlos con 1 clic.`}
                     </p>
                   </div>

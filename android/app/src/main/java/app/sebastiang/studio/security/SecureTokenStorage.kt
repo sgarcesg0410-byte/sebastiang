@@ -28,6 +28,8 @@ class SecureTokenStorage(context: Context) {
 
     fun getDeviceToken(): String? = prefs.getString(KEY_DEVICE_TOKEN, null)
 
+    fun hasDeviceToken(): Boolean = !getDeviceToken().isNullOrBlank()
+
     fun clearDeviceToken() {
         prefs.edit().remove(KEY_DEVICE_TOKEN).apply()
     }

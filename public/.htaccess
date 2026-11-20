@@ -1,10 +1,13 @@
-# Cabeceras de seguridad HTTP robustas (Hallazgo #8)
+# Cabeceras de seguridad HTTP robustas (alineadas con vercel.json y api/index.js)
 <IfModule mod_headers.c>
   Header always set X-Frame-Options "SAMEORIGIN"
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
   Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set Cross-Origin-Resource-Policy "same-origin"
+  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: https://images.unsplash.com https://*.googleusercontent.com https://drive.google.com https://i.imgur.com https://*.cloudinary.com https://sebastiang.app https://www.sebastiang.app; script-src 'self' https://cdn.onesignal.com https://onesignal.com https://checkout.wompi.co; connect-src 'self' https://onesignal.com https://api.onesignal.com https://cdn.onesignal.com https://checkout.wompi.co https://*.wompi.co; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://checkout.wompi.co; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self' https://checkout.wompi.co https://onesignal.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests; frame-ancestors 'self'"
 </IfModule>
 
 <IfModule mod_rewrite.c>
@@ -22,11 +25,10 @@
   AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
 </IfModule>
 
-# Caché óptimo para imágenes y APK
+# Caché óptimo para imágenes
 <IfModule mod_expires.c>
   ExpiresActive On
   ExpiresByType image/jpeg "access plus 1 month"
   ExpiresByType image/png "access plus 1 month"
   ExpiresByType image/webp "access plus 1 month"
-  ExpiresByType application/vnd.android.package-archive "access plus 1 hour"
 </IfModule>

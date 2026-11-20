@@ -103,10 +103,11 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
 
     try {
       await ensureWompiWidgetLoaded();
+      const depositAmount = Math.min(20000, Math.max(1500, Number(submittedBooking.totalPrice) || 20000));
       const res = await createWompiCheckout({
         bookingId: submittedBooking.id,
         concept: 'booking_deposit',
-        amount: 20000,
+        amount: depositAmount,
         clientName: submittedBooking.clientName,
         clientWhatsApp: submittedBooking.clientWhatsApp,
         clientEmail: submittedBooking.clientEmail
@@ -119,11 +120,23 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
           reference: res.reference,
           publicKey: res.publicKey,
           signature: { integrity: res.signature },
-          redirectUrl: `https://sebastiang.app/?payment_success=true&ref=${res.reference}`
+          redirectUrl: `https://sebastiang.app/?payment_success=true&ref=${encodeURIComponent(res.reference)}`
         });
         checkout.open(() => {});
       } else if (res.checkoutUrl) {
-        window.open(res.checkoutUrl, '_blank') || (window.location.href = res.checkoutUrl);
+        let safeCheckoutUrl = '';
+        try {
+          const parsedCheckout = new URL(res.checkoutUrl);
+          if (parsedCheckout.protocol === 'https:' && parsedCheckout.hostname === 'checkout.wompi.co') {
+            safeCheckoutUrl = parsedCheckout.toString();
+          }
+        } catch {
+          safeCheckoutUrl = '';
+        }
+        if (!safeCheckoutUrl) {
+          throw new Error('URL de pasarela inválida.');
+        }
+        window.open(safeCheckoutUrl, '_blank', 'noopener,noreferrer') || (window.location.href = safeCheckoutUrl);
       }
     } catch (err) {
       console.error('Error iniciando pago Wompi:', err);
@@ -458,6 +471,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
         locationType: formData.locationType,
         specificLocation: formData.specificLocation.trim(),
         dateTime: formattedDateTime,
+        description: (formData.description || '').trim(),
         printedPhotosCount: paperPhotosCount,
         printedPhotos10x15Count: Number(formData.printedSizes?.['10x15'] ?? formData.printedPhotosCount ?? 0),
         printedPhotos15x20Count: Number(formData.printedSizes?.['15x20'] ?? formData.printedPhotos15x20Count ?? 0),
@@ -469,6 +483,9 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
       };
 
       const result = await createBooking(bookingPayload);
+      if (!result || result.success === false || !result.booking) {
+        throw new Error(result?.error || 'No se pudo completar tu reserva. Verifica que el horario siga disponible e intenta de nuevo.');
+      }
 
       try {
         confetti({
@@ -495,7 +512,7 @@ export default function BookingModal({ isOpen, onClose, packages = [], preselect
           if (isMobile) {
             window.location.href = result.directWhatsAppUrl;
           } else {
-            const win = window.open(result.directWhatsAppUrl, '_blank');
+            const win = window.open(result.directWhatsAppUrl, '_blank', 'noopener,noreferrer');
             if (!win || win.closed || typeof win.closed === 'undefined') {
               window.location.href = result.directWhatsAppUrl;
             }

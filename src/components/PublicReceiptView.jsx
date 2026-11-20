@@ -23,7 +23,7 @@ export default function PublicReceiptView({ bookingId, onBack }) {
       // Se calcula en el servidor a partir de los pagos registrados.
       
       const methodParam = params.get('method') || urlParams.get('method');
-      if (methodParam) setPaymentMethod(decodeURIComponent(methodParam));
+      if (methodParam) setPaymentMethod(String(methodParam).trim().slice(0, 60));
     }
 
     const fetchBooking = async () => {
@@ -36,9 +36,9 @@ export default function PublicReceiptView({ bookingId, onBack }) {
           if (paidAmount === null) {
             const total = Number(found.totalPrice || 0);
             const fromServer = Number(found.paidAmount);
-            setPaidAmount(Number.isFinite(fromServer) && fromServer > 0
+            setPaidAmount(Number.isFinite(fromServer) && fromServer >= 0
               ? fromServer
-              : (found.status === 'completed' ? total : Math.round(total * 0.5)));
+              : (found.status === 'completed' ? total : 0));
           }
         }
       } catch (err) {

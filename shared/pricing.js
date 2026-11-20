@@ -152,15 +152,27 @@ export function resolveLoyaltyDiscountPercent(isLoyal, percent = LOYALTY_DISCOUN
 /**
  * Normaliza los campos de fotos impresas y retablos desde estructuras heredadas o modernas.
  */
+function sanitizePrintQty(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(500, Math.floor(n));
+}
+
 export function normalizePrintedSizes({
   printedSizes,
   printedPhotosCount,
   printedPhotos10x15Count,
   printedPhotos15x20Count
 } = {}) {
-  const result = { ...(printedSizes || {}) };
-  const p10 = Number(printedPhotos10x15Count || printedPhotosCount || 0);
-  const p15 = Number(printedPhotos15x20Count || 0);
+  const result = {};
+  if (printedSizes && typeof printedSizes === 'object' && !Array.isArray(printedSizes)) {
+    for (const [k, v] of Object.entries(printedSizes)) {
+      const q = sanitizePrintQty(v);
+      if (q > 0) result[k] = q;
+    }
+  }
+  const p10 = sanitizePrintQty(printedPhotos10x15Count || printedPhotosCount || 0);
+  const p15 = sanitizePrintQty(printedPhotos15x20Count || 0);
   if (p10 > 0 && result['10x15'] === undefined) result['10x15'] = p10;
   if (p15 > 0 && result['15x20'] === undefined) result['15x20'] = p15;
   return result;
@@ -181,8 +193,13 @@ export function calculateBookingPriceBand({
   loyaltyDiscountPercent = 0
 } = {}) {
   const isOutside = locationType === 'outside' || locationType === 'outside_san_antero';
-  const surchargeApplied = isOutside ? (Number(surcharge) || 10000) : 0;
-  const priceBeforeDiscount = Number(packagePrice) + surchargeApplied;
+  const parsedSurcharge = Number(surcharge);
+  const effectiveSurchargeVal = (surcharge !== undefined && surcharge !== null && Number.isFinite(parsedSurcharge) && parsedSurcharge >= 0)
+    ? parsedSurcharge
+    : 10000;
+  const surchargeApplied = isOutside ? effectiveSurchargeVal : 0;
+  const parsedPkgPrice = Number(packagePrice);
+  const priceBeforeDiscount = (Number.isFinite(parsedPkgPrice) && parsedPkgPrice >= 0 ? parsedPkgPrice : 0) + surchargeApplied;
   const basePrice = priceBeforeDiscount;
 
   const paperCatalog = getPaperPrintSizes(settings);
@@ -200,7 +217,7 @@ export function calculateBookingPriceBand({
   });
 
   for (const item of paperCatalog) {
-    const qty = Number(mergedSizes[item.id] || 0);
+    const qty = sanitizePrintQty(mergedSizes[item.id] || 0);
     if (qty > 0) {
       const subtotal = qty * item.price;
       paperTotal += subtotal;
@@ -209,7 +226,7 @@ export function calculateBookingPriceBand({
   }
 
   for (const item of retabloCatalog) {
-    const qty = Number(mergedSizes[item.id] || 0);
+    const qty = sanitizePrintQty(mergedSizes[item.id] || 0);
     if (qty > 0) {
       const subtotal = qty * item.price;
       retabloTotal += subtotal;

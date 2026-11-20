@@ -76,3 +76,7 @@ scratch/
 # Datos locales y respaldos históricos excluidos del repositorio (Hallazgo B5)
 server/data/db.json
 docs/legacy/
+
+# Nunca publicar binarios APK sin firmar / legados en public/ ni en el repositorio
+public/*.apk
+*.apk

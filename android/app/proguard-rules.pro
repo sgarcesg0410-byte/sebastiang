@@ -1,6 +1,7 @@
 # Reglas de ofuscación y optimización R8/ProGuard para Sebastian G Studio
 
-# Conservar métodos accesibles desde JavaScript vía JavascriptInterface
+# Conservar anotación y métodos accesibles desde JavaScript vía JavascriptInterface
+-keepattributes JavascriptInterface
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }

@@ -51,6 +51,13 @@ export function playPushNotificationChime(type = 'booking') {
       osc2.start(ctx.currentTime + 0.15);
       osc2.stop(ctx.currentTime + 0.56);
     }
+
+    // Liberar AudioContext tras completar el tono para evitar fugas de recursos de audio
+    setTimeout(() => {
+      try {
+        if (ctx.state !== 'closed') ctx.close().catch(() => {});
+      } catch (e) {}
+    }, 800);
   } catch (e) {
     console.warn('Web Audio chime no soportado o bloqueado:', e);
   }
@@ -86,12 +93,15 @@ export function flashDocumentTitle(alertText) {
 
 // Obtener estado actual del permiso de notificaciones
 export function getPushPermissionState() {
-  if (typeof window !== 'undefined' && window.AndroidNotificationBridge) {
+  if (typeof window !== 'undefined' && typeof window.AndroidNotificationBridge?.areNotificationsEnabled === 'function') {
     try {
       return window.AndroidNotificationBridge.areNotificationsEnabled() ? 'granted' : 'default';
     } catch (e) {
       return 'default';
     }
+  }
+  if (typeof window !== 'undefined' && typeof window.electronAPI?.sendNotification === 'function') {
+    return 'granted';
   }
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return 'unsupported';
@@ -101,14 +111,19 @@ export function getPushPermissionState() {
 
 // Solicitar permiso de notificaciones Push al usuario
 export async function requestPushPermission() {
-  if (typeof window !== 'undefined' && window.AndroidNotificationBridge) {
+  if (typeof window !== 'undefined' && typeof window.AndroidNotificationBridge?.requestNotificationPermission === 'function') {
     try {
       window.AndroidNotificationBridge.requestNotificationPermission();
-      const enabled = window.AndroidNotificationBridge.areNotificationsEnabled();
+      const enabled = typeof window.AndroidNotificationBridge.areNotificationsEnabled === 'function'
+        ? window.AndroidNotificationBridge.areNotificationsEnabled()
+        : true;
       return enabled ? 'granted' : 'default';
     } catch (e) {
-      return 'granted';
+      return 'default';
     }
+  }
+  if (typeof window !== 'undefined' && typeof window.electronAPI?.sendNotification === 'function') {
+    return 'granted';
   }
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return 'unsupported';
@@ -154,17 +169,28 @@ export async function sendSystemPushNotification({
           data.type || 'booking',
           whatsappUrl || ''
         );
-      } else {
+        return true;
+      } else if (typeof window.AndroidNotificationBridge.showNotification === 'function') {
         window.AndroidNotificationBridge.showNotification(
           title,
           body,
           tag,
           data.type || 'booking'
         );
+        return true;
       }
-      return true;
     } catch (errBridge) {
       console.warn('Puente nativo Android falló:', errBridge);
+    }
+  }
+
+  // 3b. Puente Nativo Electron Desktop (Windows/macOS)
+  if (typeof window !== 'undefined' && typeof window.electronAPI?.sendNotification === 'function') {
+    try {
+      await window.electronAPI.sendNotification({ title, body });
+      return true;
+    } catch (errElectron) {
+      console.warn('Notificación nativa Electron falló:', errElectron);
     }
   }
 

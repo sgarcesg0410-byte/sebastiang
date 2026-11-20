@@ -407,7 +407,7 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
         if (isMobile) {
           window.location.href = finalUrl;
         } else {
-          const win = window.open(finalUrl, '_blank');
+          const win = window.open(finalUrl, '_blank', 'noopener,noreferrer');
           if (!win || win.closed || typeof win.closed === 'undefined') {
             window.location.href = finalUrl;
           }
@@ -479,9 +479,9 @@ export default function ClientGallery({ token = "demo-cliente-2026", onBackToHom
                   </div>
                 </div>
 
-                {galleryData.finalDeliveryUrl && (
+                {typeof galleryData.finalDeliveryUrl === 'string' && galleryData.finalDeliveryUrl.trim().startsWith('https://') && (
                   <a
-                    href={galleryData.finalDeliveryUrl}
+                    href={galleryData.finalDeliveryUrl.trim()}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2.5 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-stone-950 font-black text-sm sm:text-base py-4 px-6 rounded-2xl shadow-xl shadow-amber-500/25 transition-all active:scale-[0.98] shrink-0"

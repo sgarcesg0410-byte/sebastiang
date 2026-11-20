@@ -35,7 +35,7 @@ export default function PublicReviewView({ onBackToHome }) {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const nameParam = urlParams.get('cliente') || urlParams.get('nombre') || urlParams.get('client');
-      if (nameParam) setClientName(decodeURIComponent(nameParam));
+      if (nameParam) setClientName(String(nameParam).trim().slice(0, 100));
     }
   }, []);
 
@@ -205,7 +205,7 @@ export default function PublicReviewView({ onBackToHome }) {
                   required
                   value={clientName}
                   onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Ej. Jennifer Vásquez"
+                  placeholder="Ej. María Fernanda Gómez"
                   className="w-full bg-stone-950 border border-stone-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500 font-medium placeholder-stone-600"
                 />
               </div>

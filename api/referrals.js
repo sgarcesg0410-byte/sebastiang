@@ -55,9 +55,13 @@ export function validateReferralCode({ code, clientPhone, bookings = [], session
     };
   }
 
+  const CANCELLED_STATUSES = new Set(['cancelled', 'cancelada', 'anulada', 'rejected']);
+  const isActiveRecord = (item) => !CANCELLED_STATUSES.has(String(item?.status || '').toLowerCase());
+
   // 2. Regla: cliente nuevo exclusivamente (los clientes recurrentes ya disfrutan de fidelidad)
   if (clientKey) {
     const isExistingClient = [...bookings, ...sessions].some(item => {
+      if (!isActiveRecord(item)) return false;
       const otherKey = phoneKey(item?.clientWhatsApp);
       return otherKey && (otherKey === clientKey || clientKey.endsWith(otherKey) || otherKey.endsWith(clientKey));
     });
@@ -71,8 +75,9 @@ export function validateReferralCode({ code, clientPhone, bookings = [], session
     }
   }
 
-  // 3. Comprobar existencia del referente en la base de datos
+  // 3. Comprobar existencia del referente en la base de datos (excluyendo reservas canceladas/rechazadas)
   const referrerExists = [...bookings, ...sessions].some(item => {
+    if (!isActiveRecord(item)) return false;
     const otherKey = phoneKey(item?.clientWhatsApp);
     return otherKey && (otherKey === refKey || refDigits.endsWith(otherKey) || otherKey.endsWith(refDigits.slice(-8)));
   });

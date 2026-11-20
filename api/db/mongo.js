@@ -111,7 +111,7 @@ async function deduplicateCollectionByField(database, collectionName, fieldName)
 }
 
 /**
- * Definición canónica de los 19 índices BSON críticos de producción e índices TTL en MongoDB Atlas:
+ * Definición canónica de los 22 índices BSON críticos de producción e índices TTL en MongoDB Atlas:
  * - Unicidad estricta en `bookings.id`, `payments.id`, `payments.reference`, `payments.transactionId`,
  *   `sessions.id`, `sessions.token`, `reviews.id`, `reviews.galleryToken`, `audit_logs.id`, `slot_locks.lockKey` y `rate_limits.key`.
  * - Índice compuesto `{ dateTime: 1, status: 1 }` en `bookings` para detección rápida de cruces de horario.
@@ -737,7 +737,7 @@ export async function updateMongoDoc(collectionName, filter, update, { throwOnEr
 /**
  * Helper seguro para leer documentos de una colección.
  */
-export async function findMongoDocs(collectionName, filter = {}, sort = null, limit = 0, { throwOnError = false } = {}) {
+export async function findMongoDocs(collectionName, filter = {}, sort = null, limit = 0, { throwOnError = false, skip = 0 } = {}) {
   const database = await getMongoDb();
   if (!database) {
     if (throwOnError) {
@@ -748,6 +748,7 @@ export async function findMongoDocs(collectionName, filter = {}, sort = null, li
   try {
     let cursor = database.collection(collectionName).find(filter);
     if (sort) cursor = cursor.sort(sort);
+    if (skip > 0) cursor = cursor.skip(skip);
     if (limit > 0) cursor = cursor.limit(limit);
     return await cursor.toArray();
   } catch (err) {
@@ -825,5 +826,93 @@ export async function deleteMongoDocs(collectionName, filter, { throwOnError = f
     console.warn(`⚠️ [MongoDB] Error eliminando varios (${collectionName}):`, err?.message || err);
     if (throwOnError) throw err;
     return { acknowledged: false, deletedCount: 0 };
+  }
+}
+
+/**
+ * Registra un `jti` de sesión de administrador como revocado en MongoDB Atlas
+ * usando la colección con TTL automático `slot_locks` para revocación distribuida
+ * entre múltiples instancias serverless de Vercel.
+ */
+export async function revokeDistributedAdminJti(jti, ttlMs = 12 * 60 * 60 * 1000) {
+  if (!jti || typeof jti !== 'string') return false;
+  const database = await getMongoDb();
+  if (!database) return false;
+  const safeTtlMs = Math.max(60 * 1000, Math.min(Number(ttlMs) || 12 * 60 * 60 * 1000, 24 * 60 * 60 * 1000));
+  const lockKey = `revoked_jti_${jti.trim()}`;
+  const expiresAtDate = new Date(Date.now() + safeTtlMs);
+  try {
+    await database.collection('slot_locks').updateOne(
+      { lockKey },
+      {
+        $set: {
+          lockKey,
+          kind: 'revoked_admin_jti',
+          jti: jti.trim(),
+          revokedAt: new Date().toISOString(),
+          expiresAtDate
+        }
+      },
+      { upsert: true }
+    );
+    return true;
+  } catch (err) {
+    console.warn('⚠️ [MongoDB] Error registrando jti revocado:', err?.message || err);
+    return false;
+  }
+}
+
+/**
+ * Consulta si un `jti` de sesión de administrador fue revocado en cualquier instancia.
+ */
+export async function isDistributedAdminJtiRevoked(jti) {
+  if (!jti || typeof jti !== 'string') return false;
+  const database = await getMongoDb();
+  if (!database) return false;
+  try {
+    const doc = await database.collection('slot_locks').findOne({
+      lockKey: `revoked_jti_${jti.trim()}`,
+      expiresAtDate: { $gt: new Date() }
+    });
+    return Boolean(doc);
+  } catch (err) {
+    console.warn('⚠️ [MongoDB] Error verificando jti revocado:', err?.message || err);
+    return false;
+  }
+}
+
+/**
+ * Reclama de forma atómica (sin condición de carrera TOCTOU) un token de emergencia one-shot
+ * en la colección `security`. Devuelve `{ claimed: true }` solo para la primera llamada ganadora.
+ */
+export async function claimOneShotEmergencyToken({ docId, tokenHash, usedByIp }) {
+  const database = await getMongoDb();
+  if (!database) {
+    return { claimed: false, dbUnavailable: true };
+  }
+  const nowIso = new Date().toISOString();
+  try {
+    const res = await database.collection('security').updateOne(
+      { id: docId, used: { $ne: true } },
+      {
+        $set: {
+          id: docId,
+          used: true,
+          tokenHash,
+          usedAt: nowIso,
+          usedByIp: String(usedByIp || 'unknown'),
+          updatedAt: nowIso
+        }
+      },
+      { upsert: true }
+    );
+    const claimed = Boolean(res?.acknowledged && (res.upsertedCount > 0 || res.modifiedCount > 0));
+    return { claimed, dbUnavailable: false };
+  } catch (err) {
+    // Si otro worker concurrente insertó el documento simultáneamente (E11000) o falló la condición
+    if (err?.code === 11000) {
+      return { claimed: false, dbUnavailable: false };
+    }
+    throw err;
   }
 }

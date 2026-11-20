@@ -18,7 +18,8 @@ import {
   getCachedPasswordVersion,
   getTrustedClientIp,
   hashPinScryptAsync,
-  recordFinancialAuditLog
+  recordFinancialAuditLog,
+  isForbiddenWeakPassword
 } from './security.js';
 import { sendPasswordResetCodeEmail, sendPasswordChangedAlertEmail } from './emailService.js';
 import {
@@ -27,13 +28,45 @@ import {
   updateMongoDoc,
   findMongoDocs,
   findMongoDoc,
-  checkDistributedRateLimit
+  checkDistributedRateLimit,
+  claimOneShotEmergencyToken
 } from './db/mongo.js';
 
 // Rate limiters en memoria por IP (respaldados en MongoDB Atlas cuando está configurado - Hallazgo A2)
 const resetRequestAttempts = new Map(); // ip -> { count, windowStart }
 const resetConfirmAttempts = new Map(); // ip -> { count, windowStart }
 const emergencyResetAttempts = new Map(); // ip -> { count, resetAt }
+const MAX_RATE_LIMIT_MAP_SIZE = 2000;
+
+function pruneMapIfOversized(map) {
+  if (map.size <= MAX_RATE_LIMIT_MAP_SIZE) return;
+  while (map.size > MAX_RATE_LIMIT_MAP_SIZE) {
+    const oldestKey = map.keys().next().value;
+    if (!oldestKey) break;
+    map.delete(oldestKey);
+  }
+}
+
+/**
+ * Espera la entrega SMTP de forma acotada (máx. 4s) antes de cerrar la respuesta HTTP
+ * para evitar que Vercel congele el lambda antes de enviar el correo, pero sin causar 504 si Zoho tarda.
+ */
+async function awaitEmailBounded(promise, maxWaitMs = 4000, contextLabel = 'correo') {
+  let timer = null;
+  const safePromise = Promise.resolve(promise).catch(err => {
+    console.error(`[Seguridad] Error enviando ${contextLabel}:`, err?.message || err);
+    return false;
+  });
+  const timeoutPromise = new Promise(resolve => {
+    timer = setTimeout(() => resolve('timeout'), maxWaitMs);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+  try {
+    await Promise.race([safePromise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 const RESET_REQUEST_MAX = 3;
 const RESET_REQUEST_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
@@ -45,6 +78,7 @@ const EMERGENCY_RESET_MAX = 3;
 const EMERGENCY_RESET_WINDOW_MS = 15 * 60 * 1000; // 15 minutos
 
 function checkEmergencyResetRateLimit(ip) {
+  pruneMapIfOversized(emergencyResetAttempts);
   const now = Date.now();
   const entry = emergencyResetAttempts.get(ip);
   if (!entry || now > entry.resetAt) {
@@ -77,6 +111,7 @@ export function getAdminEmail() {
 
 /** Rate limiter para solicitud de código */
 export function checkResetRequestRateLimit(ip) {
+  pruneMapIfOversized(resetRequestAttempts);
   const now = Date.now();
   const record = resetRequestAttempts.get(ip) || { count: 0, windowStart: now };
 
@@ -101,6 +136,7 @@ export function checkResetRequestRateLimit(ip) {
 
 /** Rate limiter para confirmación de reseteo */
 export function checkResetConfirmRateLimit(ip) {
+  pruneMapIfOversized(resetConfirmAttempts);
   const now = Date.now();
   const record = resetConfirmAttempts.get(ip) || { count: 0, windowStart: now };
 
@@ -310,11 +346,8 @@ export async function handlePasswordResetRequest(req, res, { runtimeDB, emailSen
     });
   }
 
-  // REGLA 4: Fuga cero: enviar por correo sin loguear el código (SMTP fire-and-forget para respuesta inmediata < 2s)
-  Promise.resolve(emailSender(code, targetEmail))
-    .catch(err => {
-      console.error('[Seguridad] Error enviando correo de reseteo:', err?.message || err);
-    });
+  // REGLA 4: Fuga cero: enviar por correo sin loguear el código (espera acotada máx. 4s para fiabilidad en Vercel sin 504)
+  await awaitEmailBounded(emailSender(code, targetEmail), 4000, 'correo de reseteo');
 
   // Respuesta genérica estricta (sin código, sin revelar correo)
   return res.json({
@@ -365,11 +398,16 @@ export async function handlePasswordResetConfirm(req, res, {
 
   const { code, newPassword } = req.body || {};
 
-  // Caso 6: Validación previa de longitud de contraseña (mínimo 8 caracteres)
+  // Caso 6: Validación previa de longitud y fortaleza mínima de contraseña (mínimo 8 caracteres)
   // Se rechaza SIN consumir ni incrementar intentos del código
   if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 8) {
     return res.status(400).json({
       error: 'La nueva contraseña debe tener al menos 8 caracteres.'
+    });
+  }
+  if (isForbiddenWeakPassword(newPassword)) {
+    return res.status(400).json({
+      error: 'La contraseña elegida es demasiado común o repetitiva. Usa una clave más segura.'
     });
   }
 
@@ -462,12 +500,9 @@ export async function handlePasswordResetConfirm(req, res, {
     return res.status(500).json({ error: 'Error persistiendo nueva contraseña en la base de datos central.' });
   }
 
-  // 4. Enviar alerta de seguridad por correo vía Zoho a ADMIN_EMAIL (fire-and-forget para respuesta inmediata < 2s)
+  // 4. Enviar alerta de seguridad por correo vía Zoho a ADMIN_EMAIL (espera acotada máx. 3s)
   const targetEmail = getAdminEmail();
-  Promise.resolve(alertSender(targetEmail, { ip }))
-    .catch(err => {
-      console.error('[Seguridad] Error enviando alerta de cambio de contraseña:', err?.message || err);
-    });
+  await awaitEmailBounded(alertSender(targetEmail, { ip }), 3000, 'alerta de cambio de contraseña');
 
   return res.json({
     success: true,
@@ -481,6 +516,12 @@ export async function handlePasswordResetConfirm(req, res, {
  */
 export async function handleEmergencyPasswordReset(req, res, { runtimeDB } = {}) {
   const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+  if (!isMongoConfigured() && isProduction) {
+    return res.status(503).json({
+      error: 'Reseteo de emergencia temporalmente no disponible (persistencia requerida en producción).'
+    });
+  }
+
   const ip = getClientIp(req);
 
   // 1. Rate limiting (3 intentos / 15 min / IP)
@@ -518,10 +559,15 @@ export async function handleEmergencyPasswordReset(req, res, { runtimeDB } = {})
 
   const { token, newPassword } = req.body || {};
 
-  // 3. Validación de nueva contraseña (mínimo 8 caracteres)
+  // 3. Validación de nueva contraseña (mínimo 8 caracteres y no débil)
   if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 8) {
     return res.status(400).json({
       error: 'La nueva contraseña debe tener al menos 8 caracteres.'
+    });
+  }
+  if (isForbiddenWeakPassword(newPassword)) {
+    return res.status(400).json({
+      error: 'La contraseña elegida es demasiado común o repetitiva. Usa una clave más segura.'
     });
   }
 
@@ -536,59 +582,32 @@ export async function handleEmergencyPasswordReset(req, res, { runtimeDB } = {})
     return res.status(401).json({ error: 'Token de emergencia inválido.' });
   }
 
-  // 5. Protección One-Shot: Verificar si este token específico ya fue consumido
+  // 5 & 6. Protección One-Shot Atómica (sin TOCTOU): verificar y quemar en una sola operación condicional
   const tokenHash = hashSHA256(configuredEmergencyToken);
-  let isAlreadyUsed = false;
-
-  if (isMongoConfigured()) {
-    try {
-      const existingDoc = await findMongoDoc('security', {
-        $or: [
-          { id: `emergency_token_${tokenHash}` },
-          { key: `emergency_token_${tokenHash}` },
-          { emergencyTokenHash: tokenHash, used: true }
-        ]
-      });
-      if (existingDoc && existingDoc.used === true) {
-        isAlreadyUsed = true;
-      }
-    } catch (eMongo) {
-      if (isProduction) {
-        return res.status(500).json({ error: 'Fallo al verificar el estado del token en la base de datos central.' });
-      }
-    }
-  }
-
   if (runtimeDB?.settings?.usedEmergencyTokens?.includes(tokenHash)) {
-    isAlreadyUsed = true;
-  }
-
-  if (isAlreadyUsed) {
     return res.status(400).json({
       error: 'Este token de emergencia ya fue utilizado. Genera uno nuevo con scripts/generate-emergency-token.mjs y actualízalo en Vercel.'
     });
   }
 
-  // 6. Quemar el token (one-shot) de forma atómica en MongoDB y memoria
   if (isMongoConfigured()) {
     try {
-      const ok = await upsertMongoDoc('security', {
-        id: `emergency_token_${tokenHash}`
-      }, {
-        id: `emergency_token_${tokenHash}`,
-        key: `emergency_token_${tokenHash}`,
-        emergencyTokenHash: tokenHash,
-        used: true,
-        consumedAt: new Date().toISOString(),
-        consumedIp: ip
-      }, { throwOnError: isProduction });
-
-      if (!ok && isProduction) {
-        return res.status(500).json({ error: 'Fallo al invalidar el token de emergencia en MongoDB Atlas.' });
+      const claimResult = await claimOneShotEmergencyToken({
+        docId: `emergency_token_${tokenHash}`,
+        tokenHash,
+        usedByIp: ip
+      });
+      if (claimResult.dbUnavailable && isProduction) {
+        return res.status(503).json({ error: 'Base de datos central no disponible para validar el token de emergencia.' });
+      }
+      if (!claimResult.dbUnavailable && !claimResult.claimed) {
+        return res.status(400).json({
+          error: 'Este token de emergencia ya fue utilizado. Genera uno nuevo con scripts/generate-emergency-token.mjs y actualízalo en Vercel.'
+        });
       }
     } catch (eMongo) {
       if (isProduction) {
-        return res.status(500).json({ error: 'Error al persistir la invalidación del token en MongoDB Atlas.' });
+        return res.status(500).json({ error: 'Error al reclamar atómicamente el token de emergencia en MongoDB Atlas.' });
       }
     }
   }

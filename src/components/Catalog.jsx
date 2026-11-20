@@ -202,7 +202,7 @@ export default function Catalog({ catalog = [], onOpenBooking, onNavigateToAdmin
 
     // 3. Fallback directo a WhatsApp Web / app
     const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`;
-    window.open(waUrl, '_blank');
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
     trackLinkShare('whatsapp_direct');
   };
 

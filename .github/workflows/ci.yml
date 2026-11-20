@@ -55,6 +55,14 @@ jobs:
             if (emailSvc.includes('sgarcesg0410@gmail.com') || apiIdx.includes('bc62cb00-9782-4a8e-a344-e8cf031a211a')) {
               throw new Error('SAST: Hardcoded personal email or OneSignal App ID found in backend');
             }
+            const frontApi = fs.readFileSync('src/services/api.js', 'utf8');
+            if (frontApi.includes('laura-vanesa-maza') || frontApi.includes('jennifer-vasquez')) {
+              throw new Error('SAST: Hardcoded customer PII found in frontend bundle');
+            }
+            const publicFiles = fs.readdirSync('public');
+            if (publicFiles.some(f => f.toLowerCase().endsWith('.apk'))) {
+              throw new Error('SAST: Unhardened/static APK binary detected in public/');
+            }
             console.log('✓ SAST security gate passed');
           "
 

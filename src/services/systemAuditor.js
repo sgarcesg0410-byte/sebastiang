@@ -2,8 +2,17 @@
 // Auditor Inteligente del Software para Sebastian G • Fotografía
 // Monitorea errores en vivo, caídas de servicios, conflictos en pagos y mejoras del sistema.
 
+import { API_BASE } from './api';
+
 const LOCAL_ERROR_LOGS_KEY = 'sebastian_g_error_logs_v1';
 const MAX_ERROR_LOGS = 50;
+
+function generateSafeErrorId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `err-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `err-${Date.now()}-${performance.now().toString(36).replace('.', '').slice(-6)}`;
+}
 
 let isCapturingInitialized = false;
 
@@ -16,7 +25,7 @@ export function initErrorCapture() {
   window.addEventListener('error', (event) => {
     try {
       const errorObj = {
-        id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: generateSafeErrorId(),
         timestamp: new Date().toISOString(),
         message: event.message || 'Error de JavaScript no especificado',
         filename: event.filename ? event.filename.split('/').pop() : 'desconocido',
@@ -38,7 +47,7 @@ export function initErrorCapture() {
         : (reason && reason.message) ? reason.message : 'Promesa asíncrona rechazada sin captura';
       
       const errorObj = {
-        id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: generateSafeErrorId(),
         timestamp: new Date().toISOString(),
         message: String(message).slice(0, 300),
         filename: 'Async/Promise',
@@ -57,7 +66,7 @@ export function initErrorCapture() {
 export function logSoftwareError(error, context = '', severity = 'error') {
   try {
     const errorObj = {
-      id: `err-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: generateSafeErrorId(),
       timestamp: new Date().toISOString(),
       message: (error?.message || String(error)).slice(0, 300),
       filename: context || 'Módulo Interno',
@@ -114,7 +123,7 @@ export async function auditServicesHealth() {
   const dbStart = performance.now();
   try {
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout > 5s')), 5000));
-    const dbPromise = fetch('/api/health');
+    const dbPromise = fetch(`${API_BASE}/health`);
     const res = await Promise.race([dbPromise, timeoutPromise]);
     const dbEnd = performance.now();
     results.mongodb.latencyMs = Math.round(dbEnd - dbStart);
@@ -138,7 +147,7 @@ export async function auditServicesHealth() {
   const apiStart = performance.now();
   try {
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout > 4s')), 4000));
-    const res = await Promise.race([fetch('/api/settings'), timeoutPromise]);
+    const res = await Promise.race([fetch(`${API_BASE}/settings`), timeoutPromise]);
     const apiEnd = performance.now();
     results.apiServer.latencyMs = Math.round(apiEnd - apiStart);
     if (res.ok) {
@@ -157,8 +166,8 @@ export async function auditServicesHealth() {
   try {
     let totalBytes = 0;
     for (let key in localStorage) {
-      if (localStorage.hasOwnProperty(key)) {
-        totalBytes += (localStorage[key].length + key.length) * 2;
+      if (Object.prototype.hasOwnProperty.call(localStorage, key)) {
+        totalBytes += (String(localStorage[key] || '').length + key.length) * 2;
       }
     }
     const usedKb = Math.round(totalBytes / 1024);
@@ -233,8 +242,10 @@ export function auditPaymentConflicts(bookings = [], payments = []) {
   // B. Detectar reservas marcadas como completadas pero con pagos faltantes
   for (const b of validBookings) {
     const bId = String(b.id);
-    const relatedPays = validPayments.filter(p => 
-      String(p.sessionToken) === bId && p.status !== 'rejected'
+    const relatedPays = validPayments.filter(p =>
+      (String(p.bookingId || '') === bId || String(p.sessionToken || '') === bId) &&
+      p.status !== 'rejected' &&
+      p.status !== 'pending_gateway'
     );
     const totalPaid = relatedPays.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     const totalPrice = Number(b.totalPrice) || 0;
@@ -260,7 +271,7 @@ export function auditPaymentConflicts(bookings = [], payments = []) {
           type: 'stale_pending_booking',
           severity: 'low',
           title: `Reserva estancada sin abono: ${b.clientName} (${daysOld} días)`,
-          description: `El cliente solicitó fecha para "${b.dateTime}" hace ${daysOld} días y aún no ha reportado su abono inicial del 50%.`,
+          description: `El cliente solicitó fecha para "${b.dateTime}" hace ${daysOld} días y aún no ha reportado su abono inicial de $20.000 COP.`,
           bookingId: b.id,
           clientPhone: b.clientWhatsApp,
           daysOld
@@ -272,13 +283,18 @@ export function auditPaymentConflicts(bookings = [], payments = []) {
   // D. Detectar pagos huérfanos (pagos en MongoDB Atlas sin reserva asociada)
   const bookingIdSet = new Set(validBookings.map(b => String(b.id)));
   for (const p of validPayments) {
-    if (p.sessionToken && !bookingIdSet.has(String(p.sessionToken)) && !String(p.sessionToken).startsWith('manual-')) {
+    const linkedBookingId = p.bookingId ? String(p.bookingId) : '';
+    const linkedSessionToken = p.sessionToken ? String(p.sessionToken) : '';
+    const hasMatchedBooking = (linkedBookingId && bookingIdSet.has(linkedBookingId)) ||
+      (linkedSessionToken && bookingIdSet.has(linkedSessionToken));
+    const isManualOrGallery = linkedSessionToken.startsWith('manual-') || (!linkedBookingId && linkedSessionToken.length >= 16);
+    if ((linkedBookingId || linkedSessionToken) && !hasMatchedBooking && !isManualOrGallery) {
       conflicts.push({
         id: `conf-orphan-${p.id}`,
         type: 'orphan_payment',
         severity: 'low',
         title: `Pago sin reserva vinculada: ${p.clientName} ($${Number(p.amount).toLocaleString('es-CO')} COP)`,
-        description: `El pago tiene ID de sesión "${p.sessionToken}", pero no coincide con ninguna reserva en la agenda actual.`,
+        description: `El pago referencia "${linkedBookingId || linkedSessionToken}", pero no coincide con ninguna reserva en la agenda actual.`,
         paymentId: p.id
       });
     }

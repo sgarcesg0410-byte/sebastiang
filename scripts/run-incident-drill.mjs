@@ -184,7 +184,7 @@ async function runDrill() {
   const ref = chkRes.body.reference;
   const txId = 'tx-drill-001';
   const amountInCents = 2000000;
-  const ts = 1795000000;
+  const ts = Math.floor(Date.now() / 1000);
   const checksum = crypto
     .createHash('sha256')
     .update(`${txId}APPROVED${amountInCents}${ts}${process.env.WOMPI_EVENTS_SECRET}`)

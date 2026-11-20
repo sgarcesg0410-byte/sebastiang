@@ -42,7 +42,7 @@ export {
   DEFAULT_PIN_HASH
 };
 
-const API_BASE = (typeof window !== 'undefined' && window.location.protocol === 'file:')
+export const API_BASE = (typeof window !== 'undefined' && window.location.protocol === 'file:')
   ? 'https://sebastiang.app/api'
   : '/api';
 const LOCAL_SESSIONS_KEY = 'sebastian_g_sessions_v1';
@@ -809,8 +809,7 @@ export function getLocalReviews() {
     const list = raw ? JSON.parse(raw) : [];
     const map = new Map();
     (Array.isArray(list) ? list : []).forEach(r => {
-      // Filtrar cualquier reseña de muestra o no auténtica previa
-      if (r && r.id && !r.id.startsWith('rev-jennifer-vasquez') && !r.id.startsWith('rev-ayda-luz') && !r.id.startsWith('rev-shamara')) {
+      if (r && r.id && !r.isDemo) {
         if (!map.has(r.id)) {
           map.set(r.id, r);
         }
@@ -924,13 +923,10 @@ function getLocalPayments() {
     let list = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(list)) list = [];
     const deletedIds = new Set(getDeletedPaymentIds());
-    // Purgar pagos eliminados y pagos accidentales/falsos de Laura Vanesa
     const filtered = list.filter(p => {
       if (!p || !p.id) return false;
       const pid = String(p.id);
       if (deletedIds.has(pid) || deletedIds.has(`pay-${pid}`) || deletedIds.has(pid.replace(/^pay-/, ''))) return false;
-      if (p.sessionToken === 'book-laura-vanesa-maza-1790651249486') return false;
-      if (p.clientName && p.clientName.toLowerCase().includes('laura') && p.clientName.toLowerCase().includes('maza')) return false;
       return true;
     });
     if (filtered.length !== list.length) {
@@ -966,18 +962,12 @@ function getLocalBookings() {
     let list = raw ? JSON.parse(raw) : [];
     // Filtrar cualquier reserva de muestra, demo o corrupta sin nombre
     list = (Array.isArray(list) ? list : []).filter(b => {
-      if (!b || !b.id || b.id === 'book-demo-1') return false;
-      if (b.clientName === 'Camila Rodríguez' || b.client_name === 'Camila Rodríguez') return false;
+      if (!b || !b.id || b.id === 'book-demo-1' || b.isDemo === true) return false;
       const name = String(b.clientName || b.client_name || '').trim();
       return name.length > 0;
     });
-    
+
     const map = new Map();
-    // 1. Asegurar todas las 5 reservas reales garantizadas
-    REAL_DEFAULT_BOOKINGS.forEach(b => {
-      if (b && b.id) map.set(b.id, { ...b });
-    });
-    // 2. Fusionar con las reservas guardadas localmente de manera segura y no destructiva
     list.forEach(b => {
       if (b && b.id) {
         const existing = map.get(b.id);
@@ -985,19 +975,13 @@ function getLocalBookings() {
       }
     });
 
-    // Blindaje explícito de Laura Vanesa: es reserva activa pendiente de abono
-    const laura = map.get('book-laura-vanesa-maza-1790651249486');
-    if (laura && (laura.status === 'completed' || !laura.status)) {
-      map.set('book-laura-vanesa-maza-1790651249486', { ...laura, status: 'pending' });
-    }
-
     const result = Array.from(map.values());
     try {
       localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(result));
     } catch (e) {}
     return result;
   } catch (e) {
-    return REAL_DEFAULT_BOOKINGS;
+    return [];
   }
 }
 
@@ -1015,7 +999,7 @@ export function saveLocalBooking(booking) {
   try {
     const enriched = safeMergeBookingObjects(null, booking);
     if (!enriched) return;
-    const bookings = getLocalBookings().filter(b => b.id !== enriched.id && b.clientName !== 'Camila Rodríguez');
+    const bookings = getLocalBookings().filter(b => b.id !== enriched.id);
     bookings.unshift(enriched);
     localStorage.setItem(LOCAL_BOOKINGS_KEY, JSON.stringify(bookings));
     localStorage.setItem('sebastian_g_bookings_last_sync', Date.now().toString());
@@ -1077,7 +1061,8 @@ export async function getSettings() {
     const res = await fetch(`${API_BASE}/settings`);
     if (res.ok) {
       const data = await res.json();
-      const merged = { ...DEFAULT_SETTINGS, ...data, ...(localSt || {}) };
+      // Los ajustes autoritativos del servidor siempre prevalecen sobre la caché local
+      const merged = { ...DEFAULT_SETTINGS, ...(localSt || {}), ...data };
       saveLocalSettings(merged);
       return merged;
     }
@@ -1378,9 +1363,9 @@ export async function sendEmailNotification(payload) {
 }
 
 export async function getGalleryByToken(token) {
-  // 1. Consultar servidor Vercel API
+  // 1. Consultar servidor API (fuente autoritativa; respeta revocaciones 403 y expiraciones 410)
   try {
-    const res = await fetch(`${API_BASE}/gallery/${token}`);
+    const res = await fetch(`${API_BASE}/gallery/${encodeURIComponent(token)}`);
     if (res.ok) {
       const data = await res.json();
       if (data && token !== 'demo-cliente-2026' && data.id !== 'sess-demo') {
@@ -1391,8 +1376,15 @@ export async function getGalleryByToken(token) {
         isDelivered: data.status === 'delivered'
       };
     }
+    if (res.status === 403 || res.status === 410) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || (res.status === 403 ? 'Esta galería fue desactivada por el estudio.' : 'El enlace de esta galería expiró.'));
+    }
   } catch (err) {
-    console.warn('Error conectando con servidor para galería, consultando nube y local:', err);
+    if (err?.message && (err.message.includes('desactivada') || err.message.includes('expir') || err.message.includes('revoca'))) {
+      throw err;
+    }
+    console.warn('Error conectando con servidor para galería, consultando respaldo local:', err);
   }
 
   // 2. Si es la demostración pública para visitantes, proveer datos limpios
@@ -1428,34 +1420,7 @@ export async function getGalleryByToken(token) {
     };
   }
 
-  // 3. Consultar a través de la API segura del servidor (usa service_role y protege fotos)
-  try {
-    const res = await fetch(`${API_BASE}/gallery/${encodeURIComponent(token)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data && (data.token === token || data.id === token)) {
-        saveLocalSession(data);
-        const now = Date.now();
-        const expiresTime = new Date(data.expiresAt).getTime();
-        return {
-          ...data,
-          isExpired: now > expiresTime,
-          isSubmitted: data.status === 'submitted' || data.status === 'delivered',
-          isDelivered: data.status === 'delivered',
-          timeRemainingMs: Math.max(0, expiresTime - now),
-          watermarkSettings: {
-            watermarkText: DEFAULT_SETTINGS.watermarkText,
-            watermarkSubtext: DEFAULT_SETTINGS.watermarkSubtext,
-            watermarkLogoUrl: DEFAULT_SETTINGS.watermarkLogoUrl
-          }
-        };
-      }
-    }
-  } catch (errApi) {
-    console.warn('Consultando galería por API:', errApi);
-  }
-
-  // 4. Buscar en fallback local
+  // 3. Buscar en fallback local (solo ante desconexión de red)
   const local = getLocalSessions().find(s => s.token === token);
   if (local) {
     const now = Date.now();
@@ -1480,16 +1445,22 @@ export async function getGalleryByToken(token) {
 export async function submitGallerySelection(token, selections) {
   let serverResult = null;
   try {
-    const res = await fetch(`${API_BASE}/gallery/${token}/submit`, {
+    const res = await fetch(`${API_BASE}/gallery/${encodeURIComponent(token)}/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ selections })
     });
     if (res.ok) {
       serverResult = await res.json();
+    } else if (res.status >= 400 && res.status < 500) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'No se pudo enviar tu selección. Verifica que la galería siga activa.');
     }
   } catch (err) {
-    console.warn('Error en servidor al enviar selección, procesando localmente:', err);
+    if (err?.message && !err.message.includes('Failed to fetch') && !err.message.includes('NetworkError')) {
+      throw err;
+    }
+    console.warn('Error de red al enviar selección, guardando respaldo local:', err);
   }
 
   // Actualizar también en localStorage
@@ -1533,19 +1504,8 @@ export async function submitGallerySelection(token, selections) {
     }
   } catch (e) {}
 
-  // Enviar Push Notification 24/7 a través de OneSignal al teléfono del fotógrafo
-  try {
-    fetch('/api/send-push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: `📸 ¡${clientName} envió su selección!`,
-        message: `Eligió ${selectedPhotos.length} fotos de su paquete "${packageTitle}". ¡Lista para edición!`,
-        url: 'https://sebastiang.app/?mode=admin',
-        data: { type: 'session', targetTab: 'sessions', token }
-      })
-    }).catch(() => {});
-  } catch (e) {}
+  // Nota: La notificación push OneSignal se dispara de forma autoritativa y autenticada en el servidor
+  // dentro de POST /api/gallery/:token/submit (sin llamadas anónimas 401 desde el navegador).
 
   // Generar texto resumen impecable para WhatsApp
   let summary = `📸 *¡Hola Sebastian G! Ya elegí las fotos de mi sesión:*\n\n`;
@@ -1685,6 +1645,25 @@ export function clearAdminSession() {
   setAdminSessionToken('');
 }
 
+/**
+ * Cierra la sesión administrativa enviando el token activo + cookie HttpOnly + cabecera CSRF
+ * al servidor ANTES de limpiar el estado local, garantizando revocación distribuida del jti.
+ */
+export async function logoutAdminSession() {
+  const token = getAdminSessionToken();
+  try {
+    await fetch(`${API_BASE}/admin/auth/logout`, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      credentials: 'include'
+    });
+  } catch (e) {}
+  clearAdminSession();
+}
+
 // ------------------------------------------------------------------------------
 // INTERCEPTOR: añade la sesión de administrador a TODA llamada /api/admin/*
 // ------------------------------------------------------------------------------
@@ -1693,21 +1672,40 @@ export function clearAdminSession() {
 if (typeof window !== 'undefined' && !window.__sgAdminFetchPatched) {
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
-    const url = typeof input === 'string' ? input : (input && input.url) || '';
-    // Aislamiento cross-origin: el token solo se adjunta a llamadas locales del mismo origen (Hallazgo #5)
-    const isSameOrigin = !url.startsWith('http://') && !url.startsWith('https://')
-      ? true
-      : (typeof window !== 'undefined' && url.startsWith(window.location.origin));
-    const needsAuth = isSameOrigin && url.includes('/api/')
-      && !url.includes('/api/public/')
-      && !url.includes('/api/admin/auth')
-      && !url.includes('/api/admin/password/');
+    const rawUrl = typeof input === 'string' ? input : (input && input.url) || '';
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(rawUrl, window.location.href);
+    } catch {}
+
+    const isFileElectron = window.location.protocol === 'file:';
+    const isExactSameOrigin = Boolean(parsedUrl && !isFileElectron && parsedUrl.origin === window.location.origin);
+    const isTrustedElectronApi = Boolean(
+      isFileElectron &&
+      parsedUrl &&
+      parsedUrl.protocol === 'https:' &&
+      (parsedUrl.hostname === 'sebastiang.app' || parsedUrl.hostname === 'www.sebastiang.app')
+    );
+    const isTrustedApiOrigin = isExactSameOrigin || isTrustedElectronApi;
+    const pathname = parsedUrl ? parsedUrl.pathname : '';
+    const needsAuth = isTrustedApiOrigin && pathname.startsWith('/api/')
+      && !pathname.startsWith('/api/public/')
+      && !pathname.startsWith('/api/admin/auth')
+      && !pathname.startsWith('/api/admin/password/');
+
     const token = needsAuth ? getAdminSessionToken() : '';
-    const headers = { ...(init.headers || {}) };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
+    const headers = new Headers(init.headers || (typeof input !== 'string' && input?.headers ? input.headers : undefined));
+    if (isTrustedApiOrigin && pathname.startsWith('/api/') && !headers.has('X-Requested-With')) {
+      headers.set('X-Requested-With', 'XMLHttpRequest');
     }
-    return originalFetch(input, { ...init, headers, credentials: init.credentials || 'include' });
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    const finalInit = { ...init, headers };
+    if (isExactSameOrigin && !init.credentials) {
+      finalInit.credentials = 'include';
+    }
+    return originalFetch(input, finalInit);
   };
   window.__sgAdminFetchPatched = true;
 }
@@ -1742,13 +1740,18 @@ export async function verifyAdminPin(pin) {
   }
 
   if (!res.ok) {
+    const errPayload = await res.json().catch(() => ({}));
+    // Errores de servidor (5xx) NO deben penalizar el contador local de intentos fallidos
+    if (res.status >= 500) {
+      throw new Error(errPayload?.error || 'El servidor de autenticación está temporalmente no disponible. Intenta nuevamente en unos segundos.');
+    }
     recordFailedAttempt();
     const attempts = getAttemptsState();
     const remaining = Math.max(0, 5 - attempts.count);
     if (attempts.lockedUntil && Date.now() < attempts.lockedUntil) {
       throw new Error('Demasiados intentos fallidos. Has sido bloqueado temporalmente por 30 minutos.');
     }
-    throw new Error(`PIN incorrecto.${remaining > 0 ? ` Te quedan ${remaining} intento(s).` : ''}`);
+    throw new Error(errPayload?.error || `PIN incorrecto.${remaining > 0 ? ` Te quedan ${remaining} intento(s).` : ''}`);
   }
 
   const data = await res.json().catch(() => ({}));
@@ -1777,18 +1780,6 @@ export async function getAdminBookings() {
   try {
     const rawDel = JSON.parse(localStorage.getItem('sebastian_g_deleted_bookings') || '[]');
     deletedIds = new Set(Array.isArray(rawDel) ? rawDel : []);
-    // Proteger permanentemente las 5 reservas reales del negocio
-    const PROTECTED_REAL_BOOKINGS = [
-      'book-real-jennifer-vasquez',
-      'book-1790280190756',
-      'book-laura-vanesa-maza-1790651249486',
-      'book-1792197996225-905e3bb3',
-      'book-1792268723998-a1793b77'
-    ];
-    PROTECTED_REAL_BOOKINGS.forEach(pid => {
-      deletedIds.delete(pid);
-      deletedIds.delete(`book-${pid}`);
-    });
   } catch (e) {}
 
   // 1. Blindaje Bóveda IndexedDB (100MB+ local resistente a reinicios y limpieza)
@@ -1796,7 +1787,7 @@ export async function getAdminBookings() {
   try {
     const rawIdb = await idbGetBookings();
     if (Array.isArray(rawIdb)) {
-      idbBookings = rawIdb.filter(b => b && (b.clientName || b.client_name));
+      idbBookings = rawIdb.filter(b => b && b.isDemo !== true && (b.clientName || b.client_name));
     }
   } catch (e) {}
 
@@ -1816,36 +1807,15 @@ export async function getAdminBookings() {
   const localBookings = getLocalBookings();
   const map = new Map();
 
-  // 1. Incorporar reservas predeterminadas garantizadas
-  REAL_DEFAULT_BOOKINGS.forEach(b => {
-    if (b && b.id && !deletedIds.has(b.id)) {
-      map.set(b.id, { ...b, isReal: true });
-    }
-  });
-
-  // 2. Fusionar con todas las fuentes garantizando no pérdida de reservas nuevas o viejas
-  // El orden prioriza serverBookings (MongoDB Atlas) sin que campos undefined destruyan datos previos
+  // Fusionar con todas las fuentes priorizando serverBookings (MongoDB Atlas) sin contaminar con reservas demo
   [...idbBookings, ...localBookings, ...serverBookings].forEach(b => {
-    if (b && b.id && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
+    if (b && b.id && b.id !== 'book-demo-1' && b.isDemo !== true && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`)) {
       const existing = map.get(b.id);
       map.set(b.id, safeMergeBookingObjects(existing, b));
     }
   });
 
-  // Blindaje explícito de Laura Vanesa: es reserva activa pendiente de abono
-  const lauraBooking = map.get('book-laura-vanesa-maza-1790651249486');
-  if (lauraBooking && (lauraBooking.status === 'completed' || !lauraBooking.status)) {
-    map.set('book-laura-vanesa-maza-1790651249486', { ...lauraBooking, status: 'pending', isReal: true });
-  }
-
-  // 3. Garantizar siempre las 5 reservas reales del negocio
-  REAL_DEFAULT_BOOKINGS.forEach(b => {
-    if (b && b.id && !deletedIds.has(b.id) && !map.has(b.id)) {
-      map.set(b.id, { ...b, isReal: true });
-    }
-  });
-
-  const combined = Array.from(map.values()).filter(b => b && b.id !== 'book-demo-1' && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`));
+  const combined = Array.from(map.values()).filter(b => b && b.id !== 'book-demo-1' && b.isDemo !== true && !deletedIds.has(b.id) && !deletedIds.has(`book-${b.id}`));
 
   // Respaldar inmediatamente en caché local Y en Bóveda IndexedDB
   try {
@@ -2110,8 +2080,6 @@ export async function getAdminPayments() {
     if (p && p.id) {
       const pid = String(p.id);
       if (deletedIds.has(pid) || deletedIds.has(`pay-${pid}`) || deletedIds.has(pid.replace(/^pay-/, ''))) return;
-      if (p.sessionToken === 'book-laura-vanesa-maza-1790651249486') return;
-      if (p.clientName && p.clientName.toLowerCase().includes('laura') && p.clientName.toLowerCase().includes('maza')) return;
       map.set(p.id, p);
     }
   });
@@ -2542,7 +2510,7 @@ export async function submitPublicReview(reviewData) {
 export async function createAdminReview(reviewData) {
   let serverReview = null;
   try {
-    const token = getAdminToken();
+    const token = getAdminSessionToken();
     const res = await fetch(`${API_BASE}/admin/reviews`, {
       method: 'POST',
       headers: {

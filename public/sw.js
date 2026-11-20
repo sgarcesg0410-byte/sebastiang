@@ -1,6 +1,6 @@
 importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js');
 
-const CACHE_NAME = 'sebastiang-v2026-09';
+const CACHE_NAME = 'sebastiang-v2026-11';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -40,8 +40,13 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // No interceptar peticiones backend
-  if (url.pathname.startsWith('/api')) {
+  // No interceptar ni cachear rutas API, panel administrativo ni galerías privadas
+  if (
+    url.pathname.startsWith('/api') ||
+    url.pathname.startsWith('/admin') ||
+    url.pathname.startsWith('/galeria') ||
+    url.searchParams.get('mode') === 'admin'
+  ) {
     return;
   }
 
@@ -74,12 +79,14 @@ self.addEventListener('notificationclick', (event) => {
 
   try {
     const parsed = new URL(candidateUrl, self.location.origin);
-    const isAllowedHost = parsed.origin === self.location.origin ||
+    const isSameOrigin = parsed.origin === self.location.origin;
+    const isSafeHttpsHost = parsed.protocol === 'https:' && (
       parsed.hostname === 'wa.me' ||
       parsed.hostname === 'api.whatsapp.com' ||
       parsed.hostname === 'sebastiang.app' ||
-      parsed.hostname === 'www.sebastiang.app';
-    if (isAllowedHost) {
+      parsed.hostname === 'www.sebastiang.app'
+    );
+    if (isSameOrigin || isSafeHttpsHost) {
       targetUrl = parsed.href;
     }
   } catch (e) {}

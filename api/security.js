@@ -32,6 +32,30 @@ const FORBIDDEN_WEAK_PINS = new Set([
   '654321'
 ]);
 
+const FORBIDDEN_COMMON_PASSWORDS = new Set([
+  '00000000',
+  '11111111',
+  '12345678',
+  '123456789',
+  '87654321',
+  '01234567',
+  'password',
+  'admin123',
+  'admin1234',
+  'qwertyui',
+  'qwerty123'
+]);
+
+/** Verifica si una clave o PIN está en la lista negra de credenciales triviales o repetitivas. */
+export function isForbiddenWeakPassword(candidate) {
+  const clean = String(candidate ?? '').trim();
+  if (!clean) return true;
+  if (FORBIDDEN_WEAK_PINS.has(clean)) return true;
+  if (FORBIDDEN_COMMON_PASSWORDS.has(clean.toLowerCase())) return true;
+  if (/^(.)\1+$/.test(clean)) return true;
+  return false;
+}
+
 export function resolveAdminAuthKeyring() {
   const ring = {};
   const rawPrimary = process.env.ADMIN_AUTH_SECRET;
@@ -98,10 +122,8 @@ export function resolveAdminAuthKeyring() {
 }
 
 export function getAdminAuthSecret(keyId = null) {
-  if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_AUTH_SECRET && !process.env.ADMIN_AUTH_SECRET_KEYRING && !process.env.ADMIN_AUTH_SECRET_V1) {
-    return null;
-  }
   const { activeKeyId, ring } = resolveAdminAuthKeyring();
+  if (Object.keys(ring).length === 0) return null;
   const target = keyId && ring[keyId] ? ring[keyId] : ring[activeKeyId];
   return target || null;
 }
@@ -231,7 +253,12 @@ export const ADMIN_HOST_SESSION_COOKIE_NAME = '__Host-sg_admin_session';
 
 let cachedPasswordVersion = 1;
 let passwordVersionGetter = null;
+let distributedRevokedJtiChecker = null;
 const revokedAdminAccessJtis = new Set();
+
+export function setDistributedRevokedJtiChecker(fn) {
+  distributedRevokedJtiChecker = typeof fn === 'function' ? fn : null;
+}
 
 export function revokeAdminAccessTokenJti(jti) {
   if (!jti || typeof jti !== 'string') return;
@@ -343,7 +370,9 @@ export function verifyBioRefreshToken(token, { expectedPasswordVersion, revokedJ
   if (!getAdminAuthSecret()) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
 
-  const [body, signature] = token.split('.');
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [body, signature] = parts;
   if (!body || !signature) return null;
 
   if (!verifyHmacWithKeyring(body, signature, 'bio_refresh')) return null;
@@ -368,7 +397,9 @@ export function verifyAdminToken(token, { expectedPasswordVersion, revokedJtis }
   if (!getAdminAuthSecret()) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
 
-  const [body, signature] = token.split('.');
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [body, signature] = parts;
   if (!body || !signature) return null;
 
   if (!verifyHmacWithKeyring(body, signature)) return null;
@@ -483,6 +514,19 @@ export async function requireAdminAuth(req, res, next) {
     return res.status(401).json({ error: 'Sesión revocada. Por favor, inicia sesión de nuevo.' });
   }
 
+  // Verificar revocación distribuida de jti (logout multi-instancia en serverless)
+  if (payload.jti && typeof distributedRevokedJtiChecker === 'function') {
+    try {
+      const revoked = await distributedRevokedJtiChecker(payload.jti);
+      if (revoked) {
+        revokeAdminAccessTokenJti(payload.jti);
+        return res.status(401).json({ error: 'Sesión cerrada o revocada. Por favor, inicia sesión de nuevo.' });
+      }
+    } catch {
+      // No bloquear por fallo transitorio del chequeo de logout si passwordVersion ya pasó
+    }
+  }
+
   req.admin = payload;
   return next();
 }
@@ -509,7 +553,9 @@ export function verifyReceiptToken(token) {
   const secrets = Object.values(ring);
   if (secrets.length === 0 || typeof token !== 'string' || !token.includes('.')) return null;
 
-  const [encodedId, signature] = token.split('.');
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [encodedId, signature] = parts;
   if (!encodedId || !signature) return null;
 
   let bookingId;
@@ -755,7 +801,9 @@ export function verifyApkDeviceToken(token, { expectedPasswordVersion, revokedDe
   if (!getAdminAuthSecret()) return null;
   if (!token || typeof token !== 'string' || !token.includes('.')) return null;
 
-  const [body, signature] = token.split('.');
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [body, signature] = parts;
   if (!body || !signature) return null;
 
   if (!verifyHmacWithKeyring(body, signature, 'apk_device')) return null;
@@ -967,7 +1015,10 @@ export function resolveBackupKeyring(keyringOverride = null) {
     ring.v1 = 'test-only-dedicated-backup-encryption-key-2026-independent';
   }
 
-  const activeKeyId = String(process.env.BACKUP_ENCRYPTION_KEY_ID || 'v1').trim();
+  const configuredKeyId = String(process.env.BACKUP_ENCRYPTION_KEY_ID || '').trim();
+  const activeKeyId = (configuredKeyId && ring[configuredKeyId])
+    ? configuredKeyId
+    : (configuredKeyId || Object.keys(ring)[0] || 'v1');
   if (dedicatedBackupSecret && !ring[activeKeyId]) {
     ring[activeKeyId] = dedicatedBackupSecret;
   }
@@ -1068,14 +1119,21 @@ export function structuredLog(level = 'info', event = 'app_event', context = {})
   const trackingWebhook = process.env.SENTRY_WEBHOOK_URL || process.env.ERROR_TRACKING_WEBHOOK_URL;
   if (
     trackingWebhook &&
+    String(trackingWebhook).trim().startsWith('https://') &&
     (record.level === 'error' || record.level === 'critical') &&
     process.env.NODE_ENV !== 'test'
   ) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    if (typeof timer.unref === 'function') timer.unref();
     fetch(trackingWebhook, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(record)
-    }).catch(() => {});
+      body: JSON.stringify(record),
+      signal: controller.signal
+    })
+      .catch(() => {})
+      .finally(() => clearTimeout(timer));
   }
   return record;
 }
@@ -1089,6 +1147,7 @@ const operationalMetrics = {
     apiExceptions: 0,
     backupExports: 0,
     backupRestores: 0,
+    monitoringDrills: 0,
     failedAdminLogins: 0,
     failedApkAuths: 0
   },
@@ -1354,6 +1413,10 @@ export function verifyBiometricAssertion({
     const rpIdToCheck = clientData?.rpId || expectedRpId || 'sebastiang.app';
     if (!isAllowedBiometricRpId(rpIdToCheck, expectedRpId)) {
       return { valid: false, reason: 'rpid_not_allowed' };
+    }
+
+    if (clientData?.type && clientData.type !== 'webauthn.create' && clientData.type !== 'webauthn.get') {
+      return { valid: false, reason: 'invalid_assertion_type' };
     }
 
     // 2. Importar clave pública SPKI (ECDSA P-256)

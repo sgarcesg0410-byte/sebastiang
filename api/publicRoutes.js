@@ -12,16 +12,30 @@
 import { createReceiptToken, verifyReceiptToken, toPublicBooking, getTrustedClientIp } from './security.js';
 import { computeBookingPaymentStatus } from './financials.js';
 import { validateReferralCode } from './referrals.js';
-import { isMongoConfigured, findMongoDocs } from './db/mongo.js';
+import { isMongoConfigured, findMongoDocs, checkDistributedRateLimit } from './db/mongo.js';
 
-/** Limitador en memoria para rutas públicas usando IP confiable + clave de recurso opcional. */
-function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000, keySelector = null } = {}) {
+const MAX_PUBLIC_RATE_LIMIT_ENTRIES = 2000;
+
+/** Limitador con acotación de memoria y soporte distribuido en MongoDB Atlas para rutas públicas. */
+function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000, keySelector = null, distributedScope = null } = {}) {
   const hits = new Map();
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const ip = getTrustedClientIp(req);
     const extraKey = typeof keySelector === 'function' ? String(keySelector(req) || '').trim() : '';
     const compositeKey = extraKey ? `${ip}:${extraKey}` : ip;
     const now = Date.now();
+
+    if (hits.size > MAX_PUBLIC_RATE_LIMIT_ENTRIES) {
+      for (const [k, v] of hits.entries()) {
+        if (now > v.reset) hits.delete(k);
+      }
+      while (hits.size > MAX_PUBLIC_RATE_LIMIT_ENTRIES) {
+        const oldest = hits.keys().next().value;
+        if (!oldest) break;
+        hits.delete(oldest);
+      }
+    }
+
     const rec = hits.get(compositeKey) || { count: 0, reset: now + windowMs };
     if (now > rec.reset) {
       rec.count = 0;
@@ -33,6 +47,22 @@ function createPublicRateLimiter({ max = 90, windowMs = 10 * 60 * 1000, keySelec
       res.setHeader('Retry-After', Math.ceil((rec.reset - now) / 1000));
       return res.status(429).json({ error: 'Demasiadas solicitudes. Intenta más tarde.' });
     }
+
+    if (distributedScope && isMongoConfigured()) {
+      try {
+        const dist = await checkDistributedRateLimit({
+          key: `pub:${distributedScope}:${compositeKey}`,
+          maxAttempts: max,
+          windowMs,
+          failClosed: false
+        });
+        if (dist && dist.allowed === false) {
+          res.setHeader('Retry-After', Math.ceil((dist.retryAfterMs || windowMs) / 1000));
+          return res.status(429).json({ error: 'Demasiadas solicitudes. Intenta más tarde.' });
+        }
+      } catch {}
+    }
+
     return next();
   };
 }
@@ -146,7 +176,7 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   // ----------------------------------------------------------------------------
   // 2. FIDELIDAD DEL CLIENTE (protegido contra enumeración: exige teléfono + coincidencia de nombre o token, rate limit 3/15m)
   // ----------------------------------------------------------------------------
-  const loyaltyLimiter = createPublicRateLimiter({ max: 3, windowMs: 15 * 60 * 1000 });
+  const loyaltyLimiter = createPublicRateLimiter({ max: 3, windowMs: 15 * 60 * 1000, distributedScope: 'loyalty' });
   const normalizeNameTokens = (nameStr) =>
     String(nameStr || '')
       .normalize('NFD')
@@ -161,7 +191,8 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
     const clientNameQuery = String(req.query.clientName || '').trim();
     const receiptTokenQuery = String(req.query.receiptToken || '').trim();
     const verifiedReceiptBookingId = receiptTokenQuery ? verifyReceiptToken(receiptTokenQuery) : null;
-    const queryNameTokens = normalizeNameTokens(clientNameQuery);
+    // Deduplicar tokens de consulta para evitar bypass por repetición (ej. "Maria Maria")
+    const queryNameTokens = [...new Set(normalizeNameTokens(clientNameQuery))];
 
     // Exigir al menos 10 dígitos y un factor de verificación adicional (nombre del titular o token firmado)
     // para impedir que terceros enumeren si un teléfono ha sido cliente del estudio.
@@ -170,17 +201,19 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
     }
 
     const key = phone.slice(-8);
+    const CANCELLED_STATUSES = new Set(['cancelled', 'cancelada', 'anulada', 'rejected']);
     const matches = (item) => {
+      if (CANCELLED_STATUSES.has(String(item?.status || '').toLowerCase())) return false;
       const other = String(item?.clientWhatsApp || '').replace(/\D/g, '');
       const phoneMatches = other.length >= 8 && (other.endsWith(key) || key.endsWith(other.slice(-8)));
       if (!phoneMatches) return false;
       if (verifiedReceiptBookingId && String(item?.id) === String(verifiedReceiptBookingId)) {
         return true;
       }
-      const storedTokens = normalizeNameTokens(item?.clientName || item?.client_name || '');
+      const storedTokens = [...new Set(normalizeNameTokens(item?.clientName || item?.client_name || ''))];
       if (storedTokens.length === 0 || queryNameTokens.length === 0) return false;
       // Hallazgo #18: Si el nombre registrado tiene 2 o más palabras (ej. "Mariana Gómez"),
-      // exigir al menos 2 tokens coincidentes para impedir enumeración con un solo nombre común ("Ana", "Juan").
+      // exigir al menos 2 tokens ÚNICOS coincidentes para impedir enumeración con un solo nombre común.
       const matchedCount = queryNameTokens.filter((qt) => storedTokens.includes(qt)).length;
       const requiredMatches = storedTokens.length >= 2 ? 2 : 1;
       if (requiredMatches === 1) {
@@ -203,7 +236,7 @@ export function registerPublicRoutes(app, { getRuntimeDB } = {}) {
   // ----------------------------------------------------------------------------
   // 2b. VALIDACIÓN DE CÓDIGO DE REFERIDO (Cero PII, rate-limit estricto 10/10m)
   // ----------------------------------------------------------------------------
-  const referralLimiter = createPublicRateLimiter({ max: 10, windowMs: 10 * 60 * 1000 });
+  const referralLimiter = createPublicRateLimiter({ max: 10, windowMs: 10 * 60 * 1000, distributedScope: 'referral' });
   app.get('/api/public/referral', referralLimiter, async (req, res) => {
     const code = String(req.query.code || '');
     const clientPhone = String(req.query.clientPhone || '');

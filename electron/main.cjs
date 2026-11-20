@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain, Notification, session } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 
@@ -16,10 +16,20 @@ const APP_HOSTS = ['sebastiang.app', 'www.sebastiang.app'];
 const EXTERNAL_HOSTS = [
   ...APP_HOSTS,
   'wa.me', 'api.whatsapp.com',
+  'checkout.wompi.co',
   'instagram.com', 'www.instagram.com',
-  'facebook.com', 'www.facebook.com'
+  'facebook.com', 'www.facebook.com',
+  'maps.google.com', 'drive.google.com',
+  'wetransfer.com', 'we.tl'
 ];
 const LOCAL_DIST_ROOT = path.resolve(__dirname, '..', 'dist');
+const HARDENED_WEB_PREFERENCES = {
+  preload: path.join(__dirname, 'preload.cjs'),
+  nodeIntegration: false,
+  contextIsolation: true,
+  sandbox: true, // aísla el renderer aunque cargue contenido remoto
+  webSecurity: true
+};
 
 function parseUrl(rawUrl) {
   try {
@@ -46,6 +56,7 @@ function isSafeExternalUrl(rawUrl) {
   if (!parsed) return false;
   if (parsed.protocol === 'mailto:') return true;
   if (parsed.protocol !== 'https:') return false;
+  if (parsed.username || parsed.password) return false;
   return EXTERNAL_HOSTS.includes(parsed.hostname.toLowerCase());
 }
 
@@ -55,8 +66,50 @@ function isInternalUrl(rawUrl) {
   if (parsed.protocol === 'file:') {
     return isAllowedLocalDistFileUrl(parsed);
   }
+  if (!app.isPackaged && parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) {
+    return true;
+  }
   if (parsed.protocol !== 'https:') return false;
+  if (parsed.username || parsed.password) return false;
   return APP_HOSTS.includes(parsed.hostname.toLowerCase());
+}
+
+function attachWebContentsSecurityGuards(contents) {
+  // Prohibir la inyección dinámica de <webview>
+  contents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
+
+  // Abrir enlaces externos (WhatsApp, Wompi, Instagram, etc.) en el navegador predeterminado
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isInternalUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            webSecurity: true
+          }
+        }
+      };
+    }
+    if (isSafeExternalUrl(url)) {
+      shell.openExternal(url);
+    } else {
+      console.warn('[Electron] Ventana bloqueada por seguridad:', url);
+    }
+    return { action: 'deny' };
+  });
+
+  // Impedir que la app navegue fuera del sitio (o al navegador si es un enlace externo)
+  contents.on('will-navigate', (event, url) => {
+    if (isInternalUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) shell.openExternal(url);
+    else console.warn('[Electron] Navegación bloqueada por seguridad:', url);
+  });
 }
 
 function createWindow() {
@@ -70,35 +123,10 @@ function createWindow() {
     backgroundColor: '#0c0a09',
     autoHideMenuBar: true,
     show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true, // aísla el renderer aunque cargue contenido remoto
-      webSecurity: true
-    }
+    webPreferences: HARDENED_WEB_PREFERENCES
   });
 
   Menu.setApplicationMenu(null);
-
-  // Abrir enlaces externos (WhatsApp, Instagram, etc.) en el navegador predeterminado de Windows
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isInternalUrl(url)) return { action: 'allow' };
-    if (isSafeExternalUrl(url)) {
-      shell.openExternal(url);
-    } else {
-      console.warn('[Electron] Ventana bloqueada por seguridad:', url);
-    }
-    return { action: 'deny' };
-  });
-
-  // Impedir que la app navegue fuera del sitio (o al navegador si es un enlace externo)
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (isInternalUrl(url)) return;
-    event.preventDefault();
-    if (isSafeExternalUrl(url)) shell.openExternal(url);
-    else console.warn('[Electron] Navegación bloqueada por seguridad:', url);
-  });
 
   // Mostrar la ventana cuando esté lista para evitar parpadeos blancos
   mainWindow.once('ready-to-show', () => {
@@ -106,8 +134,11 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Cargar primero la app en la nube con modo admin directo
-  const cloudUrl = process.env.ELECTRON_START_URL || 'https://sebastiang.app/?mode=admin';
+  // Cargar primero la app en la nube con modo admin directo (validando ELECTRON_START_URL)
+  const rawStartUrl = String(process.env.ELECTRON_START_URL || '').trim();
+  const cloudUrl = (rawStartUrl && isInternalUrl(rawStartUrl))
+    ? rawStartUrl
+    : 'https://sebastiang.app/?mode=admin';
   const localDistPath = path.join(__dirname, '..', 'dist', 'index.html');
 
   mainWindow.loadURL(cloudUrl).catch((err) => {
@@ -135,8 +166,14 @@ ipcMain.handle('app:print', async (event, options = {}) => {
     return false;
   }
   if (!mainWindow) return false;
+  const safeOptions = {
+    silent: false,
+    printBackground: options?.printBackground !== false,
+    landscape: Boolean(options?.landscape),
+    color: options?.color !== false
+  };
   return new Promise((resolve) => {
-    mainWindow.webContents.print(options, (success, failureReason) => {
+    mainWindow.webContents.print(safeOptions, (success, failureReason) => {
       resolve({ success, failureReason });
     });
   });
@@ -171,7 +208,26 @@ ipcMain.handle('app:notification', (event, { title, body } = {}) => {
   return true;
 });
 
+// Endurecimiento global para toda instancia WebContents (principal y ventanas emergentes)
+app.on('web-contents-created', (_event, contents) => {
+  attachWebContentsSecurityGuards(contents);
+});
+
 app.whenReady().then(() => {
+  // Denegar por defecto todos los permisos sensibles (cámara, micrófono, geolocalización, USB, etc.)
+  // y autorizar únicamente notificaciones para orígenes internos oficiales.
+  if (session.defaultSession) {
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      const requestingUrl = details?.requestingUrl || webContents?.getURL?.() || '';
+      const allowed = permission === 'notifications' && isInternalUrl(requestingUrl);
+      callback(allowed);
+    });
+    session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+      const originUrl = requestingOrigin || webContents?.getURL?.() || '';
+      return permission === 'notifications' && isInternalUrl(originUrl);
+    });
+  }
+
   createWindow();
 
   app.on('activate', () => {

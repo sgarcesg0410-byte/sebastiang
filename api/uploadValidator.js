@@ -247,6 +247,76 @@ export function detectBufferMimeType(buffer) {
 }
 
 /**
+ * Verifica si un hostname corresponde a una dirección local, privada, link-local,
+ * CGNAT, loopback IPv4/IPv6 (incluidos corchetes `[::1]` o prefijos `::ffff:`) o metadatos cloud.
+ */
+export function isPrivateOrLocalHost(hostname) {
+  let host = String(hostname || '').trim().toLowerCase();
+  if (!host) return true;
+
+  // Quitar corchetes de direcciones IPv6 devueltas por new URL('https://[::1]/').hostname
+  if (host.startsWith('[') && host.endsWith(']')) {
+    host = host.slice(1, -1);
+  }
+  // Quitar punto final de FQDN (ej. localhost.)
+  host = host.replace(/\.+$/, '');
+
+  // Desenvolver IPv4-mapped IPv6 (ej. ::ffff:127.0.0.1 o ::ffff:7f00:1)
+  if (host.startsWith('::ffff:')) {
+    const mapped = host.slice(7);
+    if (mapped.includes('.')) {
+      return isPrivateOrLocalHost(mapped);
+    }
+    const hexParts = mapped.split(':');
+    if (hexParts.length === 2) {
+      const hi = parseInt(hexParts[0], 16);
+      const lo = parseInt(hexParts[1], 16);
+      if (Number.isFinite(hi) && Number.isFinite(lo)) {
+        const ipv4 = `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+        return isPrivateOrLocalHost(ipv4);
+      }
+    }
+    return true;
+  }
+
+  if (
+    host === 'localhost' ||
+    host === '0.0.0.0' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '::' ||
+    host === '169.254.169.254' ||
+    host === 'metadata.google.internal' ||
+    host === 'metadata' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal')
+  ) {
+    return true;
+  }
+  if (
+    /^0\./.test(host) ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+  ) {
+    return true;
+  }
+  // Rangos privados y link-local IPv6 (fc00::/7, fe80::/10, 0:0:0:0:0:0:0:1)
+  if (
+    /^f[cd][0-9a-f]{2}:/.test(host) ||
+    /^fe[89ab][0-9a-f]:/.test(host) ||
+    /^0+:0+:0+:0+:0+:0+:0+:[01]$/.test(host)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Valida una imagen enviada como Data URL (`data:image/...;base64,...`) o URL remota/ruta local segura.
  * Rechaza siempre SVG, HTML incrustado, esquemas `javascript:` y binarios cuya firma real no sea JPEG/PNG/WebP.
  */
@@ -257,8 +327,9 @@ export function validateImagePayload(inputUrl, { maxBytes = DEFAULT_MAX_IMAGE_BY
   }
 
   const lower = raw.toLowerCase();
+  const pathWithoutQuery = lower.split(/[?#]/)[0];
 
-  // Bloqueo explícito de SVG y esquemas ejecutables (XSS)
+  // Bloqueo explícito de SVG y esquemas ejecutables (XSS), incluyendo URLs con query strings (?v=1)
   if (
     lower.startsWith('javascript:') ||
     lower.startsWith('vbscript:') ||
@@ -266,7 +337,8 @@ export function validateImagePayload(inputUrl, { maxBytes = DEFAULT_MAX_IMAGE_BY
     lower.startsWith('data:image/svg') ||
     lower.includes('<svg') ||
     lower.includes('<script') ||
-    lower.endsWith('.svg')
+    pathWithoutQuery.endsWith('.svg') ||
+    pathWithoutQuery.endsWith('.svgz')
   ) {
     return { valid: false, error: 'Formato SVG o contenido ejecutable no permitido por seguridad.' };
   }
@@ -322,26 +394,18 @@ export function validateImagePayload(inputUrl, { maxBytes = DEFAULT_MAX_IMAGE_BY
     return { valid: true, kind: 'relative-path', mime: null, sizeBytes: 0 };
   }
 
-function isPrivateOrLocalHost(hostname) {
-  const host = String(hostname || '').trim().toLowerCase();
-  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '169.254.169.254') {
-    return true;
-  }
-  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) {
-    return true;
-  }
-  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) {
-    return true;
-  }
-  return false;
-}
-
-  // Caso 3: URL remota HTTPS exclusivamente (bloquea HTTP plano, SSRF y esquemas peligrosos)
+  // Caso 3: URL remota HTTPS exclusivamente (bloquea HTTP plano, SSRF IPv4/IPv6 y esquemas peligrosos)
   if (allowRemoteHttps) {
     try {
       const parsed = new URL(raw);
       if (parsed.protocol !== 'https:') {
         return { valid: false, error: 'Solo se permiten URLs de imagen seguras con protocolo HTTPS.' };
+      }
+      if (parsed.username || parsed.password) {
+        return { valid: false, error: 'URLs con credenciales embebidas no permitidas.' };
+      }
+      if (parsed.pathname.toLowerCase().endsWith('.svg') || parsed.pathname.toLowerCase().endsWith('.svgz')) {
+        return { valid: false, error: 'Formato SVG no permitido por seguridad.' };
       }
       if (isPrivateOrLocalHost(parsed.hostname)) {
         return { valid: false, error: 'URLs de hosts locales o privados no permitidas.' };

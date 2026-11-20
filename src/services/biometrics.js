@@ -9,7 +9,7 @@
  *    sobre el `challenge` efímero de un solo uso.
  */
 
-import { setAdminSessionToken, getAdminSessionToken } from './api';
+import { API_BASE, setAdminSessionToken, getAdminSessionToken } from './api';
 
 const BIO_ENABLED_KEY = 'sebastian_g_biometrics_enabled_v1';
 const BIO_CRED_ID_KEY = 'sebastian_g_biometrics_cred_id_v1';
@@ -151,7 +151,7 @@ function base64ToBuffer(base64) {
 }
 
 async function fetchOneTimeBioChallenge() {
-  const challengeRes = await fetch('/api/admin/auth/bio-challenge', {
+  const challengeRes = await fetch(`${API_BASE}/admin/auth/bio-challenge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }
   });
@@ -214,7 +214,7 @@ async function refreshServerSessionViaBiometrics({ challenge, biometricProof }) 
     const bioRefreshToken = vaultRecord?.bioRefreshToken || bootstrapToken || '';
     if (!bioRefreshToken || !challenge || !biometricProof) return false;
 
-    const res = await fetch('/api/admin/auth/bio-refresh', {
+    const res = await fetch(`${API_BASE}/admin/auth/bio-refresh`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -271,7 +271,7 @@ function getNativeAndroidBiometricStatus() {
  * Lanza el prompt nativo de huella dactilar de Android (BiometricPrompt + AndroidKeyStore)
  * y retorna la firma criptográfica sobre el challenge del servidor.
  */
-function authenticateViaNativeAndroid(title, subtitle, challenge = '') {
+function authenticateViaNativeAndroid(title, subtitle, challenge = '', isEnrollment = false) {
   return new Promise((resolve, reject) => {
     if (!hasNativeAndroidBiometrics()) {
       return reject(new Error('El lector biométrico nativo no está disponible.'));
@@ -314,7 +314,8 @@ function authenticateViaNativeAndroid(title, subtitle, challenge = '') {
           action: 'authenticateBiometric',
           title: title || 'Ingreso Sebastian G',
           subtitle: subtitle || 'Coloca tu dedo en el sensor de huella de tu celular',
-          challenge: challenge || ''
+          challenge: challenge || '',
+          isEnrollment: Boolean(isEnrollment)
         }));
       } else {
         window.AndroidNotificationBridge.authenticateBiometric(
@@ -400,7 +401,9 @@ export async function registerBiometrics() {
       throw new Error('El sensor de huella dactilar está temporalmente no disponible. Intenta reiniciar tu dispositivo.');
     }
     if (status === 'NONE_ENROLLED') {
-      if (typeof window.AndroidNotificationBridge.openBiometricEnrollmentSettings === 'function') {
+      if (window.SebastianGNativeChannel && typeof window.SebastianGNativeChannel.postMessage === 'function') {
+        window.SebastianGNativeChannel.postMessage(JSON.stringify({ action: 'openBiometricEnrollmentSettings' }));
+      } else if (typeof window.AndroidNotificationBridge.openBiometricEnrollmentSettings === 'function') {
         window.AndroidNotificationBridge.openBiometricEnrollmentSettings();
       }
       throw new Error('Tu celular tiene sensor de huella pero aún no has registrado ninguna huella en los Ajustes del sistema. Abre Ajustes > Seguridad > Huella Digital para configurarla.');
@@ -410,11 +413,12 @@ export async function registerBiometrics() {
     const res = await authenticateViaNativeAndroid(
       'Vincular Huella Dactilar',
       'Toca el sensor de huella para vincular criptográficamente este celular a tu cuenta de Sebastian G',
-      challenge
+      challenge,
+      true
     );
 
     if (res && res.success && res.publicKeySpki && res.signature) {
-      const enrollRes = await fetch('/api/admin/auth/bio-enroll', {
+      const enrollRes = await fetch(`${API_BASE}/admin/auth/bio-enroll`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -457,7 +461,7 @@ export async function registerBiometrics() {
   }
 
   if (typeof window !== 'undefined' && window.AndroidNotificationBridge && !hasNativeAndroidBiometrics()) {
-    throw new Error('Para activar la huella en tu celular, descarga e instala la última versión de la aplicación (APK v1.4.0).');
+    throw new Error('Para activar la huella en tu celular, instala la última versión oficial de la aplicación Android (v2.0.0).');
   }
 
   // 2. CANAL WEBAUTHN ESTÁNDAR + CLAVE CRIPTOGRÁFICA NO EXTRAÍBLE EN INDEXEDDB
@@ -516,7 +520,7 @@ export async function registerBiometrics() {
       ? 'Celular Android (Navegador)'
       : (navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Dispositivo Personal');
 
-    const enrollRes = await fetch('/api/admin/auth/bio-enroll', {
+    const enrollRes = await fetch(`${API_BASE}/admin/auth/bio-enroll`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -579,7 +583,8 @@ export async function authenticateWithBiometrics() {
     const res = await authenticateViaNativeAndroid(
       'Ingreso al Panel Sebastian G',
       'Coloca tu huella dactilar para acceder inmediatamente',
-      serverChallenge
+      serverChallenge,
+      false
     );
     if (res && res.success && res.signature && res.clientDataJSON) {
       const renewed = await refreshServerSessionViaBiometrics({
