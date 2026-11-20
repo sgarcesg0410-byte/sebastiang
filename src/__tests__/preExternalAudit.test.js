@@ -26,6 +26,8 @@ import { validateReferralCode } from '../../api/referrals.js';
 import { isReturningClient } from '../../api/pricingGuard.js';
 import { sendBookingConfirmedEmail } from '../../api/emailService.js';
 import { handleEmergencyPasswordReset, clearRateLimiters } from '../../api/passwordReset.js';
+import sharp from 'sharp';
+import { generateLuxuryReceiptPdf } from '../services/receiptPdfGenerator.js';
 
 async function invokeApp(method, url, { body = {}, headers = {}, remoteAddress = '127.0.0.1' } = {}) {
   return new Promise((resolve, reject) => {
@@ -804,6 +806,114 @@ describe('Pre-External Audit Hardening & Bug-Fix Regression Suite', () => {
       ]) {
         expect(envEx, `Variable faltante en .env.example: ${k}`).toContain(k + '=');
       }
+    });
+
+    it('SEGUNDA REVISIÓN 1.1: Galerías privadas y vistas previas binarias/JSON usan Cache-Control: private, no-store y bloquean acceso inmediatamente tras revocar', async () => {
+      const tinyPng = await sharp({
+        create: { width: 80, height: 60, channels: 3, background: { r: 30, g: 40, b: 50 } }
+      }).jpeg({ quality: 80 }).toBuffer();
+      const validDataUrl = `data:image/jpeg;base64,${tinyPng.toString('base64')}`;
+
+      const tokenA = 'gal-nostore-revoke-' + Date.now();
+      const tokenB = 'gal-nostore-valid-' + Date.now();
+      const futureIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+      runtimeDB.sessions = [
+        {
+          id: 'sess-nostore-a',
+          token: tokenA,
+          clientName: 'Cliente Revocable',
+          status: 'pending',
+          expiresAt: futureIso,
+          photos: [
+            { id: 'p-bin', title: 'Foto Binaria', url: validDataUrl, originalUrl: validDataUrl },
+            { id: 'p-json', title: 'Foto Remota', url: '/catalog/verano-salsero.jpg' }
+          ]
+        },
+        {
+          id: 'sess-nostore-b',
+          token: tokenB,
+          clientName: 'Cliente Autorizado',
+          status: 'pending',
+          expiresAt: futureIso,
+          photos: [
+            { id: 'p-ok', title: 'Foto Activa', url: validDataUrl, originalUrl: validDataUrl }
+          ]
+        }
+      ];
+
+      // 1. Con token válido: JSON de galería, vista previa binaria y fallback JSON traen private, no-store
+      const galBefore = await invokeApp('GET', `/api/gallery/${tokenA}`, { remoteAddress: '198.51.100.81' });
+      expect(galBefore.status).toBe(200);
+      expect(galBefore.headers['cache-control']).toBe('private, no-store');
+      expect(galBefore.headers['pragma']).toBe('no-cache');
+
+      const binBefore = await invokeApp('GET', `/api/gallery/${tokenA}/photo/p-bin`, { remoteAddress: '198.51.100.81' });
+      expect(binBefore.status).toBe(200);
+      expect(Buffer.isBuffer(binBefore.body)).toBe(true);
+      expect(binBefore.headers['cache-control']).toBe('private, no-store');
+      expect(binBefore.headers['pragma']).toBe('no-cache');
+
+      const jsonFallbackBefore = await invokeApp('GET', `/api/gallery/${tokenA}/photo/p-json`, { remoteAddress: '198.51.100.81' });
+      expect(jsonFallbackBefore.status).toBe(200);
+      expect(jsonFallbackBefore.headers['cache-control']).toBe('private, no-store');
+
+      // 2. Revocar galería A desde endpoint administrativo
+      const adminToken = createAdminToken({ pwd: 1 });
+      const revRes = await invokeApp('POST', `/api/admin/sessions/${tokenA}/revoke`, {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      expect(revRes.status).toBe(200);
+
+      // 3. Tras revocar, ni el JSON ni la foto binaria se entregan (403 + private, no-store)
+      const galAfter = await invokeApp('GET', `/api/gallery/${tokenA}`, { remoteAddress: '198.51.100.81' });
+      expect(galAfter.status).toBe(403);
+      expect(galAfter.headers['cache-control']).toBe('private, no-store');
+
+      const binAfter = await invokeApp('GET', `/api/gallery/${tokenA}/photo/p-bin`, { remoteAddress: '198.51.100.81' });
+      expect(binAfter.status).toBe(403);
+      expect(Buffer.isBuffer(binAfter.body)).toBe(false);
+      expect(binAfter.headers['cache-control']).toBe('private, no-store');
+
+      // 4. Galería B (autorizada) sigue operando normalmente
+      const validGal = await invokeApp('GET', `/api/gallery/${tokenB}`, { remoteAddress: '198.51.100.82' });
+      expect(validGal.status).toBe(200);
+      expect(validGal.headers['cache-control']).toBe('private, no-store');
+
+      const validBin = await invokeApp('GET', `/api/gallery/${tokenB}/photo/p-ok`, { remoteAddress: '198.51.100.82' });
+      expect(validBin.status).toBe(200);
+      expect(Buffer.isBuffer(validBin.body)).toBe(true);
+      expect(validBin.headers['cache-control']).toBe('private, no-store');
+    });
+
+    it('SEGUNDA REVISIÓN 2.2 y 4: generación PDF vectorial funciona sin jsPDF.html()/DOMPurify y SAST detecta PIN débil ofuscado', async () => {
+      const pdfResult = await generateLuxuryReceiptPdf({
+        booking: {
+          id: 'book-pdf-test-99999',
+          clientName: '<script>alert(1)</script> Cliente Prueba',
+          clientWhatsApp: '+573001112233',
+          packageName: '8 Fotos Digitales',
+          specificLocation: 'Playa Blanca <img src=x onerror=alert(1)>',
+          dateTime: '28/12/2026 a las 4:00 p. m.',
+          totalPrice: 75000
+        },
+        paidAmount: 20000,
+        paymentMethod: 'Nequi',
+        receiptType: 'deposit',
+        prevPaid: 0
+      });
+      expect(pdfResult).toBeTruthy();
+      expect(pdfResult.voucherNum).toMatch(/^REC-/);
+      const decodedPdfPrefix = Buffer.from(pdfResult.getRawBase64(), 'base64').subarray(0, 5).toString('utf8');
+      expect(decodedPdfPrefix).toBe('%PDF-');
+
+      // Prueba negativa SAST: reintroducir ['0','4','9','3'] ofuscado fuera de FORBIDDEN_WEAK_PINS dispara el gate
+      const realSec = fs.readFileSync(path.join(process.cwd(), 'api/security.js'), 'utf8');
+      const mutatedSec = realSec + "\nconst badFallback = ['0', '4', '9', '3'].join('');\n";
+      const stripForbidden = (src) => src.replace(/const\s+FORBIDDEN_WEAK_PINS\s*=\s*new\s+Set\(\[[\s\S]*?\]\);/m, '');
+      const obfuscatedRegex = /\[\s*['"]0['"]\s*,\s*['"]4['"]\s*,\s*['"]9['"]\s*,\s*['"]3['"]\s*\]/;
+      expect(obfuscatedRegex.test(stripForbidden(realSec))).toBe(false);
+      expect(obfuscatedRegex.test(stripForbidden(mutatedSec))).toBe(true);
     });
   });
 });

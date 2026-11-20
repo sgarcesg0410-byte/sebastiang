@@ -1919,6 +1919,8 @@ export function toPublicGallerySession(session = {}, { photos = [], isExpired = 
 }
 
 app.get('/api/gallery/:token', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Pragma', 'no-cache');
   if (!checkPublicWriteRateLimit(getClientIp(req), 60, 'gallery-read')) {
     return res.status(429).json({ error: 'Demasiadas consultas de galería. Intenta en unos minutos.' });
   }
@@ -1942,12 +1944,12 @@ app.get('/api/gallery/:token', async (req, res) => {
       status: "pending",
       submittedAt: null,
       photos: [
-        { id: "photo-1", title: "Retrato Profesional • Estudio 01", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-2", title: "Boda Civil • Recepción 02", url: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-3", title: "Quinceañera • Gala 03", url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-4", title: "Evento Familiar • Exteriores 04", url: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-5", title: "Grado Profesional • Toga 05", url: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" },
-        { id: "photo-6", title: "Cumpleaños • Celebración 06", url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=80", selected: false, clientComment: "" }
+        { id: "photo-1", title: "Retrato Profesional • Estudio 01", url: "/catalog/verano-salsero.jpg", selected: false, clientComment: "" },
+        { id: "photo-2", title: "Boda Civil • Recepción 02", url: "/catalog/cat-1789878355199.jpg", selected: false, clientComment: "" },
+        { id: "photo-3", title: "Quinceañera • Gala 03", url: "/catalog/cat-1789902452640.jpg", selected: false, clientComment: "" },
+        { id: "photo-4", title: "Evento Familiar • Exteriores 04", url: "/catalog/cat-1789916075257.jpg", selected: false, clientComment: "" },
+        { id: "photo-5", title: "Grado Profesional • Toga 05", url: "/catalog/cat-1789916145830.jpg", selected: false, clientComment: "" },
+        { id: "photo-6", title: "Cumpleaños • Celebración 06", url: "/catalog/cat-1789916197806.jpg", selected: false, clientComment: "" }
       ]
     };
   }
@@ -2028,6 +2030,8 @@ app.get('/api/gallery/:token', async (req, res) => {
 
 // Endpoint de previsualización protegida con marca de agua generada en el servidor con `sharp` (Hallazgo A1)
 app.get('/api/gallery/:token/photo/:photoId', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Pragma', 'no-cache');
   if (!checkPublicWriteRateLimit(getClientIp(req), 120, 'gallery-photo-preview')) {
     return res.status(429).json({ error: 'Demasiadas solicitudes de imagen.' });
   }
@@ -2043,8 +2047,11 @@ app.get('/api/gallery/:token/photo/:photoId', async (req, res) => {
       recordOperationalEvent('mongoErrors', `Error consultando sesión para foto de galería: ${eMongo?.message || eMongo}`, 'warning');
     }
   }
-  if (!session || session.revoked || session.status === 'revoked') {
+  if (!session) {
     return res.status(404).json({ error: 'Imagen no disponible.' });
+  }
+  if (session.revoked || session.status === 'revoked') {
+    return res.status(403).json({ error: 'El acceso a esta galería privada ha sido revocado.' });
   }
   const isDelivered = session.status === 'delivered';
   const isExpired = Boolean(session.expiresAt && new Date(session.expiresAt).getTime() < Date.now());
@@ -2063,9 +2070,12 @@ app.get('/api/gallery/:token/photo/:photoId', async (req, res) => {
   if (b64Match) {
     const imgBuf = Buffer.from(b64Match[2], 'base64');
     res.setHeader('Content-Type', b64Match[1]);
-    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
     return res.status(200).send(imgBuf);
   }
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Pragma', 'no-cache');
   return res.status(200).json({ previewUrl: previewDataUrl, watermarkedInServer: true });
 });
 
